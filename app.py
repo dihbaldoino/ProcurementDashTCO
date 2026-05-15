@@ -1,18 +1,19 @@
 """
-Executive TCO & Should-Cost Procurement Dashboard
-Online-ready Streamlit app
+Executive Procurement TCO & Should-Cost Dashboard
+Version: v6 - Country/Supplier Allocation + Kraljic Risk + Cost Optimization
 
 Run locally:
     pip install -r requirements.txt
     streamlit run app.py
 
-Deploy online:
-    - Streamlit Community Cloud: push app.py + requirements.txt to GitHub
-    - Replit: create a Python Repl, upload these files, run streamlit run app.py
-    - Hugging Face Spaces: create a Streamlit Space and upload these files
+Online deployment:
+    Deploy this folder to Streamlit Community Cloud, Replit, Render or Hugging Face Spaces.
 """
 
 from __future__ import annotations
+
+from itertools import product
+from typing import Dict, List, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -25,79 +26,117 @@ except Exception:
     PLOTLY_AVAILABLE = False
 
 
+# =============================================================================
+# Page setup
+# =============================================================================
+
 st.set_page_config(
-    page_title="Executive TCO Dashboard",
+    page_title="Executive Procurement TCO Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+COUNTRIES = ["Brazil", "Mexico", "Argentina", "Colombia"]
+LATAM_COUNTRIES = ["Mexico", "Argentina", "Colombia"]
+SUPPLIERS = [
+    "ChemPrime",
+    "OleoGlobal",
+    "Oleo Overseas Trading Co.",
+    "Comercio de Oleos Nacional Distribuicao",
+]
+DEFAULT_RISK = {
+    "ChemPrime": 2.0,
+    "OleoGlobal": 3.0,
+    "Oleo Overseas Trading Co.": 4.0,
+    "Comercio de Oleos Nacional Distribuicao": 3.0,
+}
+
+
+# =============================================================================
+# Styling
+# =============================================================================
+
 st.markdown(
     """
     <style>
         .block-container {
-            padding-top: 1.3rem;
+            padding-top: 1.2rem;
             padding-bottom: 2.2rem;
-            max-width: 1450px;
+            max-width: 1550px;
         }
         .executive-hero {
-            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%);
+            background: linear-gradient(135deg, #020617 0%, #0f172a 45%, #1d4ed8 100%);
             padding: 30px 34px;
-            border-radius: 26px;
+            border-radius: 28px;
             color: white;
             margin-bottom: 22px;
-            box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
+            box-shadow: 0 18px 45px rgba(15, 23, 42, 0.25);
         }
         .executive-hero h1 {
-            font-size: 2.2rem;
+            font-size: 2.25rem;
             line-height: 1.1;
             margin-bottom: 0.35rem;
-            font-weight: 800;
+            font-weight: 850;
+            color: #ffffff;
         }
         .executive-hero p {
             font-size: 1rem;
             color: rgba(255,255,255,0.88);
             margin-bottom: 0;
-            max-width: 980px;
+            max-width: 1050px;
+        }
+        .section-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 18px;
+            padding: 14px 18px;
+            margin-top: 10px;
+            margin-bottom: 14px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
         }
         .section-title {
-            font-size: 1.18rem;
-            font-weight: 800;
-            color: #0f172a;
-            margin-top: 12px;
-            margin-bottom: 5px;
+            font-size: 1.12rem;
+            font-weight: 850;
+            color: #bfdbfe;
+            margin-bottom: 3px;
         }
         .section-subtitle {
-            font-size: 0.92rem;
-            color: #64748b;
-            margin-bottom: 14px;
+            font-size: 0.90rem;
+            color: #e2e8f0;
+            margin-bottom: 0;
         }
         .kpi-card {
             background: #ffffff;
-            border: 1px solid rgba(148, 163, 184, 0.25);
+            border: 1px solid rgba(148, 163, 184, 0.26);
             border-radius: 22px;
-            padding: 20px 20px;
-            min-height: 145px;
+            padding: 19px 20px;
+            min-height: 140px;
             box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
         }
         .kpi-label {
             color: #64748b;
-            font-size: 0.80rem;
-            font-weight: 800;
+            font-size: 0.78rem;
+            font-weight: 850;
             text-transform: uppercase;
             letter-spacing: 0.055em;
             margin-bottom: 8px;
         }
         .kpi-value {
             color: #0f172a;
-            font-size: 1.65rem;
+            font-size: 1.56rem;
             font-weight: 850;
             line-height: 1.1;
             margin-bottom: 9px;
         }
         .kpi-helper {
             color: #64748b;
-            font-size: 0.84rem;
+            font-size: 0.83rem;
             line-height: 1.32;
         }
         .good { color: #047857 !important; }
@@ -136,12 +175,23 @@ st.markdown(
             padding: 18px 20px;
             color: #334155;
             box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-            min-height: 170px;
+            min-height: 160px;
         }
         .small-note {
             font-size: 0.82rem;
             color: #64748b;
             margin-top: 8px;
+        }
+        div[data-testid="stSidebar"] {
+            background: #020617;
+        }
+        div[data-testid="stSidebar"] label,
+        div[data-testid="stSidebar"] p,
+        div[data-testid="stSidebar"] span,
+        div[data-testid="stSidebar"] h1,
+        div[data-testid="stSidebar"] h2,
+        div[data-testid="stSidebar"] h3 {
+            color: #e5e7eb !important;
         }
     </style>
     """,
@@ -149,8 +199,39 @@ st.markdown(
 )
 
 
+# =============================================================================
+# Utility helpers
+# =============================================================================
+
+
+def render_section_header(title: str, subtitle: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class="section-header">
+            <div class="section-title">{title}</div>
+            <div class="section-subtitle">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_card(label: str, value: str, helper: str, tone: str = "neutral") -> None:
+    tone_class = {"good": "good", "bad": "bad", "neutral": "neutral"}.get(tone, "neutral")
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{label}</div>
+            <div class="kpi-value {tone_class}">{value}</div>
+            <div class="kpi-helper">{helper}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def safe_divide(numerator: float, denominator: float) -> float:
-    return 0.0 if denominator == 0 else numerator / denominator
+    return 0.0 if abs(denominator) < 1e-12 else numerator / denominator
 
 
 def format_money(value: float, currency: str = "USD", compact: bool = False) -> str:
@@ -173,187 +254,358 @@ def format_percent(value: float) -> str:
 def equivalent_rate(reference_rate_pct: float, reference_days: int, target_days: int, method: str) -> float:
     if reference_days <= 0:
         return 0.0
-    if target_days < 0:
-        target_days = 0
-    reference_rate = reference_rate_pct / 100
-    if method == "Linear simples":
+    reference_rate = reference_rate_pct / 100.0
+    target_days = max(0, target_days)
+    if method == "Linear simple":
         return reference_rate * (target_days / reference_days)
     return (1 + reference_rate) ** (target_days / reference_days) - 1
 
 
-def render_kpi_card(label: str, value: str, helper: str, tone: str = "neutral") -> None:
-    tone_class = {"good": "good", "bad": "bad", "neutral": "neutral"}.get(tone, "neutral")
-    st.markdown(
-        f"""
-        <div class="kpi-card">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value {tone_class}">{value}</div>
-            <div class="kpi-helper">{helper}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def normalize_with_minimums(raw_shares: Dict[str, float], minimums: Dict[str, float]) -> Dict[str, float]:
+    """
+    Normalize supplier shares so the final allocation always sums to 100%.
+
+    Logic:
+    - Supplier minimums are respected first.
+    - Remaining share is distributed proportionally according to the raw desired shares
+      above each minimum requirement.
+    - If raw desired shares are all zero after minimums, remaining share is distributed equally.
+    """
+    total_min = sum(max(0.0, minimums.get(supplier, 0.0)) for supplier in SUPPLIERS)
+    if total_min > 100.0:
+        # Return minimums scaled down as a safety fallback, but the UI will also warn the user.
+        return {supplier: 100.0 * max(0.0, minimums.get(supplier, 0.0)) / total_min for supplier in SUPPLIERS}
+
+    remaining = 100.0 - total_min
+    weights = {}
+    for supplier in SUPPLIERS:
+        raw = max(0.0, raw_shares.get(supplier, 0.0))
+        minimum = max(0.0, minimums.get(supplier, 0.0))
+        weights[supplier] = max(0.0, raw - minimum)
+
+    total_weight = sum(weights.values())
+    if total_weight <= 1e-9:
+        non_min_suppliers = [s for s in SUPPLIERS if minimums.get(s, 0.0) < 100.0]
+        if not non_min_suppliers:
+            non_min_suppliers = SUPPLIERS
+        weights = {s: 1.0 if s in non_min_suppliers else 0.0 for s in SUPPLIERS}
+        total_weight = sum(weights.values())
+
+    effective = {}
+    for supplier in SUPPLIERS:
+        minimum = max(0.0, minimums.get(supplier, 0.0))
+        effective[supplier] = minimum + remaining * weights.get(supplier, 0.0) / total_weight
+
+    # Numerical correction to sum exactly 100.
+    correction = 100.0 - sum(effective.values())
+    if abs(correction) > 1e-8:
+        largest_supplier = max(effective, key=effective.get)
+        effective[largest_supplier] += correction
+
+    return effective
 
 
-def calculate_metrics(
-    brazil_spend: float,
-    mexico_spend: float,
-    argentina_spend: float,
-    colombia_spend: float,
-    proposal_brazil: float,
-    proposal_latam: float,
-    reference_rate_pct: float,
-    reference_days: int,
-    proposal_payment_days: int,
+# =============================================================================
+# Calculation engine
+# =============================================================================
+
+
+def compute_country_proposal(
+    country: str,
+    current_spend: float,
+    financial_assumptions: Dict[str, Dict[str, float]],
+    supplier_inputs: Dict[str, Dict[str, Dict[str, float]]],
+    effective_shares: Dict[str, Dict[str, float]],
     method: str,
-    finance_mode: str,
-) -> dict:
-    latam_spend = mexico_spend + argentina_spend + colombia_spend
-    current_total = brazil_spend + latam_spend
-    proposal_before_finance = proposal_brazil + proposal_latam
-    rate = equivalent_rate(reference_rate_pct, reference_days, proposal_payment_days, method)
+) -> Dict[str, object]:
+    rows = []
+    adjusted_total = 0.0
+    proposal_before_finance_total = 0.0
+    financial_cost_total = 0.0
+    risk_weighted_sum = 0.0
 
-    add_finance = finance_mode == "Adicionar custo financeiro na proposta"
-    finance_brazil = proposal_brazil * rate if add_finance else 0.0
-    finance_latam = proposal_latam * rate if add_finance else 0.0
-    finance_total = finance_brazil + finance_latam
+    for supplier in SUPPLIERS:
+        supplier_data = supplier_inputs[country][supplier]
+        spend = supplier_data["spend"]
+        payment_days = int(supplier_data["payment_days"])
+        risk_score = supplier_data["risk_score"]
+        share_pct = effective_shares[country][supplier]
+        share = share_pct / 100.0
 
-    proposal_adjusted_brazil = proposal_brazil + finance_brazil
-    proposal_adjusted_latam = proposal_latam + finance_latam
-    proposal_adjusted_total = proposal_before_finance + finance_total
+        country_rate = financial_assumptions[country]["rate_pct"]
+        country_days = int(financial_assumptions[country]["days"])
+        rate = equivalent_rate(country_rate, country_days, payment_days, method)
 
-    nominal_delta = current_total - proposal_before_finance
-    saving = current_total - proposal_adjusted_total
-    saving_pct = safe_divide(saving, current_total)
+        allocated_before_finance = spend * share
+        financial_cost = allocated_before_finance * rate
+        adjusted_spend = allocated_before_finance + financial_cost
 
-    if add_finance and rate > -1:
-        break_even_before_finance = current_total / (1 + rate)
-    else:
-        break_even_before_finance = current_total
+        proposal_before_finance_total += allocated_before_finance
+        financial_cost_total += financial_cost
+        adjusted_total += adjusted_spend
+        risk_weighted_sum += risk_score * adjusted_spend
 
+        rows.append(
+            {
+                "Country": country,
+                "Supplier": supplier,
+                "Effective Share %": share_pct,
+                "Proposal Spend": spend,
+                "Payment Term Days": payment_days,
+                "Equivalent Financial Rate": rate,
+                "Allocated Spend Before Finance": allocated_before_finance,
+                "Financial Cost": financial_cost,
+                "Adjusted Proposal Spend": adjusted_spend,
+                "Risk Score": risk_score,
+                "Kraljic Minimum Required": supplier_data["kraljic_required"],
+                "Minimum Share %": supplier_data["minimum_share"],
+            }
+        )
+
+    saving = current_spend - adjusted_total
     return {
-        "brazil_spend": brazil_spend,
-        "mexico_spend": mexico_spend,
-        "argentina_spend": argentina_spend,
-        "colombia_spend": colombia_spend,
-        "latam_spend": latam_spend,
-        "current_total": current_total,
-        "proposal_brazil": proposal_brazil,
-        "proposal_latam": proposal_latam,
-        "proposal_before_finance": proposal_before_finance,
-        "equivalent_rate": rate,
-        "finance_brazil": finance_brazil,
-        "finance_latam": finance_latam,
-        "finance_total": finance_total,
-        "proposal_adjusted_brazil": proposal_adjusted_brazil,
-        "proposal_adjusted_latam": proposal_adjusted_latam,
-        "proposal_adjusted_total": proposal_adjusted_total,
-        "nominal_delta": nominal_delta,
+        "country": country,
+        "current_spend": current_spend,
+        "proposal_before_finance": proposal_before_finance_total,
+        "financial_cost": financial_cost_total,
+        "adjusted_proposal": adjusted_total,
         "saving": saving,
-        "saving_pct": saving_pct,
-        "break_even_before_finance": break_even_before_finance,
-        "gap_to_break_even": break_even_before_finance - proposal_before_finance,
+        "saving_pct": safe_divide(saving, current_spend),
+        "risk_score": safe_divide(risk_weighted_sum, adjusted_total) if adjusted_total else 0.0,
+        "rows": rows,
     }
 
 
-def build_region_table(metrics: dict) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "Region": "Brazil",
-                "Current Spend": metrics["brazil_spend"],
-                "Proposal Before Finance": metrics["proposal_brazil"],
-                "Financial Cost": metrics["finance_brazil"],
-                "Proposal Adjusted": metrics["proposal_adjusted_brazil"],
-                "Saving / Impact": metrics["brazil_spend"] - metrics["proposal_adjusted_brazil"],
-                "Saving / Impact %": safe_divide(
-                    metrics["brazil_spend"] - metrics["proposal_adjusted_brazil"], metrics["brazil_spend"]
-                ),
-            },
-            {
-                "Region": "LATAM",
-                "Current Spend": metrics["latam_spend"],
-                "Proposal Before Finance": metrics["proposal_latam"],
-                "Financial Cost": metrics["finance_latam"],
-                "Proposal Adjusted": metrics["proposal_adjusted_latam"],
-                "Saving / Impact": metrics["latam_spend"] - metrics["proposal_adjusted_latam"],
-                "Saving / Impact %": safe_divide(
-                    metrics["latam_spend"] - metrics["proposal_adjusted_latam"], metrics["latam_spend"]
-                ),
-            },
-            {
-                "Region": "Total",
-                "Current Spend": metrics["current_total"],
-                "Proposal Before Finance": metrics["proposal_before_finance"],
-                "Financial Cost": metrics["finance_total"],
-                "Proposal Adjusted": metrics["proposal_adjusted_total"],
-                "Saving / Impact": metrics["saving"],
-                "Saving / Impact %": metrics["saving_pct"],
-            },
-        ]
-    )
+def compute_full_scenario(
+    current_spend: Dict[str, float],
+    financial_assumptions: Dict[str, Dict[str, float]],
+    supplier_inputs: Dict[str, Dict[str, Dict[str, float]]],
+    effective_shares: Dict[str, Dict[str, float]],
+    method: str,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    country_results = []
+    detail_rows = []
 
-
-def build_sensitivity_table(metrics: dict, variation_range_pct: int, finance_mode: str) -> pd.DataFrame:
-    variations = [x / 100 for x in range(-variation_range_pct, variation_range_pct + 1, 2)]
-    add_finance = finance_mode == "Adicionar custo financeiro na proposta"
-    rows = []
-    for variation in variations:
-        simulated_before_finance = metrics["proposal_before_finance"] * (1 + variation)
-        simulated_finance = simulated_before_finance * metrics["equivalent_rate"] if add_finance else 0.0
-        simulated_adjusted = simulated_before_finance + simulated_finance
-        saving = metrics["current_total"] - simulated_adjusted
-        rows.append(
+    for country in COUNTRIES:
+        result = compute_country_proposal(
+            country=country,
+            current_spend=current_spend[country],
+            financial_assumptions=financial_assumptions,
+            supplier_inputs=supplier_inputs,
+            effective_shares=effective_shares,
+            method=method,
+        )
+        country_results.append(
             {
-                "Proposal Variation %": variation * 100,
-                "Simulated Proposal Adjusted": simulated_adjusted,
-                "Saving / Impact": saving,
-                "Saving / Impact %": safe_divide(saving, metrics["current_total"]),
+                "Region": country,
+                "Current Spend": result["current_spend"],
+                "Proposal Before Finance": result["proposal_before_finance"],
+                "Financial Cost": result["financial_cost"],
+                "Adjusted Proposal": result["adjusted_proposal"],
+                "Saving / Impact": result["saving"],
+                "Saving / Impact %": result["saving_pct"],
+                "Risk Score": result["risk_score"],
             }
         )
-    return pd.DataFrame(rows)
+        detail_rows.extend(result["rows"])
 
+    latam_rows = [row for row in country_results if row["Region"] in LATAM_COUNTRIES]
+    latam_current = sum(row["Current Spend"] for row in latam_rows)
+    latam_before = sum(row["Proposal Before Finance"] for row in latam_rows)
+    latam_finance = sum(row["Financial Cost"] for row in latam_rows)
+    latam_adjusted = sum(row["Adjusted Proposal"] for row in latam_rows)
+    latam_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in latam_rows)
 
-def plot_spend_bridge(metrics: dict, currency: str) -> None:
-    bridge_df = pd.DataFrame(
+    brazil_row = next(row for row in country_results if row["Region"] == "Brazil")
+    total_current = sum(row["Current Spend"] for row in country_results)
+    total_before = sum(row["Proposal Before Finance"] for row in country_results)
+    total_finance = sum(row["Financial Cost"] for row in country_results)
+    total_adjusted = sum(row["Adjusted Proposal"] for row in country_results)
+    total_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in country_results)
+
+    executive_rows = [
+        brazil_row,
         {
-            "Step": ["Current", "Proposal before finance", "Financial cost", "Adjusted proposal"],
-            "Value": [
-                metrics["current_total"],
-                metrics["proposal_before_finance"],
-                metrics["finance_total"],
-                metrics["proposal_adjusted_total"],
-            ],
-        }
+            "Region": "LATAM",
+            "Current Spend": latam_current,
+            "Proposal Before Finance": latam_before,
+            "Financial Cost": latam_finance,
+            "Adjusted Proposal": latam_adjusted,
+            "Saving / Impact": latam_current - latam_adjusted,
+            "Saving / Impact %": safe_divide(latam_current - latam_adjusted, latam_current),
+            "Risk Score": safe_divide(latam_risk_weight, latam_adjusted) if latam_adjusted else 0.0,
+        },
+        {
+            "Region": "Total",
+            "Current Spend": total_current,
+            "Proposal Before Finance": total_before,
+            "Financial Cost": total_finance,
+            "Adjusted Proposal": total_adjusted,
+            "Saving / Impact": total_current - total_adjusted,
+            "Saving / Impact %": safe_divide(total_current - total_adjusted, total_current),
+            "Risk Score": safe_divide(total_risk_weight, total_adjusted) if total_adjusted else 0.0,
+        },
+    ]
+
+    return pd.DataFrame(executive_rows), pd.DataFrame(detail_rows)
+
+
+# =============================================================================
+# Optimization engine
+# =============================================================================
+
+
+def generate_share_combinations(step: int = 5) -> List[Tuple[int, int, int, int]]:
+    values = list(range(0, 101, step))
+    combinations = []
+    for a in values:
+        for b in values:
+            for c in values:
+                d = 100 - a - b - c
+                if d >= 0 and d % step == 0:
+                    combinations.append((a, b, c, d))
+    return combinations
+
+
+def compute_candidate_country_cost(
+    country: str,
+    current_spend: float,
+    combo: Tuple[int, int, int, int],
+    financial_assumptions: Dict[str, Dict[str, float]],
+    supplier_inputs: Dict[str, Dict[str, Dict[str, float]]],
+    method: str,
+) -> Dict[str, object]:
+    effective = {country: dict(zip(SUPPLIERS, [float(x) for x in combo]))}
+    result = compute_country_proposal(
+        country=country,
+        current_spend=current_spend,
+        financial_assumptions=financial_assumptions,
+        supplier_inputs=supplier_inputs,
+        effective_shares=effective,
+        method=method,
     )
-    if PLOTLY_AVAILABLE:
-        fig = go.Figure()
-        fig.add_trace(
-            go.Bar(
-                x=bridge_df["Step"],
-                y=bridge_df["Value"],
-                text=[format_money(v, currency, compact=True) for v in bridge_df["Value"]],
-                textposition="outside",
-                marker_color=["#64748b", "#2563eb", "#f97316", "#0f766e"],
-                hovertemplate="%{x}<br>" + currency + " %{y:,.2f}<extra></extra>",
+    return {
+        "country": country,
+        "combo": combo,
+        "adjusted_proposal": result["adjusted_proposal"],
+        "saving": result["saving"],
+        "risk_score": result["risk_score"],
+        "saving_pct": result["saving_pct"],
+    }
+
+
+def run_cost_optimization(
+    current_spend: Dict[str, float],
+    financial_assumptions: Dict[str, Dict[str, float]],
+    supplier_inputs: Dict[str, Dict[str, Dict[str, float]]],
+    method: str,
+    step: int = 5,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Cost x risk optimizer.
+
+    This is an embedded heuristic optimizer, not an external API call.
+    It searches allocation combinations by country while respecting Kraljic minimum shares.
+    The recommendation maximizes saving-per-risk-point among feasible options.
+    """
+    all_combinations = generate_share_combinations(step=step)
+    selected_country_rows = []
+    optimized_shares = {}
+
+    for country in COUNTRIES:
+        minimums = {
+            supplier: supplier_inputs[country][supplier]["minimum_share"]
+            if supplier_inputs[country][supplier]["kraljic_required"]
+            else 0.0
+            for supplier in SUPPLIERS
+        }
+        total_min = sum(minimums.values())
+        feasible = []
+
+        for combo in all_combinations:
+            combo_map = dict(zip(SUPPLIERS, combo))
+            if total_min > 100.0:
+                continue
+            if any(combo_map[supplier] + 1e-9 < minimums[supplier] for supplier in SUPPLIERS):
+                continue
+            feasible.append(
+                compute_candidate_country_cost(
+                    country=country,
+                    current_spend=current_spend[country],
+                    combo=combo,
+                    financial_assumptions=financial_assumptions,
+                    supplier_inputs=supplier_inputs,
+                    method=method,
+                )
             )
+
+        if not feasible:
+            # fallback to current normalized shares in an impossible minimum case
+            fallback = tuple([100, 0, 0, 0])
+            best = compute_candidate_country_cost(
+                country=country,
+                current_spend=current_spend[country],
+                combo=fallback,
+                financial_assumptions=financial_assumptions,
+                supplier_inputs=supplier_inputs,
+                method=method,
+            )
+        else:
+            candidate_df = pd.DataFrame(feasible)
+            # Efficient frontier: remove candidates dominated by lower/equal risk and higher/equal saving.
+            frontier_indices = []
+            for idx, row in candidate_df.iterrows():
+                dominated = candidate_df[
+                    (candidate_df["risk_score"] <= row["risk_score"] + 1e-9)
+                    & (candidate_df["saving"] >= row["saving"] - 1e-9)
+                    & (
+                        (candidate_df["risk_score"] < row["risk_score"] - 1e-9)
+                        | (candidate_df["saving"] > row["saving"] + 1e-9)
+                    )
+                ]
+                if dominated.empty:
+                    frontier_indices.append(idx)
+            frontier = candidate_df.loc[frontier_indices].copy()
+
+            # Prefer positive saving. If none exists, minimize cost impact and risk.
+            positive_frontier = frontier[frontier["saving"] > 0].copy()
+            if not positive_frontier.empty:
+                positive_frontier["score"] = positive_frontier["saving"] / positive_frontier["risk_score"].clip(lower=1e-6)
+                best = positive_frontier.sort_values(["score", "saving"], ascending=[False, False]).iloc[0].to_dict()
+            else:
+                best = frontier.sort_values(["saving", "risk_score"], ascending=[False, True]).iloc[0].to_dict()
+
+        optimized_shares[country] = dict(zip(SUPPLIERS, [float(x) for x in best["combo"]]))
+        selected_country_rows.append(
+            {
+                "Country": country,
+                "Adjusted Proposal": best["adjusted_proposal"],
+                "Saving / Impact": best["saving"],
+                "Saving / Impact %": best["saving_pct"],
+                "Risk Score": best["risk_score"],
+                **{f"{supplier} Share %": optimized_shares[country][supplier] for supplier in SUPPLIERS},
+            }
         )
-        fig.update_layout(
-            title="Spend Bridge",
-            height=420,
-            margin=dict(l=20, r=20, t=55, b=30),
-            yaxis_title=f"Spend ({currency})",
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.bar_chart(bridge_df.set_index("Step"))
+
+    optimized_summary, optimized_details = compute_full_scenario(
+        current_spend=current_spend,
+        financial_assumptions=financial_assumptions,
+        supplier_inputs=supplier_inputs,
+        effective_shares=optimized_shares,
+        method=method,
+    )
+
+    country_recommendation_df = pd.DataFrame(selected_country_rows)
+    return optimized_summary, optimized_details.merge(country_recommendation_df[["Country"]], on="Country", how="inner")
 
 
-def plot_region_comparison(region_df: pd.DataFrame, currency: str) -> None:
-    chart_df = region_df[region_df["Region"].isin(["Brazil", "LATAM"])].copy()
+# =============================================================================
+# Chart helpers
+# =============================================================================
+
+
+def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
+    chart_df = summary_df[summary_df["Region"].isin(["Brazil", "LATAM"])].copy()
     if PLOTLY_AVAILABLE:
         fig = go.Figure()
         fig.add_trace(
@@ -362,242 +614,403 @@ def plot_region_comparison(region_df: pd.DataFrame, currency: str) -> None:
                 y=chart_df["Current Spend"],
                 name="Current Spend",
                 marker_color="#94a3b8",
-                hovertemplate="Current<br>" + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="Current Spend<br>" + currency + " %{y:,.2f}<extra></extra>",
             )
         )
         fig.add_trace(
             go.Bar(
                 x=chart_df["Region"],
-                y=chart_df["Proposal Adjusted"],
-                name="Proposal Adjusted",
+                y=chart_df["Adjusted Proposal"],
+                name="Adjusted Proposal",
                 marker_color="#2563eb",
-                hovertemplate="Proposal adjusted<br>" + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="Adjusted Proposal<br>" + currency + " %{y:,.2f}<extra></extra>",
             )
         )
         fig.update_layout(
-            title="Brazil vs LATAM",
+            title="Brazil and LATAM: Current vs Adjusted Proposal",
             barmode="group",
-            height=420,
+            height=410,
             margin=dict(l=20, r=20, t=55, b=30),
             yaxis_title=f"Spend ({currency})",
             plot_bgcolor="white",
             paper_bgcolor="white",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
+        apply_graphite_chart_theme(fig)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.bar_chart(chart_df.set_index("Region")[["Current Spend", "Proposal Adjusted"]])
+        st.bar_chart(chart_df.set_index("Region")[["Current Spend", "Adjusted Proposal"]])
 
 
-def plot_sensitivity(sensitivity_df: pd.DataFrame, currency: str) -> None:
+def plot_saving_impact(summary_df: pd.DataFrame, currency: str) -> None:
+    chart_df = summary_df[summary_df["Region"].isin(["Brazil", "LATAM"])].copy()
     if PLOTLY_AVAILABLE:
+        colors = ["#10b981" if x >= 0 else "#ef4444" for x in chart_df["Saving / Impact"]]
         fig = go.Figure()
         fig.add_trace(
-            go.Scatter(
-                x=sensitivity_df["Proposal Variation %"],
-                y=sensitivity_df["Saving / Impact"],
-                mode="lines+markers",
-                line=dict(color="#2563eb", width=3),
-                marker=dict(color="#1d4ed8", size=7),
-                hovertemplate="Variation: %{x:.0f}%<br>Saving/Impact: " + currency + " %{y:,.2f}<extra></extra>",
+            go.Bar(
+                x=chart_df["Region"],
+                y=chart_df["Saving / Impact"],
+                marker_color=colors,
+                text=[format_money(v, currency, compact=True) for v in chart_df["Saving / Impact"]],
+                textposition="outside",
+                hovertemplate="%{x}<br>Saving / Impact: " + currency + " %{y:,.2f}<extra></extra>",
             )
         )
-        fig.add_hline(y=0, line_dash="dash", line_color="#ef4444")
+        fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
         fig.update_layout(
-            title="Sensitivity: proposal spend variation",
-            height=420,
+            title="Saving / Impact by Executive Region",
+            height=410,
             margin=dict(l=20, r=20, t=55, b=30),
-            xaxis_title="Proposal variation (%)",
             yaxis_title=f"Saving / Impact ({currency})",
             plot_bgcolor="white",
             paper_bgcolor="white",
             showlegend=False,
         )
+        apply_graphite_chart_theme(fig)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.line_chart(sensitivity_df.set_index("Proposal Variation %")[["Saving / Impact"]])
+        st.bar_chart(chart_df.set_index("Region")[["Saving / Impact"]])
 
 
-def plot_current_mix(metrics: dict, currency: str) -> None:
-    mix_df = pd.DataFrame(
-        {
-            "Region": ["Brazil", "LATAM"],
-            "Current Spend": [metrics["brazil_spend"], metrics["latam_spend"]],
-        }
-    )
+def plot_supplier_mix(details_df: pd.DataFrame) -> None:
+    mix_df = details_df.groupby("Supplier", as_index=False)["Adjusted Proposal Spend"].sum()
     if PLOTLY_AVAILABLE:
         fig = go.Figure(
             data=[
                 go.Pie(
-                    labels=mix_df["Region"],
-                    values=mix_df["Current Spend"],
+                    labels=mix_df["Supplier"],
+                    values=mix_df["Adjusted Proposal Spend"],
                     hole=0.55,
-                    marker=dict(colors=["#2563eb", "#14b8a6"]),
                     textinfo="label+percent",
-                    hovertemplate="%{label}<br>" + currency + " %{value:,.2f}<extra></extra>",
+                    textfont=dict(color=GRAPHITE),
+                    hovertemplate="%{label}<br>%{value:,.2f}<extra></extra>",
                 )
             ]
         )
         fig.update_layout(
-            title="Current spend mix",
-            height=420,
+            title="Adjusted Proposal Spend Mix by Supplier",
+            height=410,
             margin=dict(l=20, r=20, t=55, b=30),
             plot_bgcolor="white",
             paper_bgcolor="white",
         )
+        apply_graphite_chart_theme(fig)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.bar_chart(mix_df.set_index("Region"))
+        st.bar_chart(mix_df.set_index("Supplier"))
 
+
+def plot_risk_vs_saving(summary_df: pd.DataFrame) -> None:
+    chart_df = summary_df[summary_df["Region"].isin(["Brazil", "LATAM"])].copy()
+    if PLOTLY_AVAILABLE:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=chart_df["Risk Score"],
+                y=chart_df["Saving / Impact"],
+                mode="markers+text",
+                text=chart_df["Region"],
+                textposition="top center",
+                marker=dict(size=18, color=["#2563eb", "#14b8a6"]),
+                hovertemplate="Risk Score: %{x:.2f}<br>Saving/Impact: %{y:,.2f}<extra></extra>",
+            )
+        )
+        fig.add_hline(y=0, line_dash="dash", line_color="#ef4444")
+        fig.update_layout(
+            title="Risk vs Saving / Impact",
+            height=410,
+            margin=dict(l=20, r=20, t=55, b=30),
+            xaxis_title="Weighted Risk Score - lower is better",
+            yaxis_title="Saving / Impact",
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            showlegend=False,
+        )
+        apply_graphite_chart_theme(fig)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.scatter_chart(chart_df, x="Risk Score", y="Saving / Impact")
+
+
+# =============================================================================
+# Sidebar inputs
+# =============================================================================
 
 with st.sidebar:
-    st.markdown("## Executive Inputs")
-    st.caption("Use one single currency for every spend input.")
+    st.markdown("## Executive Settings")
     currency_symbol = st.text_input("Currency", value="USD")
-    st.markdown("---")
-    st.markdown("### Financial method")
     calculation_method = st.radio(
-        "Equivalent rate calculation",
-        options=["Composta equivalente", "Linear simples"],
+        "Equivalent rate method",
+        options=["Compound equivalent", "Linear simple"],
         index=0,
     )
-    financing_treatment = st.radio(
-        "Financial cost treatment",
-        options=["Adicionar custo financeiro na proposta", "Proposta já inclui custo financeiro"],
-        index=0,
+    optimization_step = st.selectbox(
+        "Optimization allocation step",
+        options=[10, 5],
+        index=1,
+        help="5% is more precise. 10% is faster for online environments.",
     )
     st.markdown("---")
-    st.markdown("### Sensitivity")
-    sensitivity_range_pct = st.slider(
-        "Proposal variation range (%)",
-        min_value=5,
-        max_value=40,
-        value=20,
-        step=5,
-    )
+    st.caption("The optimizer is an embedded heuristic engine. It does not call any external API.")
+
+
+# =============================================================================
+# Header
+# =============================================================================
 
 st.markdown(
     """
     <div class="executive-hero">
-        <h1>Executive TCO & Should-Cost Dashboard</h1>
+        <h1>Executive Procurement TCO & Should-Cost Dashboard</h1>
         <p>
-            Compare current spend versus proposal spend, isolate payment-term financial impact,
-            consolidate Mexico + Argentina + Colombia as LATAM, and quantify final saving or cost impact.
+            Country-level financial assumptions, supplier-level proposal inputs, automatic allocation normalization,
+            Kraljic minimum-share protection, risk scoring and cost optimization for Brazil and consolidated LATAM.
         </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-input_tab_1, input_tab_2, input_tab_3 = st.tabs(
-    ["1. Current Spend", "2. Financial Assumption", "3. Proposal"]
+
+# =============================================================================
+# Main inputs
+# =============================================================================
+
+input_tab_1, input_tab_2, input_tab_3, input_tab_4 = st.tabs(
+    [
+        "1. Current Spend",
+        "2. Financial Assumptions",
+        "3. Supplier Proposals",
+        "4. Allocation & Kraljic Risk",
+    ]
 )
+
+current_spend: Dict[str, float] = {}
+financial_assumptions: Dict[str, Dict[str, float]] = {}
+supplier_inputs: Dict[str, Dict[str, Dict[str, float]]] = {country: {} for country in COUNTRIES}
+raw_shares: Dict[str, Dict[str, float]] = {country: {} for country in COUNTRIES}
+minimums: Dict[str, Dict[str, float]] = {country: {} for country in COUNTRIES}
+effective_shares: Dict[str, Dict[str, float]] = {country: {} for country in COUNTRIES}
 
 with input_tab_1:
-    st.markdown('<div class="section-title">Current Spend by Locality</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Mexico, Argentina and Colombia are automatically consolidated as LATAM.</div>',
-        unsafe_allow_html=True,
+    render_section_header(
+        "Current Spend by Locality",
+        "Mexico, Argentina and Colombia are automatically consolidated as LATAM in the executive view.",
     )
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        brazil_spend = st.number_input("Brazil current spend", min_value=0.0, value=10_000_000.0, step=100_000.0, format="%.2f")
-    with col2:
-        mexico_spend = st.number_input("Mexico current spend", min_value=0.0, value=6_000_000.0, step=100_000.0, format="%.2f")
-    with col3:
-        argentina_spend = st.number_input("Argentina current spend", min_value=0.0, value=4_000_000.0, step=100_000.0, format="%.2f")
-    with col4:
-        colombia_spend = st.number_input("Colombia current spend", min_value=0.0, value=3_000_000.0, step=100_000.0, format="%.2f")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        current_spend["Brazil"] = st.number_input("Brazil current spend", min_value=0.0, value=10_000_000.0, step=100_000.0, format="%.2f")
+    with c2:
+        current_spend["Mexico"] = st.number_input("Mexico current spend", min_value=0.0, value=6_000_000.0, step=100_000.0, format="%.2f")
+    with c3:
+        current_spend["Argentina"] = st.number_input("Argentina current spend", min_value=0.0, value=4_000_000.0, step=100_000.0, format="%.2f")
+    with c4:
+        current_spend["Colombia"] = st.number_input("Colombia current spend", min_value=0.0, value=3_000_000.0, step=100_000.0, format="%.2f")
 
 with input_tab_2:
-    st.markdown('<div class="section-title">Financial Reference Rate</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Example: 7.35% for 180 days converted into the proposed payment term.</div>',
-        unsafe_allow_html=True,
+    render_section_header(
+        "Financial Assumptions by Country",
+        "Each country has its own reference financial rate and period. The same country rate is applied to every supplier in that country.",
     )
-    col5, col6, col7 = st.columns(3)
-    with col5:
-        reference_rate_pct = st.number_input("Reference financial rate (%)", min_value=0.0, value=7.35, step=0.05, format="%.4f")
-    with col6:
-        reference_days = st.number_input("Reference term days", min_value=1, value=180, step=1)
-    with col7:
-        proposal_payment_days = st.number_input("Proposal payment term days", min_value=0, value=120, step=1)
+    for country in COUNTRIES:
+        st.markdown(f"**{country}**")
+        fc1, fc2 = st.columns(2)
+        default_rate = {"Brazil": 14.52, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
+        default_days = {"Brazil": 360, "Mexico": 360, "Argentina": 360, "Colombia": 360}[country]
+        with fc1:
+            rate = st.number_input(
+                f"{country} reference financial rate (%)",
+                min_value=0.0,
+                value=float(default_rate),
+                step=0.05,
+                format="%.4f",
+                key=f"rate_{country}",
+            )
+        with fc2:
+            days = st.number_input(
+                f"{country} reference period days",
+                min_value=1,
+                value=int(default_days),
+                step=1,
+                key=f"days_{country}",
+            )
+        financial_assumptions[country] = {"rate_pct": rate, "days": days}
 
 with input_tab_3:
-    st.markdown('<div class="section-title">Proposal Spend</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Enter proposal spend before financial adjustment.</div>',
-        unsafe_allow_html=True,
+    render_section_header(
+        "Supplier Proposal Inputs by Country",
+        "For each country and supplier, enter expected spend and expected payment term. Financial cost will be calculated from the country rate.",
     )
-    current_latam_preview = mexico_spend + argentina_spend + colombia_spend
-    current_total_preview = brazil_spend + current_latam_preview
-    proposal_input_mode = st.radio(
-        "Proposal input mode",
-        options=["Brazil + LATAM", "Consolidated total proposal"],
-        horizontal=True,
-    )
-    if proposal_input_mode == "Brazil + LATAM":
-        col8, col9 = st.columns(2)
-        with col8:
-            proposal_brazil = st.number_input("Brazil proposal spend", min_value=0.0, value=9_600_000.0, step=100_000.0, format="%.2f")
-        with col9:
-            proposal_latam = st.number_input("LATAM proposal spend", min_value=0.0, value=12_000_000.0, step=100_000.0, format="%.2f")
-    else:
-        consolidated_proposal = st.number_input("Consolidated proposal spend", min_value=0.0, value=21_600_000.0, step=100_000.0, format="%.2f")
-        brazil_mix = safe_divide(brazil_spend, current_total_preview)
-        latam_mix = safe_divide(current_latam_preview, current_total_preview)
-        proposal_brazil = consolidated_proposal * brazil_mix
-        proposal_latam = consolidated_proposal * latam_mix
-        st.caption("The consolidated proposal is split by the current Brazil/LATAM spend mix.")
+    for country in COUNTRIES:
+        with st.expander(f"{country} supplier proposals", expanded=(country == "Brazil")):
+            for supplier in SUPPLIERS:
+                st.markdown(f"**{supplier}**")
+                pc1, pc2 = st.columns(2)
+                default_spend = current_spend.get(country, 0.0) if supplier == "ChemPrime" else current_spend.get(country, 0.0) * 0.96
+                default_payment = 120 if supplier in ["ChemPrime", "OleoGlobal"] else 60
+                with pc1:
+                    spend = st.number_input(
+                        f"{country} | {supplier} | Expected spend",
+                        min_value=0.0,
+                        value=float(default_spend),
+                        step=100_000.0,
+                        format="%.2f",
+                        key=f"spend_{country}_{supplier}",
+                    )
+                with pc2:
+                    payment_days = st.number_input(
+                        f"{country} | {supplier} | Expected payment term days",
+                        min_value=0,
+                        value=int(default_payment),
+                        step=1,
+                        key=f"pay_{country}_{supplier}",
+                    )
+                # Placeholder fields filled in tab 4.
+                supplier_inputs[country][supplier] = {
+                    "spend": spend,
+                    "payment_days": payment_days,
+                    "risk_score": DEFAULT_RISK[supplier],
+                    "kraljic_required": False,
+                    "minimum_share": 0.0,
+                }
 
-metrics = calculate_metrics(
-    brazil_spend=brazil_spend,
-    mexico_spend=mexico_spend,
-    argentina_spend=argentina_spend,
-    colombia_spend=colombia_spend,
-    proposal_brazil=proposal_brazil,
-    proposal_latam=proposal_latam,
-    reference_rate_pct=reference_rate_pct,
-    reference_days=reference_days,
-    proposal_payment_days=proposal_payment_days,
+with input_tab_4:
+    render_section_header(
+        "Allocation and Kraljic Risk Controls",
+        "Set desired supplier participation. Effective shares are automatically normalized to 100%, while Kraljic minimum shares are protected.",
+    )
+    for country in COUNTRIES:
+        with st.expander(f"{country} allocation and risk", expanded=(country == "Brazil")):
+            st.caption("Desired shares are normalized automatically. Effective shares always sum to 100% unless minimum constraints are invalid.")
+            for supplier in SUPPLIERS:
+                ac1, ac2, ac3, ac4 = st.columns([1.1, 1, 1, 1])
+                default_share = 100.0 if supplier == "ChemPrime" else 0.0
+                with ac1:
+                    desired_share = st.slider(
+                        f"{country} | {supplier} | Desired share %",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=default_share,
+                        step=1.0,
+                        key=f"share_{country}_{supplier}",
+                    )
+                with ac2:
+                    kraljic_required = st.checkbox(
+                        f"{country} | {supplier} | Kraljic minimum required",
+                        value=False,
+                        key=f"kraljic_{country}_{supplier}",
+                    )
+                with ac3:
+                    min_share = st.number_input(
+                        f"{country} | {supplier} | Minimum share %",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=20.0 if kraljic_required else 0.0,
+                        step=1.0,
+                        key=f"min_{country}_{supplier}",
+                        disabled=not kraljic_required,
+                    )
+                with ac4:
+                    risk_score = st.slider(
+                        f"{country} | {supplier} | Risk score",
+                        min_value=1.0,
+                        max_value=5.0,
+                        value=float(DEFAULT_RISK[supplier]),
+                        step=0.5,
+                        key=f"risk_{country}_{supplier}",
+                        help="1 = lowest risk, 5 = highest risk.",
+                    )
+                raw_shares[country][supplier] = desired_share
+                minimums[country][supplier] = min_share if kraljic_required else 0.0
+                supplier_inputs[country][supplier]["risk_score"] = risk_score
+                supplier_inputs[country][supplier]["kraljic_required"] = kraljic_required
+                supplier_inputs[country][supplier]["minimum_share"] = min_share if kraljic_required else 0.0
+
+            total_min = sum(minimums[country].values())
+            if total_min > 100.0:
+                st.error(f"{country}: Kraljic minimum shares sum to {total_min:.1f}%. Reduce minimum requirements to 100% or less.")
+            effective_shares[country] = normalize_with_minimums(raw_shares[country], minimums[country])
+            effective_df = pd.DataFrame(
+                {
+                    "Supplier": SUPPLIERS,
+                    "Desired Share %": [raw_shares[country][s] for s in SUPPLIERS],
+                    "Minimum Share %": [minimums[country][s] for s in SUPPLIERS],
+                    "Effective Share %": [effective_shares[country][s] for s in SUPPLIERS],
+                }
+            )
+            st.dataframe(effective_df.style.format({"Desired Share %": "{:.1f}", "Minimum Share %": "{:.1f}", "Effective Share %": "{:.1f}"}), use_container_width=True)
+
+# Ensure effective shares exist when tab 4 was not interacted with in a fresh rerun.
+for country in COUNTRIES:
+    if not effective_shares[country]:
+        raw_shares[country] = {supplier: 100.0 if supplier == "ChemPrime" else 0.0 for supplier in SUPPLIERS}
+        minimums[country] = {supplier: 0.0 for supplier in SUPPLIERS}
+        effective_shares[country] = normalize_with_minimums(raw_shares[country], minimums[country])
+
+
+# =============================================================================
+# Results
+# =============================================================================
+
+summary_df, details_df = compute_full_scenario(
+    current_spend=current_spend,
+    financial_assumptions=financial_assumptions,
+    supplier_inputs=supplier_inputs,
+    effective_shares=effective_shares,
     method=calculation_method,
-    finance_mode=financing_treatment,
 )
 
-region_df = build_region_table(metrics)
-sensitivity_df = build_sensitivity_table(metrics, sensitivity_range_pct, financing_treatment)
-
-is_saving = metrics["saving"] >= 0
+total_row = summary_df[summary_df["Region"] == "Total"].iloc[0]
+brazil_row = summary_df[summary_df["Region"] == "Brazil"].iloc[0]
+latam_row = summary_df[summary_df["Region"] == "LATAM"].iloc[0]
+is_saving = total_row["Saving / Impact"] >= 0
 result_label = "Saving" if is_saving else "Impact"
 result_tone = "good" if is_saving else "bad"
 
-st.markdown('<div class="section-title">Executive Result</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="section-subtitle">Decision-ready view: spend, financial impact and final saving/impact.</div>',
-    unsafe_allow_html=True,
+render_section_header(
+    "Executive Result",
+    "Decision-ready view shown separately for Brazil and consolidated LATAM, plus total scenario impact.",
 )
 
-kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-with kpi1:
-    render_kpi_card("Current Spend", format_money(metrics["current_total"], currency_symbol, compact=True), "Brazil + consolidated LATAM", "neutral")
-with kpi2:
-    render_kpi_card("Proposal Adjusted", format_money(metrics["proposal_adjusted_total"], currency_symbol, compact=True), "Proposal plus financial adjustment", "neutral")
-with kpi3:
-    render_kpi_card(result_label, format_money(abs(metrics["saving"]), currency_symbol, compact=True), f"{format_percent(abs(metrics['saving_pct']))} versus current spend", result_tone)
-with kpi4:
-    render_kpi_card("Equivalent Rate", format_percent(metrics["equivalent_rate"]), f"{reference_rate_pct:.2f}% / {reference_days}dd to {proposal_payment_days}dd", "neutral")
-with kpi5:
-    render_kpi_card("Financial Cost", format_money(metrics["finance_total"], currency_symbol, compact=True), "Payment-term cost applied to proposal", "neutral")
+k1, k2, k3, k4, k5 = st.columns(5)
+with k1:
+    render_kpi_card("Total Current Spend", format_money(total_row["Current Spend"], currency_symbol, True), "Brazil + LATAM", "neutral")
+with k2:
+    render_kpi_card("Total Adjusted Proposal", format_money(total_row["Adjusted Proposal"], currency_symbol, True), "Weighted by supplier shares", "neutral")
+with k3:
+    render_kpi_card(result_label, format_money(abs(total_row["Saving / Impact"]), currency_symbol, True), f"{format_percent(abs(total_row['Saving / Impact %']))} vs current", result_tone)
+with k4:
+    render_kpi_card("Financial Impact", format_money(total_row["Financial Cost"], currency_symbol, True), "Payment-term cost", "neutral")
+with k5:
+    render_kpi_card("Weighted Risk", f"{total_row['Risk Score']:.2f}/5", "Lower is better", "neutral")
+
+r1c1, r1c2 = st.columns(2)
+with r1c1:
+    render_kpi_card(
+        "Brazil Result",
+        format_money(abs(brazil_row["Saving / Impact"]), currency_symbol, True),
+        f"{'Saving' if brazil_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {brazil_row['Risk Score']:.2f}/5",
+        "good" if brazil_row["Saving / Impact"] >= 0 else "bad",
+    )
+with r1c2:
+    render_kpi_card(
+        "LATAM Result",
+        format_money(abs(latam_row["Saving / Impact"]), currency_symbol, True),
+        f"{'Saving' if latam_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {latam_row['Risk Score']:.2f}/5",
+        "good" if latam_row["Saving / Impact"] >= 0 else "bad",
+    )
 
 if is_saving:
     st.markdown(
         f"""
         <div class="decision-card decision-good">
-            <div class="decision-title">Proposal is financially attractive under the current assumptions</div>
+            <div class="decision-title">Recommended scenario is financially attractive under the current allocation</div>
             <div class="decision-body">
-                The adjusted proposal generates an estimated saving of
-                <b>{format_money(metrics['saving'], currency_symbol)}</b>, equivalent to
-                <b>{format_percent(metrics['saving_pct'])}</b> versus the current spend.
+                The adjusted proposal generates an estimated total saving of
+                <b>{format_money(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
+                <b>{format_percent(total_row['Saving / Impact %'])}</b>, with a weighted risk score of
+                <b>{total_row['Risk Score']:.2f}/5</b>.
             </div>
         </div>
         """,
@@ -607,96 +1020,151 @@ else:
     st.markdown(
         f"""
         <div class="decision-card decision-bad">
-            <div class="decision-title">Proposal creates a cost impact under the current assumptions</div>
+            <div class="decision-title">Current allocation creates a cost impact under the current assumptions</div>
             <div class="decision-body">
                 The adjusted proposal is above current spend by
-                <b>{format_money(abs(metrics['saving']), currency_symbol)}</b>, equivalent to
-                <b>{format_percent(abs(metrics['saving_pct']))}</b>. A lower price, better payment term,
-                or lower financial charge is required to reach break-even.
+                <b>{format_money(abs(total_row['Saving / Impact']), currency_symbol)}</b>, equivalent to
+                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b>. Use Cost Optimization to search for a better cost x risk allocation.
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-chart_col1, chart_col2 = st.columns([1.35, 1])
+chart_col1, chart_col2 = st.columns(2)
 with chart_col1:
-    plot_spend_bridge(metrics, currency_symbol)
+    plot_executive_comparison(summary_df, currency_symbol)
 with chart_col2:
-    plot_current_mix(metrics, currency_symbol)
+    plot_saving_impact(summary_df, currency_symbol)
 
-chart_col3, chart_col4 = st.columns([1, 1.25])
+chart_col3, chart_col4 = st.columns(2)
 with chart_col3:
-    plot_region_comparison(region_df, currency_symbol)
+    plot_supplier_mix(details_df)
 with chart_col4:
-    plot_sensitivity(sensitivity_df, currency_symbol)
+    plot_risk_vs_saving(summary_df)
 
-st.markdown('<div class="section-title">Detailed Breakdown</div>', unsafe_allow_html=True)
-display_region_df = region_df.copy()
-for money_col in ["Current Spend", "Proposal Before Finance", "Financial Cost", "Proposal Adjusted", "Saving / Impact"]:
-    display_region_df[money_col] = display_region_df[money_col].apply(lambda x: format_money(x, currency_symbol))
-display_region_df["Saving / Impact %"] = display_region_df["Saving / Impact %"].apply(format_percent)
-st.dataframe(display_region_df, use_container_width=True)
+render_section_header("Scenario Breakdown", "Proposal comparison by Brazil, LATAM and total scenario.")
+display_summary = summary_df.copy()
+for column in ["Current Spend", "Proposal Before Finance", "Financial Cost", "Adjusted Proposal", "Saving / Impact"]:
+    display_summary[column] = display_summary[column].map(lambda x: format_money(x, currency_symbol))
+display_summary["Saving / Impact %"] = display_summary["Saving / Impact %"].map(format_percent)
+display_summary["Risk Score"] = display_summary["Risk Score"].map(lambda x: f"{x:.2f}/5")
+st.dataframe(display_summary, use_container_width=True)
 
-st.markdown('<div class="section-title">Procurement Interpretation</div>', unsafe_allow_html=True)
-insight_col1, insight_col2 = st.columns(2)
-with insight_col1:
-    st.markdown(
-        f"""
-        <div class="insight-box">
-            <b>Financial assumption</b><br><br>
-            Reference rate: <b>{reference_rate_pct:.2f}% for {reference_days} days</b><br>
-            Proposal payment term: <b>{proposal_payment_days} days</b><br>
-            Equivalent rate: <b>{format_percent(metrics['equivalent_rate'])}</b><br>
-            Method: <b>{calculation_method}</b><br>
-            Treatment: <b>{financing_treatment}</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with insight_col2:
-    st.markdown(
-        f"""
-        <div class="insight-box">
-            <b>Break-even reading</b><br><br>
-            To break even after the financial adjustment, proposal spend before finance should be at or below
-            <b>{format_money(metrics['break_even_before_finance'], currency_symbol)}</b>.<br><br>
-            Current gap to break-even:
-            <b>{format_money(metrics['gap_to_break_even'], currency_symbol)}</b>.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+with st.expander("Supplier-level proposal details"):
+    display_details = details_df.copy()
+    for money_col in ["Proposal Spend", "Allocated Spend Before Finance", "Financial Cost", "Adjusted Proposal Spend"]:
+        display_details[money_col] = display_details[money_col].map(lambda x: format_money(x, currency_symbol))
+    display_details["Equivalent Financial Rate"] = display_details["Equivalent Financial Rate"].map(format_percent)
+    display_details["Effective Share %"] = display_details["Effective Share %"].map(lambda x: f"{x:.1f}%")
+    display_details["Minimum Share %"] = display_details["Minimum Share %"].map(lambda x: f"{x:.1f}%")
+    display_details["Risk Score"] = display_details["Risk Score"].map(lambda x: f"{x:.1f}/5")
+    st.dataframe(display_details, use_container_width=True)
 
-with st.expander("Show sensitivity data"):
-    display_sensitivity_df = sensitivity_df.copy()
-    display_sensitivity_df["Proposal Variation %"] = display_sensitivity_df["Proposal Variation %"].map(lambda x: f"{x:.0f}%")
-    display_sensitivity_df["Simulated Proposal Adjusted"] = display_sensitivity_df["Simulated Proposal Adjusted"].apply(lambda x: format_money(x, currency_symbol))
-    display_sensitivity_df["Saving / Impact"] = display_sensitivity_df["Saving / Impact"].apply(lambda x: format_money(x, currency_symbol))
-    display_sensitivity_df["Saving / Impact %"] = display_sensitivity_df["Saving / Impact %"].apply(format_percent)
-    st.dataframe(display_sensitivity_df, use_container_width=True)
 
-export_df = region_df.copy()
-export_df["Equivalent Rate"] = metrics["equivalent_rate"]
-export_df["Reference Rate %"] = reference_rate_pct
-export_df["Reference Days"] = reference_days
-export_df["Proposal Payment Days"] = proposal_payment_days
-export_df["Calculation Method"] = calculation_method
-export_df["Financing Treatment"] = financing_treatment
+# =============================================================================
+# Cost Optimization
+# =============================================================================
 
-csv_data = export_df.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="Download executive breakdown as CSV",
-    data=csv_data,
-    file_name="executive_tco_procurement_breakdown.csv",
-    mime="text/csv",
+render_section_header(
+    "Cost Optimization",
+    "Searches the best allocation considering supplier proposal cost, country financial cost, Kraljic minimum shares and weighted risk score.",
 )
+
+opt_col1, opt_col2 = st.columns([1, 3])
+with opt_col1:
+    run_optimizer = st.button("Cost Optimization", type="primary", use_container_width=True)
+with opt_col2:
+    st.markdown(
+        """
+        <div class="small-note">
+        Optimization objective: find an allocation with the strongest saving per risk point while respecting Kraljic minimum requirements.
+        This is an embedded heuristic optimizer, not an external API call.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+if run_optimizer:
+    optimized_summary, optimized_details = run_cost_optimization(
+        current_spend=current_spend,
+        financial_assumptions=financial_assumptions,
+        supplier_inputs=supplier_inputs,
+        method=calculation_method,
+        step=int(optimization_step),
+    )
+    optimized_total = optimized_summary[optimized_summary["Region"] == "Total"].iloc[0]
+    st.success(
+        f"Optimized scenario found: {format_money(optimized_total['Saving / Impact'], currency_symbol)} saving / impact, "
+        f"{format_percent(optimized_total['Saving / Impact %'])}, weighted risk {optimized_total['Risk Score']:.2f}/5."
+    )
+
+    o1, o2 = st.columns(2)
+    with o1:
+        opt_display = optimized_summary.copy()
+        for column in ["Current Spend", "Proposal Before Finance", "Financial Cost", "Adjusted Proposal", "Saving / Impact"]:
+            opt_display[column] = opt_display[column].map(lambda x: format_money(x, currency_symbol))
+        opt_display["Saving / Impact %"] = opt_display["Saving / Impact %"].map(format_percent)
+        opt_display["Risk Score"] = opt_display["Risk Score"].map(lambda x: f"{x:.2f}/5")
+        st.markdown("**Optimized executive summary**")
+        st.dataframe(opt_display, use_container_width=True)
+    with o2:
+        allocation_view = optimized_details[["Country", "Supplier", "Effective Share %", "Adjusted Proposal Spend", "Risk Score"]].copy()
+        allocation_view["Effective Share %"] = allocation_view["Effective Share %"].map(lambda x: f"{x:.1f}%")
+        allocation_view["Adjusted Proposal Spend"] = allocation_view["Adjusted Proposal Spend"].map(lambda x: format_money(x, currency_symbol))
+        allocation_view["Risk Score"] = allocation_view["Risk Score"].map(lambda x: f"{x:.1f}/5")
+        st.markdown("**Optimized supplier allocation**")
+        st.dataframe(allocation_view, use_container_width=True)
+
+    st.markdown(
+        f"""
+        <div class="insight-box">
+            <b>AI-style optimization reading</b><br><br>
+            The optimizer searched allocation combinations in {optimization_step}% increments by country, respected all Kraljic minimum-share constraints,
+            applied each country's financial assumption to all suppliers in that country, and selected the scenario with the best saving per weighted risk point.
+            <br><br>
+            Best total adjusted proposal: <b>{format_money(optimized_total['Adjusted Proposal'], currency_symbol)}</b><br>
+            Best total saving / impact: <b>{format_money(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
+            Weighted risk score: <b>{optimized_total['Risk Score']:.2f}/5</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# =============================================================================
+# Export
+# =============================================================================
+
+export_summary = summary_df.copy()
+export_details = details_df.copy()
+
+csv_summary = export_summary.to_csv(index=False).encode("utf-8")
+csv_details = export_details.to_csv(index=False).encode("utf-8")
+
+download_col1, download_col2 = st.columns(2)
+with download_col1:
+    st.download_button(
+        "Download executive summary CSV",
+        data=csv_summary,
+        file_name="executive_tco_summary.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+with download_col2:
+    st.download_button(
+        "Download supplier details CSV",
+        data=csv_details,
+        file_name="supplier_tco_details.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 st.markdown(
     """
     <div class="small-note">
-        Note: this model is based on user-entered assumptions. Final sourcing decisions should also consider supply risk,
-        quality, capacity, logistics constraints, taxes, compliance and business continuity.
+        Governance note: this model is based on user-entered assumptions. Final sourcing decisions should also consider supplier capacity,
+        quality, logistics, tax treatment, compliance, contractual exposure, supply continuity and Kraljic category strategy.
     </div>
     """,
     unsafe_allow_html=True,
