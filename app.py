@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version: v6 - Country/Supplier Allocation + Kraljic Risk + Cost Optimization
+Version: v7 - Cash Return Offset + Automatic Share Optimization
 
 Run locally:
     pip install -r requirements.txt
@@ -433,10 +433,22 @@ def compute_country_proposal(
     effective_shares: Dict[str, Dict[str, float]],
     method: str,
 ) -> Dict[str, object]:
+    """
+    Computes country-level proposal TCO.
+
+    Important financial logic:
+    - Supplier financing cost increases the proposal cost according to the payment term.
+    - Invested-cash return offsets that cost because the company can keep the cash invested
+      during the supplier payment term.
+    - Longer payment terms therefore generate more capital gain offset.
+    - Adjusted proposal = allocated proposal spend + gross supplier financing cost - capital gain offset.
+    """
     rows = []
     adjusted_total = 0.0
     proposal_before_finance_total = 0.0
-    financial_cost_total = 0.0
+    gross_financial_cost_total = 0.0
+    capital_gain_offset_total = 0.0
+    net_financial_impact_total = 0.0
     risk_weighted_sum = 0.0
 
     for supplier in SUPPLIERS:
@@ -447,18 +459,26 @@ def compute_country_proposal(
         share_pct = effective_shares[country][supplier]
         share = share_pct / 100.0
 
-        country_rate = financial_assumptions[country]["rate_pct"]
-        country_days = int(financial_assumptions[country]["days"])
-        rate = equivalent_rate(country_rate, country_days, payment_days, method)
+        country_financing_rate = financial_assumptions[country]["financing_rate_pct"]
+        country_financing_days = int(financial_assumptions[country]["financing_days"])
+        supplier_financing_rate = equivalent_rate(country_financing_rate, country_financing_days, payment_days, method)
+
+        country_return_rate = financial_assumptions[country]["investment_return_rate_pct"]
+        country_return_days = int(financial_assumptions[country]["investment_return_days"])
+        investment_return_rate = equivalent_rate(country_return_rate, country_return_days, payment_days, method)
 
         allocated_before_finance = spend * share
-        financial_cost = allocated_before_finance * rate
-        adjusted_spend = allocated_before_finance + financial_cost
+        gross_financial_cost = allocated_before_finance * supplier_financing_rate
+        capital_gain_offset = allocated_before_finance * investment_return_rate
+        net_financial_impact = gross_financial_cost - capital_gain_offset
+        adjusted_spend = allocated_before_finance + net_financial_impact
 
         proposal_before_finance_total += allocated_before_finance
-        financial_cost_total += financial_cost
+        gross_financial_cost_total += gross_financial_cost
+        capital_gain_offset_total += capital_gain_offset
+        net_financial_impact_total += net_financial_impact
         adjusted_total += adjusted_spend
-        risk_weighted_sum += risk_score * adjusted_spend
+        risk_weighted_sum += risk_score * max(adjusted_spend, 0.0)
 
         rows.append(
             {
@@ -467,9 +487,12 @@ def compute_country_proposal(
                 "Effective Share %": share_pct,
                 "Proposal Spend": spend,
                 "Payment Term Days": payment_days,
-                "Equivalent Financial Rate": rate,
+                "Supplier Financing Rate": supplier_financing_rate,
+                "Investment Return Rate": investment_return_rate,
                 "Allocated Spend Before Finance": allocated_before_finance,
-                "Financial Cost": financial_cost,
+                "Gross Financial Cost": gross_financial_cost,
+                "Capital Gain Offset": capital_gain_offset,
+                "Net Financial Impact": net_financial_impact,
                 "Adjusted Proposal Spend": adjusted_spend,
                 "Risk Score": risk_score,
                 "Kraljic Minimum Required": supplier_data["kraljic_required"],
@@ -482,14 +505,15 @@ def compute_country_proposal(
         "country": country,
         "current_spend": current_spend,
         "proposal_before_finance": proposal_before_finance_total,
-        "financial_cost": financial_cost_total,
+        "gross_financial_cost": gross_financial_cost_total,
+        "capital_gain_offset": capital_gain_offset_total,
+        "net_financial_impact": net_financial_impact_total,
         "adjusted_proposal": adjusted_total,
         "saving": saving,
         "saving_pct": safe_divide(saving, current_spend),
         "risk_score": safe_divide(risk_weighted_sum, adjusted_total) if adjusted_total else 0.0,
         "rows": rows,
     }
-
 
 def compute_full_scenario(
     current_spend: Dict[str, float],
@@ -515,7 +539,10 @@ def compute_full_scenario(
                 "Region": country,
                 "Current Spend": result["current_spend"],
                 "Proposal Before Finance": result["proposal_before_finance"],
-                "Financial Cost": result["financial_cost"],
+                "Gross Financial Cost": result["gross_financial_cost"],
+                "Capital Gain Offset": result["capital_gain_offset"],
+                "Net Financial Impact": result["net_financial_impact"],
+                "Financial Cost": result["net_financial_impact"],
                 "Adjusted Proposal": result["adjusted_proposal"],
                 "Saving / Impact": result["saving"],
                 "Saving / Impact %": result["saving_pct"],
@@ -527,14 +554,18 @@ def compute_full_scenario(
     latam_rows = [row for row in country_results if row["Region"] in LATAM_COUNTRIES]
     latam_current = sum(row["Current Spend"] for row in latam_rows)
     latam_before = sum(row["Proposal Before Finance"] for row in latam_rows)
-    latam_finance = sum(row["Financial Cost"] for row in latam_rows)
+    latam_gross_finance = sum(row["Gross Financial Cost"] for row in latam_rows)
+    latam_capital_offset = sum(row["Capital Gain Offset"] for row in latam_rows)
+    latam_net_finance = sum(row["Net Financial Impact"] for row in latam_rows)
     latam_adjusted = sum(row["Adjusted Proposal"] for row in latam_rows)
     latam_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in latam_rows)
 
     brazil_row = next(row for row in country_results if row["Region"] == "Brazil")
     total_current = sum(row["Current Spend"] for row in country_results)
     total_before = sum(row["Proposal Before Finance"] for row in country_results)
-    total_finance = sum(row["Financial Cost"] for row in country_results)
+    total_gross_finance = sum(row["Gross Financial Cost"] for row in country_results)
+    total_capital_offset = sum(row["Capital Gain Offset"] for row in country_results)
+    total_net_finance = sum(row["Net Financial Impact"] for row in country_results)
     total_adjusted = sum(row["Adjusted Proposal"] for row in country_results)
     total_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in country_results)
 
@@ -544,7 +575,10 @@ def compute_full_scenario(
             "Region": "LATAM",
             "Current Spend": latam_current,
             "Proposal Before Finance": latam_before,
-            "Financial Cost": latam_finance,
+            "Gross Financial Cost": latam_gross_finance,
+            "Capital Gain Offset": latam_capital_offset,
+            "Net Financial Impact": latam_net_finance,
+            "Financial Cost": latam_net_finance,
             "Adjusted Proposal": latam_adjusted,
             "Saving / Impact": latam_current - latam_adjusted,
             "Saving / Impact %": safe_divide(latam_current - latam_adjusted, latam_current),
@@ -554,7 +588,10 @@ def compute_full_scenario(
             "Region": "Total",
             "Current Spend": total_current,
             "Proposal Before Finance": total_before,
-            "Financial Cost": total_finance,
+            "Gross Financial Cost": total_gross_finance,
+            "Capital Gain Offset": total_capital_offset,
+            "Net Financial Impact": total_net_finance,
+            "Financial Cost": total_net_finance,
             "Adjusted Proposal": total_adjusted,
             "Saving / Impact": total_current - total_adjusted,
             "Saving / Impact %": safe_divide(total_current - total_adjusted, total_current),
@@ -615,13 +652,15 @@ def run_cost_optimization(
     supplier_inputs: Dict[str, Dict[str, Dict[str, float]]],
     method: str,
     step: int = 5,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Dict[str, float]]]:
     """
     Cost x risk optimizer.
 
     This is an embedded heuristic optimizer, not an external API call.
     It searches allocation combinations by country while respecting Kraljic minimum shares.
-    The recommendation maximizes saving-per-risk-point among feasible options.
+    Primary objective: maximize saving.
+    Secondary objective: if no saving exists, minimize impact by selecting the least negative result.
+    Risk is used as the tie-breaker, so among economically similar options the optimizer chooses the lower-risk allocation.
     """
     all_combinations = generate_share_combinations(step=step)
     selected_country_rows = []
@@ -682,13 +721,12 @@ def run_cost_optimization(
                     frontier_indices.append(idx)
             frontier = candidate_df.loc[frontier_indices].copy()
 
-            # Prefer positive saving. If none exists, minimize cost impact and risk.
-            positive_frontier = frontier[frontier["saving"] > 0].copy()
-            if not positive_frontier.empty:
-                positive_frontier["score"] = positive_frontier["saving"] / positive_frontier["risk_score"].clip(lower=1e-6)
-                best = positive_frontier.sort_values(["score", "saving"], ascending=[False, False]).iloc[0].to_dict()
-            else:
-                best = frontier.sort_values(["saving", "risk_score"], ascending=[False, True]).iloc[0].to_dict()
+            # Optimization priority requested by Procurement:
+            # 1) maximize saving;
+            # 2) if impact is unavoidable, select the lowest impact;
+            # 3) use lower weighted risk as the tie-breaker.
+            # This means saving/impact is the economic priority, while Kraljic risk protects the recommendation.
+            best = frontier.sort_values(["saving", "risk_score"], ascending=[False, True]).iloc[0].to_dict()
 
         optimized_shares[country] = dict(zip(SUPPLIERS, [float(x) for x in best["combo"]]))
         selected_country_rows.append(
@@ -711,7 +749,7 @@ def run_cost_optimization(
     )
 
     country_recommendation_df = pd.DataFrame(selected_country_rows)
-    return optimized_summary, optimized_details.merge(country_recommendation_df[["Country"]], on="Country", how="inner")
+    return optimized_summary, optimized_details.merge(country_recommendation_df[["Country"]], on="Country", how="inner"), optimized_shares
 
 
 # =============================================================================
@@ -880,7 +918,7 @@ st.markdown(
         <h1>Executive Procurement TCO & Should-Cost Dashboard</h1>
         <p>
             Country-level financial assumptions, supplier-level proposal inputs, automatic allocation normalization,
-            Kraljic minimum-share protection, risk scoring and cost optimization for Brazil and consolidated LATAM.
+            Kraljic minimum-share protection, invested-cash return offset, risk scoring and cost optimization for Brazil and consolidated LATAM.
         </p>
     </div>
     """,
@@ -928,31 +966,59 @@ with input_tab_1:
 with input_tab_2:
     render_section_header(
         "Financial Assumptions by Country",
-        "Each country has its own reference financial rate and period. The same country rate is applied to every supplier in that country.",
+        "Each country has its own supplier financing rate and investment return assumption. The investment return offsets the payment-term financing cost because the retained cash works during the payment term.",
     )
     for country in COUNTRIES:
         st.markdown(f"**{country}**")
-        fc1, fc2 = st.columns(2)
-        default_rate = {"Brazil": 14.52, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        default_financing_rate = {"Brazil": 14.52, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
+        default_investment_return = {"Brazil": 15.39, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
         default_days = {"Brazil": 360, "Mexico": 360, "Argentina": 360, "Colombia": 360}[country]
         with fc1:
-            rate = st.number_input(
-                f"{country} reference financial rate (%)",
+            financing_rate = st.number_input(
+                f"{country} supplier financing rate (%)",
                 min_value=0.0,
-                value=float(default_rate),
+                value=float(default_financing_rate),
                 step=0.05,
                 format="%.4f",
-                key=f"rate_{country}",
+                key=f"financing_rate_{country}",
+                help="Reference rate charged by suppliers for payment term financing.",
             )
         with fc2:
-            days = st.number_input(
-                f"{country} reference period days",
+            financing_days = st.number_input(
+                f"{country} financing reference days",
                 min_value=1,
                 value=int(default_days),
                 step=1,
-                key=f"days_{country}",
+                key=f"financing_days_{country}",
             )
-        financial_assumptions[country] = {"rate_pct": rate, "days": days}
+        with fc3:
+            investment_return_rate = st.number_input(
+                f"{country} investment return rate (%)",
+                min_value=0.0,
+                value=float(default_investment_return),
+                step=0.05,
+                format="%.4f",
+                key=f"investment_return_rate_{country}",
+                help="Expected return earned by keeping cash invested until supplier payment date.",
+            )
+        with fc4:
+            investment_return_days = st.number_input(
+                f"{country} return reference days",
+                min_value=1,
+                value=int(default_days),
+                step=1,
+                key=f"investment_return_days_{country}",
+            )
+        financial_assumptions[country] = {
+            "financing_rate_pct": financing_rate,
+            "financing_days": financing_days,
+            "investment_return_rate_pct": investment_return_rate,
+            "investment_return_days": investment_return_days,
+        }
+        st.caption(
+            f"{country}: supplier financing and investment return are converted to each supplier payment term, then netted in the final TCO."
+        )
 
 with input_tab_3:
     render_section_header(
@@ -1172,7 +1238,7 @@ with k2:
 with k3:
     render_kpi_card(result_label, format_money(abs(total_row["Saving / Impact"]), currency_symbol, True), f"{format_percent(abs(total_row['Saving / Impact %']))} vs current", result_tone)
 with k4:
-    render_kpi_card("Financial Impact", format_money(total_row["Financial Cost"], currency_symbol, True), "Payment-term cost", "neutral")
+    render_kpi_card("Net Financial Impact", format_money(total_row["Net Financial Impact"], currency_symbol, True), "Supplier financing minus capital gain", "good" if total_row["Net Financial Impact"] <= 0 else "bad")
 with k5:
     render_kpi_card("Weighted Risk", f"{total_row['Risk Score']:.2f}/5", "Lower is better", "neutral")
 
@@ -1241,7 +1307,9 @@ with chart_col4:
 
 render_section_header("Scenario Breakdown", "Proposal comparison by Brazil, LATAM and total scenario.")
 display_summary = summary_df.copy()
-for column in ["Current Spend", "Proposal Before Finance", "Financial Cost", "Adjusted Proposal", "Saving / Impact"]:
+if "Financial Cost" in display_summary.columns:
+    display_summary = display_summary.drop(columns=["Financial Cost"])
+for column in ["Current Spend", "Proposal Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal", "Saving / Impact"]:
     display_summary[column] = display_summary[column].map(lambda x: format_money(x, currency_symbol))
 display_summary["Saving / Impact %"] = display_summary["Saving / Impact %"].map(format_percent)
 display_summary["Risk Score"] = display_summary["Risk Score"].map(lambda x: f"{x:.2f}/5")
@@ -1249,9 +1317,10 @@ st.dataframe(display_summary, use_container_width=True)
 
 with st.expander("Supplier-level proposal details"):
     display_details = details_df.copy()
-    for money_col in ["Proposal Spend", "Allocated Spend Before Finance", "Financial Cost", "Adjusted Proposal Spend"]:
+    for money_col in ["Proposal Spend", "Allocated Spend Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal Spend"]:
         display_details[money_col] = display_details[money_col].map(lambda x: format_money(x, currency_symbol))
-    display_details["Equivalent Financial Rate"] = display_details["Equivalent Financial Rate"].map(format_percent)
+    display_details["Supplier Financing Rate"] = display_details["Supplier Financing Rate"].map(format_percent)
+    display_details["Investment Return Rate"] = display_details["Investment Return Rate"].map(format_percent)
     display_details["Effective Share %"] = display_details["Effective Share %"].map(lambda x: f"{x:.1f}%")
     display_details["Minimum Share %"] = display_details["Minimum Share %"].map(lambda x: f"{x:.1f}%")
     display_details["Risk Score"] = display_details["Risk Score"].map(lambda x: f"{x:.1f}/5")
@@ -1282,23 +1351,44 @@ with opt_col2:
     )
 
 if run_optimizer:
-    optimized_summary, optimized_details = run_cost_optimization(
+    optimized_summary, optimized_details, optimized_shares = run_cost_optimization(
         current_spend=current_spend,
         financial_assumptions=financial_assumptions,
         supplier_inputs=supplier_inputs,
         method=calculation_method,
         step=int(optimization_step),
     )
+
+    # Automatically push the optimized allocation into the Share Projection sliders.
+    # On rerun, the whole dashboard recalculates using the recommended scenario.
+    for country in COUNTRIES:
+        for supplier in SUPPLIERS:
+            st.session_state[f"share_{country}_{supplier}"] = float(optimized_shares[country][supplier])
+
+    st.session_state["share_projection_mode"] = "Automatic"
+    st.session_state["optimization_message"] = "Cost Optimization applied automatically to Share Projection sliders."
+    st.rerun()
+
+if st.session_state.get("optimization_message"):
+    st.success(st.session_state["optimization_message"])
+    del st.session_state["optimization_message"]
+
+    # Recompute after the optimized sliders have been applied.
+    optimized_summary = summary_df
+    optimized_details = details_df
     optimized_total = optimized_summary[optimized_summary["Region"] == "Total"].iloc[0]
-    st.success(
-        f"Optimized scenario found: {format_money(optimized_total['Saving / Impact'], currency_symbol)} saving / impact, "
+
+    st.info(
+        f"Optimized scenario now active: {format_money(optimized_total['Saving / Impact'], currency_symbol)} saving / impact, "
         f"{format_percent(optimized_total['Saving / Impact %'])}, weighted risk {optimized_total['Risk Score']:.2f}/5."
     )
 
     o1, o2 = st.columns(2)
     with o1:
         opt_display = optimized_summary.copy()
-        for column in ["Current Spend", "Proposal Before Finance", "Financial Cost", "Adjusted Proposal", "Saving / Impact"]:
+        if "Financial Cost" in opt_display.columns:
+            opt_display = opt_display.drop(columns=["Financial Cost"])
+        for column in ["Current Spend", "Proposal Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal", "Saving / Impact"]:
             opt_display[column] = opt_display[column].map(lambda x: format_money(x, currency_symbol))
         opt_display["Saving / Impact %"] = opt_display["Saving / Impact %"].map(format_percent)
         opt_display["Risk Score"] = opt_display["Risk Score"].map(lambda x: f"{x:.2f}/5")
@@ -1309,30 +1399,32 @@ if run_optimizer:
         allocation_view["Effective Share %"] = allocation_view["Effective Share %"].map(lambda x: f"{x:.1f}%")
         allocation_view["Adjusted Proposal Spend"] = allocation_view["Adjusted Proposal Spend"].map(lambda x: format_money(x, currency_symbol))
         allocation_view["Risk Score"] = allocation_view["Risk Score"].map(lambda x: f"{x:.1f}/5")
-        st.markdown("**Optimized supplier allocation**")
+        st.markdown("**Optimized supplier allocation now applied**")
         st.dataframe(allocation_view, use_container_width=True)
 
     st.markdown(
         f"""
         <div class="insight-box">
-            <b>AI-style optimization reading</b><br><br>
+            <b>Automatic optimization reading</b><br><br>
             The optimizer searched allocation combinations in {optimization_step}% increments by country, respected all Kraljic minimum-share constraints,
-            applied each country's financial assumption to all suppliers in that country, and selected the scenario with the best saving per weighted risk point.
+            applied each country's supplier financing assumption, offset it with each country's invested-cash return assumption,
+            and selected the allocation with the best economic result. Risk was used as the tie-breaker.
             <br><br>
-            Best total adjusted proposal: <b>{format_money(optimized_total['Adjusted Proposal'], currency_symbol)}</b><br>
-            Best total saving / impact: <b>{format_money(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
+            Best total adjusted proposal now active: <b>{format_money(optimized_total['Adjusted Proposal'], currency_symbol)}</b><br>
+            Best total saving / impact now active: <b>{format_money(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
             Weighted risk score: <b>{optimized_total['Risk Score']:.2f}/5</b>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-
 # =============================================================================
 # Export
 # =============================================================================
 
 export_summary = summary_df.copy()
+if "Financial Cost" in export_summary.columns:
+    export_summary = export_summary.drop(columns=["Financial Cost"])
 export_details = details_df.copy()
 
 csv_summary = export_summary.to_csv(index=False).encode("utf-8")
