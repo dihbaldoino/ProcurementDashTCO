@@ -1,5 +1,5 @@
 """
-Executive Procurement TCO & Should-Cost Dashboard
+Executive Procurement TCO & Should-Cost Dashboard - by Diogenes Silva
 Version: v11 - Executive Financial Breakdown
 
 Run locally:
