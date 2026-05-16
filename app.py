@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version: v7 - Cash Return Offset + Automatic Share Optimization
+Version: v9 - Validation Defaults + Apples-to-Apples Cost Delta Logic
 
 Run locally:
     pip install -r requirements.txt
@@ -299,6 +299,32 @@ def format_money(value: float, currency: str = "USD", compact: bool = False) -> 
     return f"{sign}{currency} {value:,.2f}"
 
 
+def format_delta(value: float, currency: str = "USD", compact: bool = False) -> str:
+    """Format cost delta: negative is saving, positive is impact."""
+    value = float(value)
+    if abs(value) < 1e-9:
+        return format_money(0.0, currency, compact)
+    sign = "+" if value > 0 else "-"
+    abs_value = abs(value)
+    if compact:
+        if abs_value >= 1_000_000_000:
+            return f"{sign}{currency} {abs_value / 1_000_000_000:,.2f}B"
+        if abs_value >= 1_000_000:
+            return f"{sign}{currency} {abs_value / 1_000_000:,.2f}M"
+        if abs_value >= 1_000:
+            return f"{sign}{currency} {abs_value / 1_000:,.2f}K"
+    return f"{sign}{currency} {abs_value:,.2f}"
+
+
+def delta_tone(value: float) -> str:
+    """Green for saving/cost reduction, red for cost increase."""
+    return "good" if value <= 0 else "bad"
+
+
+def delta_label(value: float) -> str:
+    return "Saving" if value <= 0 else "Impact"
+
+
 def format_percent(value: float) -> str:
     return f"{value * 100:.2f}%"
 
@@ -425,6 +451,49 @@ def get_slider_share_values(country: str) -> Dict[str, float]:
 # =============================================================================
 
 
+
+def compute_country_baseline(
+    country: str,
+    current_spend: float,
+    financial_assumptions: Dict[str, Dict[str, float]],
+    method: str,
+) -> Dict[str, float]:
+    """
+    Build an apples-to-apples current baseline.
+
+    Current spend is treated as base spend, not as an already-financed number.
+    Therefore, the baseline also receives the same payment-term logic used for proposals:
+
+    Current adjusted baseline = current base spend
+                              + current gross supplier financing cost
+                              - current invested-cash capital gain offset
+    """
+    current_payment_days = int(financial_assumptions[country]["current_payment_days"])
+
+    financing_rate_pct = financial_assumptions[country]["financing_rate_pct"]
+    financing_days = int(financial_assumptions[country]["financing_days"])
+    current_financing_rate = equivalent_rate(financing_rate_pct, financing_days, current_payment_days, method)
+
+    return_rate_pct = financial_assumptions[country]["investment_return_rate_pct"]
+    return_days = int(financial_assumptions[country]["investment_return_days"])
+    current_return_rate = equivalent_rate(return_rate_pct, return_days, current_payment_days, method)
+
+    current_gross_financial_cost = current_spend * current_financing_rate
+    current_capital_gain_offset = current_spend * current_return_rate
+    current_net_financial_impact = current_gross_financial_cost - current_capital_gain_offset
+    current_adjusted_baseline = current_spend + current_net_financial_impact
+
+    return {
+        "current_payment_days": current_payment_days,
+        "current_financing_rate": current_financing_rate,
+        "current_return_rate": current_return_rate,
+        "current_gross_financial_cost": current_gross_financial_cost,
+        "current_capital_gain_offset": current_capital_gain_offset,
+        "current_net_financial_impact": current_net_financial_impact,
+        "current_adjusted_baseline": current_adjusted_baseline,
+    }
+
+
 def compute_country_proposal(
     country: str,
     current_spend: float,
@@ -434,15 +503,19 @@ def compute_country_proposal(
     method: str,
 ) -> Dict[str, object]:
     """
-    Computes country-level proposal TCO.
+    Computes country-level TCO on an apples-to-apples basis.
 
-    Important financial logic:
-    - Supplier financing cost increases the proposal cost according to the payment term.
-    - Invested-cash return offsets that cost because the company can keep the cash invested
-      during the supplier payment term.
-    - Longer payment terms therefore generate more capital gain offset.
-    - Adjusted proposal = allocated proposal spend + gross supplier financing cost - capital gain offset.
+    Baseline and proposal are both adjusted with the same logic:
+    - gross supplier financing cost increases cost according to payment term;
+    - invested-cash return offsets this cost because retained cash works during the term;
+    - adjusted cost = base spend + gross financing cost - capital gain offset.
+
+    Cost delta = adjusted proposal - current adjusted baseline.
+    Negative delta = saving / cost reduction / green.
+    Positive delta = impact / cost increase / red.
     """
+    baseline = compute_country_baseline(country, current_spend, financial_assumptions, method)
+
     rows = []
     adjusted_total = 0.0
     proposal_before_finance_total = 0.0
@@ -500,20 +573,29 @@ def compute_country_proposal(
             }
         )
 
-    saving = current_spend - adjusted_total
+    cost_delta = adjusted_total - baseline["current_adjusted_baseline"]
+    net_financial_delta = net_financial_impact_total - baseline["current_net_financial_impact"]
+
     return {
         "country": country,
-        "current_spend": current_spend,
+        "current_base_spend": current_spend,
+        "current_payment_days": baseline["current_payment_days"],
+        "current_gross_financial_cost": baseline["current_gross_financial_cost"],
+        "current_capital_gain_offset": baseline["current_capital_gain_offset"],
+        "current_net_financial_impact": baseline["current_net_financial_impact"],
+        "current_adjusted_baseline": baseline["current_adjusted_baseline"],
         "proposal_before_finance": proposal_before_finance_total,
         "gross_financial_cost": gross_financial_cost_total,
         "capital_gain_offset": capital_gain_offset_total,
         "net_financial_impact": net_financial_impact_total,
+        "net_financial_delta": net_financial_delta,
         "adjusted_proposal": adjusted_total,
-        "saving": saving,
-        "saving_pct": safe_divide(saving, current_spend),
+        "cost_delta": cost_delta,
+        "cost_delta_pct": safe_divide(cost_delta, baseline["current_adjusted_baseline"]),
         "risk_score": safe_divide(risk_weighted_sum, adjusted_total) if adjusted_total else 0.0,
         "rows": rows,
     }
+
 
 def compute_full_scenario(
     current_spend: Dict[str, float],
@@ -537,35 +619,53 @@ def compute_full_scenario(
         country_results.append(
             {
                 "Region": country,
-                "Current Spend": result["current_spend"],
+                "Current Base Spend": result["current_base_spend"],
+                "Current Payment Term Days": result["current_payment_days"],
+                "Current Gross Financial Cost": result["current_gross_financial_cost"],
+                "Current Capital Gain Offset": result["current_capital_gain_offset"],
+                "Current Net Financial Impact": result["current_net_financial_impact"],
+                "Current Adjusted Baseline": result["current_adjusted_baseline"],
+                # Backward-compatible alias used by charts.
+                "Current Spend": result["current_adjusted_baseline"],
                 "Proposal Before Finance": result["proposal_before_finance"],
                 "Gross Financial Cost": result["gross_financial_cost"],
                 "Capital Gain Offset": result["capital_gain_offset"],
                 "Net Financial Impact": result["net_financial_impact"],
-                "Financial Cost": result["net_financial_impact"],
+                "Net Financial Delta": result["net_financial_delta"],
                 "Adjusted Proposal": result["adjusted_proposal"],
-                "Saving / Impact": result["saving"],
-                "Saving / Impact %": result["saving_pct"],
+                # Cost delta convention: negative = saving; positive = impact.
+                "Saving / Impact": result["cost_delta"],
+                "Saving / Impact %": result["cost_delta_pct"],
                 "Risk Score": result["risk_score"],
             }
         )
         detail_rows.extend(result["rows"])
 
     latam_rows = [row for row in country_results if row["Region"] in LATAM_COUNTRIES]
-    latam_current = sum(row["Current Spend"] for row in latam_rows)
+    latam_current_base = sum(row["Current Base Spend"] for row in latam_rows)
+    latam_current_gross = sum(row["Current Gross Financial Cost"] for row in latam_rows)
+    latam_current_offset = sum(row["Current Capital Gain Offset"] for row in latam_rows)
+    latam_current_net = sum(row["Current Net Financial Impact"] for row in latam_rows)
+    latam_current_adjusted = sum(row["Current Adjusted Baseline"] for row in latam_rows)
     latam_before = sum(row["Proposal Before Finance"] for row in latam_rows)
     latam_gross_finance = sum(row["Gross Financial Cost"] for row in latam_rows)
     latam_capital_offset = sum(row["Capital Gain Offset"] for row in latam_rows)
     latam_net_finance = sum(row["Net Financial Impact"] for row in latam_rows)
+    latam_net_delta = latam_net_finance - latam_current_net
     latam_adjusted = sum(row["Adjusted Proposal"] for row in latam_rows)
     latam_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in latam_rows)
 
     brazil_row = next(row for row in country_results if row["Region"] == "Brazil")
-    total_current = sum(row["Current Spend"] for row in country_results)
+    total_current_base = sum(row["Current Base Spend"] for row in country_results)
+    total_current_gross = sum(row["Current Gross Financial Cost"] for row in country_results)
+    total_current_offset = sum(row["Current Capital Gain Offset"] for row in country_results)
+    total_current_net = sum(row["Current Net Financial Impact"] for row in country_results)
+    total_current_adjusted = sum(row["Current Adjusted Baseline"] for row in country_results)
     total_before = sum(row["Proposal Before Finance"] for row in country_results)
     total_gross_finance = sum(row["Gross Financial Cost"] for row in country_results)
     total_capital_offset = sum(row["Capital Gain Offset"] for row in country_results)
     total_net_finance = sum(row["Net Financial Impact"] for row in country_results)
+    total_net_delta = total_net_finance - total_current_net
     total_adjusted = sum(row["Adjusted Proposal"] for row in country_results)
     total_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in country_results)
 
@@ -573,28 +673,40 @@ def compute_full_scenario(
         brazil_row,
         {
             "Region": "LATAM",
-            "Current Spend": latam_current,
+            "Current Base Spend": latam_current_base,
+            "Current Payment Term Days": None,
+            "Current Gross Financial Cost": latam_current_gross,
+            "Current Capital Gain Offset": latam_current_offset,
+            "Current Net Financial Impact": latam_current_net,
+            "Current Adjusted Baseline": latam_current_adjusted,
+            "Current Spend": latam_current_adjusted,
             "Proposal Before Finance": latam_before,
             "Gross Financial Cost": latam_gross_finance,
             "Capital Gain Offset": latam_capital_offset,
             "Net Financial Impact": latam_net_finance,
-            "Financial Cost": latam_net_finance,
+            "Net Financial Delta": latam_net_delta,
             "Adjusted Proposal": latam_adjusted,
-            "Saving / Impact": latam_current - latam_adjusted,
-            "Saving / Impact %": safe_divide(latam_current - latam_adjusted, latam_current),
+            "Saving / Impact": latam_adjusted - latam_current_adjusted,
+            "Saving / Impact %": safe_divide(latam_adjusted - latam_current_adjusted, latam_current_adjusted),
             "Risk Score": safe_divide(latam_risk_weight, latam_adjusted) if latam_adjusted else 0.0,
         },
         {
             "Region": "Total",
-            "Current Spend": total_current,
+            "Current Base Spend": total_current_base,
+            "Current Payment Term Days": None,
+            "Current Gross Financial Cost": total_current_gross,
+            "Current Capital Gain Offset": total_current_offset,
+            "Current Net Financial Impact": total_current_net,
+            "Current Adjusted Baseline": total_current_adjusted,
+            "Current Spend": total_current_adjusted,
             "Proposal Before Finance": total_before,
             "Gross Financial Cost": total_gross_finance,
             "Capital Gain Offset": total_capital_offset,
             "Net Financial Impact": total_net_finance,
-            "Financial Cost": total_net_finance,
+            "Net Financial Delta": total_net_delta,
             "Adjusted Proposal": total_adjusted,
-            "Saving / Impact": total_current - total_adjusted,
-            "Saving / Impact %": safe_divide(total_current - total_adjusted, total_current),
+            "Saving / Impact": total_adjusted - total_current_adjusted,
+            "Saving / Impact %": safe_divide(total_adjusted - total_current_adjusted, total_current_adjusted),
             "Risk Score": safe_divide(total_risk_weight, total_adjusted) if total_adjusted else 0.0,
         },
     ]
@@ -640,9 +752,10 @@ def compute_candidate_country_cost(
         "country": country,
         "combo": combo,
         "adjusted_proposal": result["adjusted_proposal"],
-        "saving": result["saving"],
+        # Cost delta convention: negative = saving, positive = impact.
+        "saving": result["cost_delta"],
         "risk_score": result["risk_score"],
-        "saving_pct": result["saving_pct"],
+        "saving_pct": result["cost_delta_pct"],
     }
 
 
@@ -658,8 +771,8 @@ def run_cost_optimization(
 
     This is an embedded heuristic optimizer, not an external API call.
     It searches allocation combinations by country while respecting Kraljic minimum shares.
-    Primary objective: maximize saving.
-    Secondary objective: if no saving exists, minimize impact by selecting the least negative result.
+    Primary objective: minimize cost delta. Negative deltas are savings and are preferred.
+    Secondary objective: if savings are unavailable, minimize positive impact.
     Risk is used as the tie-breaker, so among economically similar options the optimizer chooses the lower-risk allocation.
     """
     all_combinations = generate_share_combinations(step=step)
@@ -706,15 +819,16 @@ def run_cost_optimization(
             )
         else:
             candidate_df = pd.DataFrame(feasible)
-            # Efficient frontier: remove candidates dominated by lower/equal risk and higher/equal saving.
+            # Efficient frontier: remove candidates dominated by lower/equal risk and lower/equal cost delta.
+            # Cost delta convention: negative = saving, positive = impact. Lower is better.
             frontier_indices = []
             for idx, row in candidate_df.iterrows():
                 dominated = candidate_df[
                     (candidate_df["risk_score"] <= row["risk_score"] + 1e-9)
-                    & (candidate_df["saving"] >= row["saving"] - 1e-9)
+                    & (candidate_df["saving"] <= row["saving"] + 1e-9)
                     & (
                         (candidate_df["risk_score"] < row["risk_score"] - 1e-9)
-                        | (candidate_df["saving"] > row["saving"] + 1e-9)
+                        | (candidate_df["saving"] < row["saving"] - 1e-9)
                     )
                 ]
                 if dominated.empty:
@@ -722,11 +836,10 @@ def run_cost_optimization(
             frontier = candidate_df.loc[frontier_indices].copy()
 
             # Optimization priority requested by Procurement:
-            # 1) maximize saving;
-            # 2) if impact is unavoidable, select the lowest impact;
+            # 1) pick the strongest saving, represented by the most negative cost delta;
+            # 2) if impact is unavoidable, pick the lowest positive impact;
             # 3) use lower weighted risk as the tie-breaker.
-            # This means saving/impact is the economic priority, while Kraljic risk protects the recommendation.
-            best = frontier.sort_values(["saving", "risk_score"], ascending=[False, True]).iloc[0].to_dict()
+            best = frontier.sort_values(["saving", "risk_score"], ascending=[True, True]).iloc[0].to_dict()
 
         optimized_shares[country] = dict(zip(SUPPLIERS, [float(x) for x in best["combo"]]))
         selected_country_rows.append(
@@ -765,9 +878,9 @@ def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
             go.Bar(
                 x=chart_df["Region"],
                 y=chart_df["Current Spend"],
-                name="Current Spend",
+                name="Current Adjusted Baseline",
                 marker_color="#94a3b8",
-                hovertemplate="Current Spend<br>" + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="Current Adjusted Baseline<br>" + currency + " %{y:,.2f}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -780,7 +893,7 @@ def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
             )
         )
         fig.update_layout(
-            title="Brazil and LATAM: Current vs Adjusted Proposal",
+            title="Brazil and LATAM: Current Adjusted Baseline vs Adjusted Proposal",
             barmode="group",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
@@ -798,24 +911,24 @@ def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
 def plot_saving_impact(summary_df: pd.DataFrame, currency: str) -> None:
     chart_df = summary_df[summary_df["Region"].isin(["Brazil", "LATAM"])].copy()
     if PLOTLY_AVAILABLE:
-        colors = ["#10b981" if x >= 0 else "#ef4444" for x in chart_df["Saving / Impact"]]
+        colors = ["#10b981" if x <= 0 else "#ef4444" for x in chart_df["Saving / Impact"]]
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
                 x=chart_df["Region"],
                 y=chart_df["Saving / Impact"],
                 marker_color=colors,
-                text=[format_money(v, currency, compact=True) for v in chart_df["Saving / Impact"]],
+                text=[format_delta(v, currency, compact=True) for v in chart_df["Saving / Impact"]],
                 textposition="outside",
-                hovertemplate="%{x}<br>Saving / Impact: " + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="%{x}<br>Cost Delta: " + currency + " %{y:,.2f}<br>Negative = saving<extra></extra>",
             )
         )
         fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
         fig.update_layout(
-            title="Saving / Impact by Executive Region",
+            title="Cost Delta by Executive Region",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
-            yaxis_title=f"Saving / Impact ({currency})",
+            yaxis_title=f"Cost Delta ({currency}) - negative = saving",
             plot_bgcolor="white",
             paper_bgcolor="white",
             showlegend=False,
@@ -866,16 +979,16 @@ def plot_risk_vs_saving(summary_df: pd.DataFrame) -> None:
                 text=chart_df["Region"],
                 textposition="top center",
                 marker=dict(size=18, color=["#2563eb", "#14b8a6"]),
-                hovertemplate="Risk Score: %{x:.2f}<br>Saving/Impact: %{y:,.2f}<extra></extra>",
+                hovertemplate="Risk Score: %{x:.2f}<br>Cost Delta: %{y:,.2f}<br>Negative = saving<extra></extra>",
             )
         )
         fig.add_hline(y=0, line_dash="dash", line_color="#ef4444")
         fig.update_layout(
-            title="Risk vs Saving / Impact",
+            title="Risk vs Cost Delta",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
             xaxis_title="Weighted Risk Score - lower is better",
-            yaxis_title="Saving / Impact",
+            yaxis_title="Cost Delta - negative = saving",
             plot_bgcolor="white",
             paper_bgcolor="white",
             showlegend=False,
@@ -932,6 +1045,20 @@ st.markdown(
 
 initialize_share_projection_state()
 
+# Apply optimizer recommendations before Share Projection slider widgets are instantiated.
+# Streamlit does not allow changing st.session_state values tied to already-created widgets
+# later in the same run. The Cost Optimization button therefore stores recommendations
+# in a neutral key and triggers a rerun; this block safely pushes them into slider keys
+# at the beginning of the next run.
+if "pending_optimized_shares" in st.session_state:
+    pending_optimized_shares = st.session_state.pop("pending_optimized_shares")
+    for country in COUNTRIES:
+        for supplier in SUPPLIERS:
+            if country in pending_optimized_shares and supplier in pending_optimized_shares[country]:
+                st.session_state[f"share_{country}_{supplier}"] = float(pending_optimized_shares[country][supplier])
+    st.session_state["share_projection_mode"] = "Automatic"
+    st.session_state["optimization_message"] = "Cost Optimization applied automatically to Share Projection sliders."
+
 input_tab_1, input_tab_2, input_tab_3, input_tab_4 = st.tabs(
     [
         "1. Current Spend",
@@ -955,11 +1082,11 @@ with input_tab_1:
     )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        current_spend["Brazil"] = st.number_input("Brazil current spend", min_value=0.0, value=10_000_000.0, step=100_000.0, format="%.2f")
+        current_spend["Brazil"] = st.number_input("Brazil current spend", min_value=0.0, value=13_000_000.0, step=100_000.0, format="%.2f")
     with c2:
-        current_spend["Mexico"] = st.number_input("Mexico current spend", min_value=0.0, value=6_000_000.0, step=100_000.0, format="%.2f")
+        current_spend["Mexico"] = st.number_input("Mexico current spend", min_value=0.0, value=1_500_000.0, step=100_000.0, format="%.2f")
     with c3:
-        current_spend["Argentina"] = st.number_input("Argentina current spend", min_value=0.0, value=4_000_000.0, step=100_000.0, format="%.2f")
+        current_spend["Argentina"] = st.number_input("Argentina current spend", min_value=0.0, value=2_500_000.0, step=100_000.0, format="%.2f")
     with c4:
         current_spend["Colombia"] = st.number_input("Colombia current spend", min_value=0.0, value=3_000_000.0, step=100_000.0, format="%.2f")
 
@@ -970,10 +1097,11 @@ with input_tab_2:
     )
     for country in COUNTRIES:
         st.markdown(f"**{country}**")
-        fc1, fc2, fc3, fc4 = st.columns(4)
-        default_financing_rate = {"Brazil": 14.52, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
-        default_investment_return = {"Brazil": 15.39, "Mexico": 7.11, "Argentina": 35.00, "Colombia": 9.50}[country]
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+        default_financing_rate = {"Brazil": 15.23, "Mexico": 7.10, "Argentina": 35.00, "Colombia": 9.50}[country]
+        default_investment_return = {"Brazil": 15.23, "Mexico": 7.10, "Argentina": 35.00, "Colombia": 9.50}[country]
         default_days = {"Brazil": 360, "Mexico": 360, "Argentina": 360, "Colombia": 360}[country]
+        default_current_payment_days = {"Brazil": 360, "Mexico": 360, "Argentina": 360, "Colombia": 360}[country]
         with fc1:
             financing_rate = st.number_input(
                 f"{country} supplier financing rate (%)",
@@ -1010,14 +1138,24 @@ with input_tab_2:
                 step=1,
                 key=f"investment_return_days_{country}",
             )
+        with fc5:
+            current_payment_days = st.number_input(
+                f"{country} current payment term days",
+                min_value=0,
+                value=int(default_current_payment_days),
+                step=1,
+                key=f"current_payment_days_{country}",
+                help="Used to build the adjusted current baseline, so current and proposal are compared under the same financial logic.",
+            )
         financial_assumptions[country] = {
             "financing_rate_pct": financing_rate,
             "financing_days": financing_days,
             "investment_return_rate_pct": investment_return_rate,
             "investment_return_days": investment_return_days,
+            "current_payment_days": current_payment_days,
         }
         st.caption(
-            f"{country}: supplier financing and investment return are converted to each supplier payment term, then netted in the final TCO."
+            f"{country}: current baseline and supplier proposals are both adjusted with financing cost minus invested-cash return."
         )
 
 with input_tab_3:
@@ -1030,8 +1168,22 @@ with input_tab_3:
             for supplier in SUPPLIERS:
                 st.markdown(f"**{supplier}**")
                 pc1, pc2 = st.columns(2)
-                default_spend = current_spend.get(country, 0.0) if supplier == "ChemPrime" else current_spend.get(country, 0.0) * 0.96
-                default_payment = 120 if supplier in ["ChemPrime", "OleoGlobal"] else 60
+                # Default proposal multipliers mirror the validation spreadsheet shared by the user:
+                # ChemPrime = 125% of current spend, OleoGlobal = 75%, Overseas = 78.75%, Distribuicao = 81%.
+                proposal_spend_multiplier = {
+                    "ChemPrime": 1.25,
+                    "OleoGlobal": 0.75,
+                    "Oleo Overseas Trading Co.": 0.7875,
+                    "Comercio de Oleos Nacional Distribuicao": 0.81,
+                }[supplier]
+                proposal_payment_days = {
+                    "ChemPrime": 90,
+                    "OleoGlobal": 70,
+                    "Oleo Overseas Trading Co.": 150,
+                    "Comercio de Oleos Nacional Distribuicao": 120,
+                }[supplier]
+                default_spend = current_spend.get(country, 0.0) * proposal_spend_multiplier
+                default_payment = proposal_payment_days
                 with pc1:
                     spend = st.number_input(
                         f"{country} | {supplier} | Expected spend",
@@ -1221,9 +1373,9 @@ summary_df, details_df = compute_full_scenario(
 total_row = summary_df[summary_df["Region"] == "Total"].iloc[0]
 brazil_row = summary_df[summary_df["Region"] == "Brazil"].iloc[0]
 latam_row = summary_df[summary_df["Region"] == "LATAM"].iloc[0]
-is_saving = total_row["Saving / Impact"] >= 0
+is_saving = total_row["Saving / Impact"] <= 0
 result_label = "Saving" if is_saving else "Impact"
-result_tone = "good" if is_saving else "bad"
+result_tone = delta_tone(total_row["Saving / Impact"])
 
 render_section_header(
     "Executive Result",
@@ -1232,13 +1384,13 @@ render_section_header(
 
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
-    render_kpi_card("Total Current Spend", format_money(total_row["Current Spend"], currency_symbol, True), "Brazil + LATAM", "neutral")
+    render_kpi_card("Current Adjusted Baseline", format_money(total_row["Current Spend"], currency_symbol, True), "Current base spend + current net financial effect", "neutral")
 with k2:
     render_kpi_card("Total Adjusted Proposal", format_money(total_row["Adjusted Proposal"], currency_symbol, True), "Weighted by supplier shares", "neutral")
 with k3:
-    render_kpi_card(result_label, format_money(abs(total_row["Saving / Impact"]), currency_symbol, True), f"{format_percent(abs(total_row['Saving / Impact %']))} vs current", result_tone)
+    render_kpi_card(result_label, format_delta(total_row["Saving / Impact"], currency_symbol, True), f"{format_percent(abs(total_row['Saving / Impact %']))} vs adjusted baseline", result_tone)
 with k4:
-    render_kpi_card("Net Financial Impact", format_money(total_row["Net Financial Impact"], currency_symbol, True), "Supplier financing minus capital gain", "good" if total_row["Net Financial Impact"] <= 0 else "bad")
+    render_kpi_card("Net Financial Delta", format_delta(total_row["Net Financial Delta"], currency_symbol, True), "Proposal net finance minus current net finance", delta_tone(total_row["Net Financial Delta"]))
 with k5:
     render_kpi_card("Weighted Risk", f"{total_row['Risk Score']:.2f}/5", "Lower is better", "neutral")
 
@@ -1249,17 +1401,17 @@ r1c1, r1c2 = st.columns(2)
 with r1c1:
     render_kpi_card(
         "Brazil Result",
-        format_money(abs(brazil_row["Saving / Impact"]), currency_symbol, True),
-        f"{'Saving' if brazil_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {brazil_row['Risk Score']:.2f}/5",
-        "good" if brazil_row["Saving / Impact"] >= 0 else "bad",
+        format_delta(brazil_row["Saving / Impact"], currency_symbol, True),
+        f"{delta_label(brazil_row['Saving / Impact'])} | Risk {brazil_row['Risk Score']:.2f}/5",
+        delta_tone(brazil_row["Saving / Impact"]),
         compact=True,
     )
 with r1c2:
     render_kpi_card(
         "LATAM Result",
-        format_money(abs(latam_row["Saving / Impact"]), currency_symbol, True),
-        f"{'Saving' if latam_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {latam_row['Risk Score']:.2f}/5",
-        "good" if latam_row["Saving / Impact"] >= 0 else "bad",
+        format_delta(latam_row["Saving / Impact"], currency_symbol, True),
+        f"{delta_label(latam_row['Saving / Impact'])} | Risk {latam_row['Risk Score']:.2f}/5",
+        delta_tone(latam_row["Saving / Impact"]),
         compact=True,
     )
 
@@ -1269,9 +1421,9 @@ if is_saving:
         <div class="decision-card decision-good">
             <div class="decision-title">Recommended scenario is financially attractive under the current allocation</div>
             <div class="decision-body">
-                The adjusted proposal generates an estimated total saving of
-                <b>{format_money(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
-                <b>{format_percent(total_row['Saving / Impact %'])}</b>, with a weighted risk score of
+                The adjusted proposal is below the current adjusted baseline by
+                <b>{format_delta(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
+                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b>, with a weighted risk score of
                 <b>{total_row['Risk Score']:.2f}/5</b>.
             </div>
         </div>
@@ -1284,8 +1436,8 @@ else:
         <div class="decision-card decision-bad">
             <div class="decision-title">Current allocation creates a cost impact under the current assumptions</div>
             <div class="decision-body">
-                The adjusted proposal is above current spend by
-                <b>{format_money(abs(total_row['Saving / Impact']), currency_symbol)}</b>, equivalent to
+                The adjusted proposal is above the current adjusted baseline by
+                <b>{format_delta(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
                 <b>{format_percent(abs(total_row['Saving / Impact %']))}</b>. Use Cost Optimization to search for a better cost x risk allocation.
             </div>
         </div>
@@ -1309,8 +1461,41 @@ render_section_header("Scenario Breakdown", "Proposal comparison by Brazil, LATA
 display_summary = summary_df.copy()
 if "Financial Cost" in display_summary.columns:
     display_summary = display_summary.drop(columns=["Financial Cost"])
-for column in ["Current Spend", "Proposal Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal", "Saving / Impact"]:
+# Avoid banana-vs-orange confusion: show both the base spend and the adjusted current baseline.
+if "Current Spend" in display_summary.columns:
+    display_summary = display_summary.drop(columns=["Current Spend"])
+ordered_summary_columns = [
+    "Region",
+    "Current Base Spend",
+    "Current Gross Financial Cost",
+    "Current Capital Gain Offset",
+    "Current Net Financial Impact",
+    "Current Adjusted Baseline",
+    "Proposal Before Finance",
+    "Gross Financial Cost",
+    "Capital Gain Offset",
+    "Net Financial Impact",
+    "Net Financial Delta",
+    "Adjusted Proposal",
+    "Saving / Impact",
+    "Saving / Impact %",
+    "Risk Score",
+]
+display_summary = display_summary[[col for col in ordered_summary_columns if col in display_summary.columns]]
+for column in [
+    "Current Base Spend",
+    "Current Gross Financial Cost",
+    "Current Capital Gain Offset",
+    "Current Adjusted Baseline",
+    "Proposal Before Finance",
+    "Gross Financial Cost",
+    "Capital Gain Offset",
+    "Adjusted Proposal",
+]:
     display_summary[column] = display_summary[column].map(lambda x: format_money(x, currency_symbol))
+for column in ["Current Net Financial Impact", "Net Financial Impact", "Net Financial Delta", "Saving / Impact"]:
+    if column in display_summary.columns:
+        display_summary[column] = display_summary[column].map(lambda x: format_delta(x, currency_symbol))
 display_summary["Saving / Impact %"] = display_summary["Saving / Impact %"].map(format_percent)
 display_summary["Risk Score"] = display_summary["Risk Score"].map(lambda x: f"{x:.2f}/5")
 st.dataframe(display_summary, use_container_width=True)
@@ -1343,7 +1528,7 @@ with opt_col2:
     st.markdown(
         """
         <div class="small-note">
-        Optimization objective: find an allocation with the strongest saving per risk point while respecting Kraljic minimum requirements.
+        Optimization objective: minimize total cost delta versus the adjusted current baseline while respecting Kraljic minimum requirements. Negative cost delta = saving.
         This is an embedded heuristic optimizer, not an external API call.
         </div>
         """,
@@ -1359,14 +1544,10 @@ if run_optimizer:
         step=int(optimization_step),
     )
 
-    # Automatically push the optimized allocation into the Share Projection sliders.
-    # On rerun, the whole dashboard recalculates using the recommended scenario.
-    for country in COUNTRIES:
-        for supplier in SUPPLIERS:
-            st.session_state[f"share_{country}_{supplier}"] = float(optimized_shares[country][supplier])
-
-    st.session_state["share_projection_mode"] = "Automatic"
-    st.session_state["optimization_message"] = "Cost Optimization applied automatically to Share Projection sliders."
+    # Store optimized allocation in a neutral key, then rerun.
+    # The values are applied to the actual slider widget keys at the top of the next run,
+    # before those widgets are created. This avoids StreamlitAPIException.
+    st.session_state["pending_optimized_shares"] = optimized_shares
     st.rerun()
 
 if st.session_state.get("optimization_message"):
@@ -1379,8 +1560,8 @@ if st.session_state.get("optimization_message"):
     optimized_total = optimized_summary[optimized_summary["Region"] == "Total"].iloc[0]
 
     st.info(
-        f"Optimized scenario now active: {format_money(optimized_total['Saving / Impact'], currency_symbol)} saving / impact, "
-        f"{format_percent(optimized_total['Saving / Impact %'])}, weighted risk {optimized_total['Risk Score']:.2f}/5."
+        f"Optimized scenario now active: {format_delta(optimized_total['Saving / Impact'], currency_symbol)} cost delta, "
+        f"{format_percent(abs(optimized_total['Saving / Impact %']))}, weighted risk {optimized_total['Risk Score']:.2f}/5."
     )
 
     o1, o2 = st.columns(2)
@@ -1388,8 +1569,24 @@ if st.session_state.get("optimization_message"):
         opt_display = optimized_summary.copy()
         if "Financial Cost" in opt_display.columns:
             opt_display = opt_display.drop(columns=["Financial Cost"])
-        for column in ["Current Spend", "Proposal Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal", "Saving / Impact"]:
-            opt_display[column] = opt_display[column].map(lambda x: format_money(x, currency_symbol))
+        if "Current Spend" in opt_display.columns:
+            opt_display = opt_display.drop(columns=["Current Spend"])
+        opt_display = opt_display[[col for col in ordered_summary_columns if col in opt_display.columns]]
+        for column in [
+            "Current Base Spend",
+            "Current Gross Financial Cost",
+            "Current Capital Gain Offset",
+            "Current Adjusted Baseline",
+            "Proposal Before Finance",
+            "Gross Financial Cost",
+            "Capital Gain Offset",
+            "Adjusted Proposal",
+        ]:
+            if column in opt_display.columns:
+                opt_display[column] = opt_display[column].map(lambda x: format_money(x, currency_symbol))
+        for column in ["Current Net Financial Impact", "Net Financial Impact", "Net Financial Delta", "Saving / Impact"]:
+            if column in opt_display.columns:
+                opt_display[column] = opt_display[column].map(lambda x: format_delta(x, currency_symbol))
         opt_display["Saving / Impact %"] = opt_display["Saving / Impact %"].map(format_percent)
         opt_display["Risk Score"] = opt_display["Risk Score"].map(lambda x: f"{x:.2f}/5")
         st.markdown("**Optimized executive summary**")
@@ -1408,10 +1605,10 @@ if st.session_state.get("optimization_message"):
             <b>Automatic optimization reading</b><br><br>
             The optimizer searched allocation combinations in {optimization_step}% increments by country, respected all Kraljic minimum-share constraints,
             applied each country's supplier financing assumption, offset it with each country's invested-cash return assumption,
-            and selected the allocation with the best economic result. Risk was used as the tie-breaker.
+            and selected the allocation with the lowest cost delta. Risk was used as the tie-breaker.
             <br><br>
             Best total adjusted proposal now active: <b>{format_money(optimized_total['Adjusted Proposal'], currency_symbol)}</b><br>
-            Best total saving / impact now active: <b>{format_money(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
+            Best total cost delta now active: <b>{format_delta(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
             Weighted risk score: <b>{optimized_total['Risk Score']:.2f}/5</b>
         </div>
         """,
