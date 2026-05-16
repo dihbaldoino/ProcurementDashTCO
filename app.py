@@ -57,6 +57,47 @@ DEFAULT_RISK = {
     "Comercio de Oleos Nacional Distribuicao": 3.0,
 }
 
+# Dark graphite used in all Plotly chart text for better readability on white background.
+GRAPHITE = "#1f2937"
+
+
+def apply_graphite_chart_theme(fig):
+    """Apply a consistent dark graphite text theme to Plotly charts."""
+    if fig is None:
+        return fig
+
+    fig.update_layout(
+        font=dict(color=GRAPHITE),
+        title_font=dict(color=GRAPHITE),
+        xaxis=dict(
+            title_font=dict(color=GRAPHITE),
+            tickfont=dict(color=GRAPHITE),
+            color=GRAPHITE,
+            gridcolor="rgba(31, 41, 55, 0.12)",
+            zerolinecolor="rgba(31, 41, 55, 0.35)",
+        ),
+        yaxis=dict(
+            title_font=dict(color=GRAPHITE),
+            tickfont=dict(color=GRAPHITE),
+            color=GRAPHITE,
+            gridcolor="rgba(31, 41, 55, 0.12)",
+            zerolinecolor="rgba(31, 41, 55, 0.35)",
+        ),
+        legend=dict(font=dict(color=GRAPHITE)),
+        uniformtext=dict(minsize=11, mode="show"),
+    )
+
+    # Trace-level text is not fully covered by layout font in every Plotly version.
+    for trace in fig.data:
+        if hasattr(trace, "textfont"):
+            trace.textfont = dict(color=GRAPHITE)
+        if hasattr(trace, "insidetextfont"):
+            trace.insidetextfont = dict(color=GRAPHITE)
+        if hasattr(trace, "outsidetextfont"):
+            trace.outsidetextfont = dict(color=GRAPHITE)
+
+    return fig
+
 
 # =============================================================================
 # Styling
@@ -115,9 +156,19 @@ st.markdown(
             background: #ffffff;
             border: 1px solid rgba(148, 163, 184, 0.26);
             border-radius: 22px;
-            padding: 19px 20px;
-            min-height: 140px;
+            padding: 20px 22px;
+            min-height: 138px;
+            margin-bottom: 22px;
             box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+        }
+        .kpi-card.compact-card {
+            min-height: 124px;
+        }
+        .executive-row-spacer {
+            height: 14px;
+        }
+        .decision-card {
+            clear: both;
         }
         .kpi-label {
             color: #64748b;
@@ -216,11 +267,12 @@ def render_section_header(title: str, subtitle: str = "") -> None:
     )
 
 
-def render_kpi_card(label: str, value: str, helper: str, tone: str = "neutral") -> None:
+def render_kpi_card(label: str, value: str, helper: str, tone: str = "neutral", compact: bool = False) -> None:
     tone_class = {"good": "good", "bad": "bad", "neutral": "neutral"}.get(tone, "neutral")
+    compact_class = " compact-card" if compact else ""
     st.markdown(
         f"""
-        <div class="kpi-card">
+        <div class="kpi-card{compact_class}">
             <div class="kpi-label">{label}</div>
             <div class="kpi-value {tone_class}">{value}</div>
             <div class="kpi-helper">{helper}</div>
@@ -303,6 +355,69 @@ def normalize_with_minimums(raw_shares: Dict[str, float], minimums: Dict[str, fl
         effective[largest_supplier] += correction
 
     return effective
+
+
+def initialize_share_projection_state() -> None:
+    """Initialize supplier share sliders once per session."""
+    for country in COUNTRIES:
+        for supplier in SUPPLIERS:
+            share_key = f"share_{country}_{supplier}"
+            if share_key not in st.session_state:
+                st.session_state[share_key] = 100.0 if supplier == "ChemPrime" else 0.0
+
+
+def auto_adjust_supplier_share(country: str, changed_supplier: str) -> None:
+    """
+    Automatic Share Projection behavior.
+
+    When one supplier's share is changed, the remaining suppliers are adjusted
+    proportionally so that the visible slider values continue to sum to 100%.
+    This is only active when the user selects Automatic mode.
+    """
+    if st.session_state.get("share_projection_mode", "Automatic") != "Automatic":
+        return
+
+    changed_key = f"share_{country}_{changed_supplier}"
+    changed_value = float(st.session_state.get(changed_key, 0.0))
+    changed_value = round(min(100.0, max(0.0, changed_value)), 1)
+    st.session_state[changed_key] = changed_value
+
+    other_suppliers = [supplier for supplier in SUPPLIERS if supplier != changed_supplier]
+    remaining_share = max(0.0, 100.0 - changed_value)
+
+    other_values = {
+        supplier: float(st.session_state.get(f"share_{country}_{supplier}", 0.0))
+        for supplier in other_suppliers
+    }
+    other_total = sum(max(0.0, value) for value in other_values.values())
+
+    if other_total <= 1e-9:
+        equal_share = remaining_share / len(other_suppliers) if other_suppliers else 0.0
+        for supplier in other_suppliers:
+            st.session_state[f"share_{country}_{supplier}"] = round(equal_share, 1)
+    else:
+        for supplier in other_suppliers:
+            proportional_share = remaining_share * max(0.0, other_values[supplier]) / other_total
+            st.session_state[f"share_{country}_{supplier}"] = round(proportional_share, 1)
+
+    # Final numerical correction.
+    total = sum(float(st.session_state.get(f"share_{country}_{supplier}", 0.0)) for supplier in SUPPLIERS)
+    correction = 100.0 - total
+    if abs(correction) > 1e-8:
+        # Apply correction to the largest non-changed supplier when possible.
+        correction_candidates = other_suppliers or [changed_supplier]
+        target_supplier = max(correction_candidates, key=lambda supplier: st.session_state.get(f"share_{country}_{supplier}", 0.0))
+        target_key = f"share_{country}_{target_supplier}"
+        st.session_state[target_key] = min(100.0, max(0.0, float(st.session_state.get(target_key, 0.0)) + correction))
+
+
+def get_slider_share_values(country: str) -> Dict[str, float]:
+    """Read current supplier share slider values for one country."""
+    return {
+        supplier: float(st.session_state.get(f"share_{country}_{supplier}", 0.0))
+        for supplier in SUPPLIERS
+    }
+
 
 
 # =============================================================================
@@ -777,12 +892,14 @@ st.markdown(
 # Main inputs
 # =============================================================================
 
+initialize_share_projection_state()
+
 input_tab_1, input_tab_2, input_tab_3, input_tab_4 = st.tabs(
     [
         "1. Current Spend",
         "2. Financial Assumptions",
         "3. Supplier Proposals",
-        "4. Allocation & Kraljic Risk",
+        "4. Share Projection & Kraljic Risk",
     ]
 )
 
@@ -877,33 +994,97 @@ with input_tab_3:
 
 with input_tab_4:
     render_section_header(
-        "Allocation and Kraljic Risk Controls",
-        "Set desired supplier participation. Effective shares are automatically normalized to 100%, while Kraljic minimum shares are protected.",
+        "Share Projection and Kraljic Risk Controls",
+        "Use the sliders as a scenario gadget. Supplier proposal fields remain fully editable in the Supplier Proposals tab.",
     )
+
+    if "share_projection_mode" not in st.session_state:
+        st.session_state["share_projection_mode"] = "Automatic"
+
+    mode_col_1, mode_col_2, mode_col_3 = st.columns([1, 1, 4])
+    with mode_col_1:
+        if st.button(
+            "Automatic",
+            type="primary" if st.session_state["share_projection_mode"] == "Automatic" else "secondary",
+            use_container_width=True,
+            help="When one supplier share is changed, the other supplier shares are automatically rebalanced proportionally to keep the country total at 100%.",
+        ):
+            st.session_state["share_projection_mode"] = "Automatic"
+    with mode_col_2:
+        if st.button(
+            "Manual",
+            type="primary" if st.session_state["share_projection_mode"] == "Manual" else "secondary",
+            use_container_width=True,
+            help="Each supplier share can be moved independently. The effective model share is normalized for calculation if the visible total is different from 100%.",
+        ):
+            st.session_state["share_projection_mode"] = "Manual"
+    with mode_col_3:
+        if st.session_state["share_projection_mode"] == "Automatic":
+            st.info(
+                "Automatic mode is active: change one supplier slider and the other shares will rebalance proportionally. "
+                "This is only a projection gadget; spend and payment terms remain controlled in Supplier Proposals."
+            )
+        else:
+            st.warning(
+                "Manual mode is active: sliders do not modify each other. If the visible total is not 100%, "
+                "the model uses the normalized Effective Share % shown below."
+            )
+
     for country in COUNTRIES:
-        with st.expander(f"{country} allocation and risk", expanded=(country == "Brazil")):
-            st.caption("Desired shares are normalized automatically. Effective shares always sum to 100% unless minimum constraints are invalid.")
+        with st.expander(f"{country} share projection and risk", expanded=(country == "Brazil")):
+            st.caption(
+                "Projected shares drive the scenario calculation in real time. Supplier expected spend and payment terms remain editable in the Supplier Proposals tab."
+            )
+
+            # First row: share projection sliders only.
+            st.markdown("**Share Projection**")
+            share_cols = st.columns(4)
+            for idx_supplier, supplier in enumerate(SUPPLIERS):
+                share_key = f"share_{country}_{supplier}"
+                with share_cols[idx_supplier]:
+                    if st.session_state["share_projection_mode"] == "Automatic":
+                        st.slider(
+                            supplier,
+                            min_value=0.0,
+                            max_value=100.0,
+                            step=0.1,
+                            key=share_key,
+                            on_change=auto_adjust_supplier_share,
+                            args=(country, supplier),
+                            help="Automatic mode: changing this supplier rebalances the remaining suppliers proportionally.",
+                        )
+                    else:
+                        st.slider(
+                            supplier,
+                            min_value=0.0,
+                            max_value=100.0,
+                            step=0.1,
+                            key=share_key,
+                            help="Manual mode: this supplier can be moved independently. The effective model share is normalized below.",
+                        )
+
+            raw_shares[country] = get_slider_share_values(country)
+            visible_total = sum(raw_shares[country].values())
+
+            if st.session_state["share_projection_mode"] == "Manual" and abs(visible_total - 100.0) > 0.01:
+                st.caption(
+                    f"Visible manual share total: {visible_total:.1f}%. The calculation will use normalized Effective Share % to keep the scenario at 100%."
+                )
+            else:
+                st.caption(f"Visible share total: {visible_total:.1f}%")
+
+            st.markdown("**Kraljic Minimum and Risk Controls**")
             for supplier in SUPPLIERS:
-                ac1, ac2, ac3, ac4 = st.columns([1.1, 1, 1, 1])
-                default_share = 100.0 if supplier == "ChemPrime" else 0.0
+                ac1, ac2, ac3 = st.columns([1.25, 1, 1])
                 with ac1:
-                    desired_share = st.slider(
-                        f"{country} | {supplier} | Desired share %",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=default_share,
-                        step=1.0,
-                        key=f"share_{country}_{supplier}",
-                    )
-                with ac2:
                     kraljic_required = st.checkbox(
-                        f"{country} | {supplier} | Kraljic minimum required",
+                        f"{supplier} | Kraljic minimum required",
                         value=False,
                         key=f"kraljic_{country}_{supplier}",
                     )
-                with ac3:
+                with ac2:
                     min_share = st.number_input(
-                        f"{country} | {supplier} | Minimum share %",
+                        f"{supplier} | Minimum share %",
                         min_value=0.0,
                         max_value=100.0,
                         value=20.0 if kraljic_required else 0.0,
@@ -911,9 +1092,9 @@ with input_tab_4:
                         key=f"min_{country}_{supplier}",
                         disabled=not kraljic_required,
                     )
-                with ac4:
+                with ac3:
                     risk_score = st.slider(
-                        f"{country} | {supplier} | Risk score",
+                        f"{supplier} | Risk score",
                         min_value=1.0,
                         max_value=5.0,
                         value=float(DEFAULT_RISK[supplier]),
@@ -921,7 +1102,7 @@ with input_tab_4:
                         key=f"risk_{country}_{supplier}",
                         help="1 = lowest risk, 5 = highest risk.",
                     )
-                raw_shares[country][supplier] = desired_share
+
                 minimums[country][supplier] = min_share if kraljic_required else 0.0
                 supplier_inputs[country][supplier]["risk_score"] = risk_score
                 supplier_inputs[country][supplier]["kraljic_required"] = kraljic_required
@@ -930,16 +1111,26 @@ with input_tab_4:
             total_min = sum(minimums[country].values())
             if total_min > 100.0:
                 st.error(f"{country}: Kraljic minimum shares sum to {total_min:.1f}%. Reduce minimum requirements to 100% or less.")
+
             effective_shares[country] = normalize_with_minimums(raw_shares[country], minimums[country])
             effective_df = pd.DataFrame(
                 {
                     "Supplier": SUPPLIERS,
-                    "Desired Share %": [raw_shares[country][s] for s in SUPPLIERS],
-                    "Minimum Share %": [minimums[country][s] for s in SUPPLIERS],
-                    "Effective Share %": [effective_shares[country][s] for s in SUPPLIERS],
+                    "Projected Slider Share %": [raw_shares[country][s] for s in SUPPLIERS],
+                    "Kraljic Minimum Share %": [minimums[country][s] for s in SUPPLIERS],
+                    "Effective Model Share %": [effective_shares[country][s] for s in SUPPLIERS],
                 }
             )
-            st.dataframe(effective_df.style.format({"Desired Share %": "{:.1f}", "Minimum Share %": "{:.1f}", "Effective Share %": "{:.1f}"}), use_container_width=True)
+            st.dataframe(
+                effective_df.style.format(
+                    {
+                        "Projected Slider Share %": "{:.1f}",
+                        "Kraljic Minimum Share %": "{:.1f}",
+                        "Effective Model Share %": "{:.1f}",
+                    }
+                ),
+                use_container_width=True,
+            )
 
 # Ensure effective shares exist when tab 4 was not interacted with in a fresh rerun.
 for country in COUNTRIES:
@@ -985,6 +1176,9 @@ with k4:
 with k5:
     render_kpi_card("Weighted Risk", f"{total_row['Risk Score']:.2f}/5", "Lower is better", "neutral")
 
+# Visual breathing room between the total KPI row and the Brazil/LATAM result row.
+st.markdown('<div class="executive-row-spacer"></div>', unsafe_allow_html=True)
+
 r1c1, r1c2 = st.columns(2)
 with r1c1:
     render_kpi_card(
@@ -992,6 +1186,7 @@ with r1c1:
         format_money(abs(brazil_row["Saving / Impact"]), currency_symbol, True),
         f"{'Saving' if brazil_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {brazil_row['Risk Score']:.2f}/5",
         "good" if brazil_row["Saving / Impact"] >= 0 else "bad",
+        compact=True,
     )
 with r1c2:
     render_kpi_card(
@@ -999,6 +1194,7 @@ with r1c2:
         format_money(abs(latam_row["Saving / Impact"]), currency_symbol, True),
         f"{'Saving' if latam_row['Saving / Impact'] >= 0 else 'Impact'} | Risk {latam_row['Risk Score']:.2f}/5",
         "good" if latam_row["Saving / Impact"] >= 0 else "bad",
+        compact=True,
     )
 
 if is_saving:
