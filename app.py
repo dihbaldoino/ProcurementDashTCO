@@ -1,6 +1,6 @@
 """
-Executive Procurement TCO & Should-Cost Dashboard - by Diogenes Silva
-Version: v11 - Executive Financial Breakdown
+Executive Procurement TCO & Should-Cost Dashboard
+Version: v14 - Working Capital Carry + Advanced Optimization
 
 Run locally:
     pip install -r requirements.txt
@@ -162,7 +162,12 @@ st.markdown(
             box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
         }
         .kpi-card.compact-card {
-            min-height: 124px;
+            min-height: 156px;
+            height: 156px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
         }
         .executive-row-spacer {
             height: 14px;
@@ -187,8 +192,8 @@ st.markdown(
         }
         .kpi-helper {
             color: #64748b;
-            font-size: 0.83rem;
-            line-height: 1.32;
+            font-size: 0.82rem;
+            line-height: 1.28;
         }
         .good { color: #047857 !important; }
         .bad { color: #b91c1c !important; }
@@ -339,6 +344,39 @@ def equivalent_rate(reference_rate_pct: float, reference_days: int, target_days:
     return (1 + reference_rate) ** (target_days / reference_days) - 1
 
 
+def annualized_rate_from_period(period_rate: float, period_days: int, method: str) -> float:
+    """Return a 360-day annualized rate from a period rate."""
+    if period_days <= 0:
+        return 0.0
+    if method == "Linear simple":
+        return period_rate * (360 / period_days)
+    return (1 + period_rate) ** (360 / period_days) - 1
+
+
+def working_capital_net_effect(base_amount: float, financing_rate: float, investment_return_rate: float) -> Dict[str, float]:
+    """
+    Procurement payment-term economics.
+
+    Gross supplier financing cost is the cost charged by the supplier for the term.
+    Capital gain offset is the return earned by keeping cash invested until payment.
+    Net financial impact is what remains after offset.
+
+    Positive net impact increases cost. Negative net impact creates financial benefit.
+    """
+    gross_financial_cost = base_amount * financing_rate
+    capital_gain_offset = base_amount * investment_return_rate
+    net_financial_impact = gross_financial_cost - capital_gain_offset
+    economic_total = base_amount + net_financial_impact
+    gross_total = base_amount + gross_financial_cost
+    return {
+        "gross_financial_cost": gross_financial_cost,
+        "capital_gain_offset": capital_gain_offset,
+        "net_financial_impact": net_financial_impact,
+        "economic_total": economic_total,
+        "gross_total": gross_total,
+    }
+
+
 def normalize_with_minimums(raw_shares: Dict[str, float], minimums: Dict[str, float]) -> Dict[str, float]:
     """
     Normalize supplier shares so the final allocation always sums to 100%.
@@ -392,49 +430,116 @@ def initialize_share_projection_state() -> None:
                 st.session_state[share_key] = 100.0 if supplier == "ChemPrime" else 0.0
 
 
+def get_country_minimums_from_state(country: str) -> Dict[str, float]:
+    """Read Kraljic minimum-share requirements from Streamlit session state."""
+    minimums = {}
+    for supplier in SUPPLIERS:
+        required = bool(st.session_state.get(f"kraljic_{country}_{supplier}", False))
+        if required:
+            minimum_value = float(st.session_state.get(f"min_{country}_{supplier}", 20.0))
+            minimums[supplier] = min(100.0, max(0.0, minimum_value))
+        else:
+            minimums[supplier] = 0.0
+    return minimums
+
+
+def enforce_kraljic_minimums_on_slider_state(country: str, minimums: Dict[str, float]) -> None:
+    """
+    Push Kraljic minimum-share requirements into the visible Share Projection sliders.
+
+    Streamlit does not allow changing a slider key after the slider is rendered.
+    This function is therefore called immediately before the share sliders are created.
+    """
+    total_min = sum(max(0.0, minimums.get(supplier, 0.0)) for supplier in SUPPLIERS)
+    if total_min > 100.0:
+        # Invalid Kraljic configuration. Let the UI warning handle it and do not mutate sliders.
+        return
+
+    raw_shares = {
+        supplier: max(0.0, float(st.session_state.get(f"share_{country}_{supplier}", 0.0)))
+        for supplier in SUPPLIERS
+    }
+
+    changed = False
+    for supplier in SUPPLIERS:
+        minimum = max(0.0, minimums.get(supplier, 0.0))
+        if raw_shares[supplier] < minimum:
+            raw_shares[supplier] = minimum
+            changed = True
+
+    current_total = sum(raw_shares.values())
+    if changed or abs(current_total - 100.0) > 0.01:
+        normalized = normalize_with_minimums(raw_shares, minimums)
+        for supplier in SUPPLIERS:
+            st.session_state[f"share_{country}_{supplier}"] = round(normalized[supplier], 1)
+
+
 def auto_adjust_supplier_share(country: str, changed_supplier: str) -> None:
     """
     Automatic Share Projection behavior.
 
     When one supplier's share is changed, the remaining suppliers are adjusted
     proportionally so that the visible slider values continue to sum to 100%.
-    This is only active when the user selects Automatic mode.
+    Kraljic minimum shares are treated as locked floors.
     """
     if st.session_state.get("share_projection_mode", "Automatic") != "Automatic":
         return
 
+    minimums = get_country_minimums_from_state(country)
+    total_min = sum(max(0.0, minimums.get(supplier, 0.0)) for supplier in SUPPLIERS)
+    if total_min > 100.0:
+        return
+
     changed_key = f"share_{country}_{changed_supplier}"
-    changed_value = float(st.session_state.get(changed_key, 0.0))
-    changed_value = round(min(100.0, max(0.0, changed_value)), 1)
+    changed_min = max(0.0, minimums.get(changed_supplier, 0.0))
+    other_suppliers = [supplier for supplier in SUPPLIERS if supplier != changed_supplier]
+    other_min_total = sum(max(0.0, minimums.get(supplier, 0.0)) for supplier in other_suppliers)
+
+    max_allowed_for_changed = max(changed_min, 100.0 - other_min_total)
+    changed_value = float(st.session_state.get(changed_key, changed_min))
+    changed_value = min(max_allowed_for_changed, max(changed_min, changed_value))
+    changed_value = round(changed_value, 1)
     st.session_state[changed_key] = changed_value
 
-    other_suppliers = [supplier for supplier in SUPPLIERS if supplier != changed_supplier]
     remaining_share = max(0.0, 100.0 - changed_value)
+    remaining_after_other_minimums = max(0.0, remaining_share - other_min_total)
 
-    other_values = {
-        supplier: float(st.session_state.get(f"share_{country}_{supplier}", 0.0))
-        for supplier in other_suppliers
-    }
-    other_total = sum(max(0.0, value) for value in other_values.values())
+    other_excess_values = {}
+    for supplier in other_suppliers:
+        current_value = float(st.session_state.get(f"share_{country}_{supplier}", 0.0))
+        supplier_min = max(0.0, minimums.get(supplier, 0.0))
+        other_excess_values[supplier] = max(0.0, current_value - supplier_min)
 
-    if other_total <= 1e-9:
-        equal_share = remaining_share / len(other_suppliers) if other_suppliers else 0.0
+    total_excess = sum(other_excess_values.values())
+    if total_excess <= 1e-9:
+        adjustable_suppliers = [s for s in other_suppliers if minimums.get(s, 0.0) < 100.0]
+        equal_extra = remaining_after_other_minimums / len(adjustable_suppliers) if adjustable_suppliers else 0.0
         for supplier in other_suppliers:
-            st.session_state[f"share_{country}_{supplier}"] = round(equal_share, 1)
+            supplier_min = max(0.0, minimums.get(supplier, 0.0))
+            extra = equal_extra if supplier in adjustable_suppliers else 0.0
+            st.session_state[f"share_{country}_{supplier}"] = round(supplier_min + extra, 1)
     else:
         for supplier in other_suppliers:
-            proportional_share = remaining_share * max(0.0, other_values[supplier]) / other_total
-            st.session_state[f"share_{country}_{supplier}"] = round(proportional_share, 1)
+            supplier_min = max(0.0, minimums.get(supplier, 0.0))
+            proportional_extra = remaining_after_other_minimums * other_excess_values[supplier] / total_excess
+            st.session_state[f"share_{country}_{supplier}"] = round(supplier_min + proportional_extra, 1)
 
-    # Final numerical correction.
+    # Final numerical correction without violating minimums.
     total = sum(float(st.session_state.get(f"share_{country}_{supplier}", 0.0)) for supplier in SUPPLIERS)
-    correction = 100.0 - total
+    correction = round(100.0 - total, 10)
     if abs(correction) > 1e-8:
-        # Apply correction to the largest non-changed supplier when possible.
-        correction_candidates = other_suppliers or [changed_supplier]
-        target_supplier = max(correction_candidates, key=lambda supplier: st.session_state.get(f"share_{country}_{supplier}", 0.0))
+        candidates = [
+            supplier for supplier in SUPPLIERS
+            if float(st.session_state.get(f"share_{country}_{supplier}", 0.0)) + correction >= minimums.get(supplier, 0.0) - 1e-8
+        ]
+        if not candidates:
+            candidates = SUPPLIERS
+        target_supplier = max(candidates, key=lambda supplier: st.session_state.get(f"share_{country}_{supplier}", 0.0))
         target_key = f"share_{country}_{target_supplier}"
-        st.session_state[target_key] = min(100.0, max(0.0, float(st.session_state.get(target_key, 0.0)) + correction))
+        st.session_state[target_key] = round(
+            min(100.0, max(minimums.get(target_supplier, 0.0), float(st.session_state.get(target_key, 0.0)) + correction)),
+            1,
+        )
 
 
 def get_slider_share_values(country: str) -> Dict[str, float]:
@@ -460,19 +565,24 @@ def compute_country_baseline(
     method: str,
 ) -> Dict[str, float]:
     """
-    Build the current baseline with the same financial logic used for proposals.
+    Build the current baseline using the same economic logic used for proposals.
 
-    Executive rule for v11:
-    - Current Spend = base spend entered by the user, without financial cost.
-    - Current Financial Cost = Current Spend x equivalent supplier financing rate
-      for the current payment term.
-    - Current Total Spend = Current Spend + Current Financial Cost.
+    Gross view:
+        Current Total Spend = Current Base Spend + Current Gross Financial Cost
 
-    No capital-gain offset is applied in the executive comparison.
+    Working-capital economic view:
+        Current Economic Total Spend = Current Base Spend
+                                     + Current Gross Financial Cost
+                                     - Current Capital Gain Offset
+
+    This makes payment-term comparisons apples-to-apples when longer payment terms
+    allow the company to keep cash invested for longer.
     """
     current_payment_days = int(financial_assumptions[country].get("current_payment_days", 0))
     financing_rate_pct = financial_assumptions[country]["financing_rate_pct"]
     financing_days = int(financial_assumptions[country]["financing_days"])
+    investment_return_rate_pct = financial_assumptions[country].get("investment_return_rate_pct", financing_rate_pct)
+    investment_return_days = int(financial_assumptions[country].get("investment_return_days", financing_days))
 
     current_financing_rate = equivalent_rate(
         financing_rate_pct,
@@ -480,19 +590,34 @@ def compute_country_baseline(
         current_payment_days,
         method,
     )
-    current_gross_financial_cost = current_spend * current_financing_rate
-    current_total_spend = current_spend + current_gross_financial_cost
+    current_investment_return_rate = equivalent_rate(
+        investment_return_rate_pct,
+        investment_return_days,
+        current_payment_days,
+        method,
+    )
+
+    wc = working_capital_net_effect(
+        base_amount=current_spend,
+        financing_rate=current_financing_rate,
+        investment_return_rate=current_investment_return_rate,
+    )
 
     return {
         "current_payment_days": current_payment_days,
         "current_financing_rate": current_financing_rate,
-        "current_return_rate": 0.0,
-        "current_gross_financial_cost": current_gross_financial_cost,
-        "current_capital_gain_offset": 0.0,
-        "current_net_financial_impact": current_gross_financial_cost,
-        "current_adjusted_baseline": current_total_spend,
-        "current_total_spend": current_total_spend,
+        "current_effective_financial_rate": safe_divide(wc["gross_financial_cost"], current_spend),
+        "current_weighted_payment_days": current_payment_days,
+        "current_return_rate": current_investment_return_rate,
+        "current_effective_return_rate": safe_divide(wc["capital_gain_offset"], current_spend),
+        "current_gross_financial_cost": wc["gross_financial_cost"],
+        "current_capital_gain_offset": wc["capital_gain_offset"],
+        "current_net_financial_impact": wc["net_financial_impact"],
+        "current_adjusted_baseline": wc["economic_total"],
+        "current_total_spend": wc["gross_total"],
+        "current_economic_total_spend": wc["economic_total"],
     }
+
 
 def compute_country_proposal(
     country: str,
@@ -505,23 +630,34 @@ def compute_country_proposal(
     """
     Computes country-level TCO for the proposed sourcing scenario.
 
-    Executive rule for v11:
-    - New Spend = weighted supplier proposal spend before financial cost.
-    - New Financial Cost = New Spend x equivalent supplier financing rate by country and payment term.
-    - New Total Spend = New Spend + New Financial Cost.
+    This model separates three layers:
 
-    The executive comparison does not offset the financial cost with investment return.
+    1. Base spend economics
+       New Spend = weighted supplier proposal spend before any financial logic.
+
+    2. Gross payment-term cost
+       Gross Financial Cost = New Spend x supplier financing rate for the proposed term.
+
+    3. Working-capital carry
+       Capital Gain Offset = New Spend x treasury/investment return for the same payment term.
+
+    Final economic decision metric:
+       Economic Total = New Spend + Gross Financial Cost - Capital Gain Offset
+
     Cost delta convention: New - Current. Negative = saving / green; positive = impact / red.
     """
     baseline = compute_country_baseline(country, current_spend, financial_assumptions, method)
 
     rows = []
-    adjusted_total = 0.0
+    gross_total = 0.0
+    economic_total = 0.0
     proposal_before_finance_total = 0.0
     gross_financial_cost_total = 0.0
     capital_gain_offset_total = 0.0
     net_financial_impact_total = 0.0
     risk_weighted_sum = 0.0
+    weighted_payment_days_sum = 0.0
+    weighted_return_rate_sum = 0.0
 
     for supplier in SUPPLIERS:
         supplier_data = supplier_inputs[country][supplier]
@@ -533,22 +669,34 @@ def compute_country_proposal(
 
         country_financing_rate = financial_assumptions[country]["financing_rate_pct"]
         country_financing_days = int(financial_assumptions[country]["financing_days"])
-        supplier_financing_rate = equivalent_rate(country_financing_rate, country_financing_days, payment_days, method)
+        investment_return_rate_pct = financial_assumptions[country].get("investment_return_rate_pct", country_financing_rate)
+        investment_return_days = int(financial_assumptions[country].get("investment_return_days", country_financing_days))
 
-        investment_return_rate = 0.0
+        supplier_financing_rate = equivalent_rate(country_financing_rate, country_financing_days, payment_days, method)
+        investment_return_rate = equivalent_rate(investment_return_rate_pct, investment_return_days, payment_days, method)
 
         allocated_before_finance = spend * share
-        gross_financial_cost = allocated_before_finance * supplier_financing_rate
-        capital_gain_offset = 0.0
-        net_financial_impact = gross_financial_cost
-        adjusted_spend = allocated_before_finance + gross_financial_cost
+        wc = working_capital_net_effect(
+            base_amount=allocated_before_finance,
+            financing_rate=supplier_financing_rate,
+            investment_return_rate=investment_return_rate,
+        )
+
+        gross_financial_cost = wc["gross_financial_cost"]
+        capital_gain_offset = wc["capital_gain_offset"]
+        net_financial_impact = wc["net_financial_impact"]
+        gross_adjusted_spend = wc["gross_total"]
+        economic_adjusted_spend = wc["economic_total"]
 
         proposal_before_finance_total += allocated_before_finance
+        weighted_payment_days_sum += payment_days * allocated_before_finance
+        weighted_return_rate_sum += investment_return_rate * allocated_before_finance
         gross_financial_cost_total += gross_financial_cost
         capital_gain_offset_total += capital_gain_offset
         net_financial_impact_total += net_financial_impact
-        adjusted_total += adjusted_spend
-        risk_weighted_sum += risk_score * max(adjusted_spend, 0.0)
+        gross_total += gross_adjusted_spend
+        economic_total += economic_adjusted_spend
+        risk_weighted_sum += risk_score * max(economic_adjusted_spend, 0.0)
 
         rows.append(
             {
@@ -563,43 +711,57 @@ def compute_country_proposal(
                 "Gross Financial Cost": gross_financial_cost,
                 "Capital Gain Offset": capital_gain_offset,
                 "Net Financial Impact": net_financial_impact,
-                "Adjusted Proposal Spend": adjusted_spend,
+                "Adjusted Proposal Spend": gross_adjusted_spend,
+                "Economic Adjusted Proposal Spend": economic_adjusted_spend,
                 "Risk Score": risk_score,
                 "Kraljic Minimum Required": supplier_data["kraljic_required"],
                 "Minimum Share %": supplier_data["minimum_share"],
             }
         )
 
-    cost_delta = adjusted_total - baseline["current_total_spend"]
+    gross_cost_delta = gross_total - baseline["current_total_spend"]
     spend_delta = proposal_before_finance_total - current_spend
-    financial_delta = gross_financial_cost_total - baseline["current_gross_financial_cost"]
-    net_financial_delta = financial_delta
+    gross_financial_delta = gross_financial_cost_total - baseline["current_gross_financial_cost"]
+    net_financial_delta = net_financial_impact_total - baseline["current_net_financial_impact"]
+    economic_cost_delta = economic_total - baseline["current_economic_total_spend"]
 
     return {
         "country": country,
         "current_base_spend": current_spend,
         "current_payment_days": baseline["current_payment_days"],
+        "current_weighted_payment_days": baseline["current_weighted_payment_days"],
+        "current_effective_financial_rate": baseline["current_effective_financial_rate"],
+        "current_effective_return_rate": baseline["current_effective_return_rate"],
+        "new_weighted_payment_days": safe_divide(weighted_payment_days_sum, proposal_before_finance_total),
+        "new_effective_financial_rate": safe_divide(gross_financial_cost_total, proposal_before_finance_total),
+        "new_effective_return_rate": safe_divide(capital_gain_offset_total, proposal_before_finance_total),
         "current_gross_financial_cost": baseline["current_gross_financial_cost"],
         "current_capital_gain_offset": baseline["current_capital_gain_offset"],
         "current_net_financial_impact": baseline["current_net_financial_impact"],
         "current_adjusted_baseline": baseline["current_adjusted_baseline"],
         "current_total_spend": baseline["current_total_spend"],
+        "current_economic_total_spend": baseline["current_economic_total_spend"],
         "proposal_before_finance": proposal_before_finance_total,
         "gross_financial_cost": gross_financial_cost_total,
         "capital_gain_offset": capital_gain_offset_total,
         "net_financial_impact": net_financial_impact_total,
         "net_financial_delta": net_financial_delta,
+        "gross_financial_delta": gross_financial_delta,
         "spend_delta": spend_delta,
-        "financial_delta": financial_delta,
-        "adjusted_proposal": adjusted_total,
-        "cost_delta": cost_delta,
-        "cost_delta_pct": safe_divide(cost_delta, baseline["current_total_spend"]),
+        "financial_delta": gross_financial_delta,
+        "adjusted_proposal": gross_total,
+        "gross_cost_delta": gross_cost_delta,
+        "economic_adjusted_proposal": economic_total,
+        "economic_cost_delta": economic_cost_delta,
+        "cost_delta": economic_cost_delta,
+        "cost_delta_pct": safe_divide(economic_cost_delta, baseline["current_economic_total_spend"]),
+        "gross_cost_delta_pct": safe_divide(gross_cost_delta, baseline["current_total_spend"]),
         "spend_delta_pct": safe_divide(spend_delta, current_spend),
-        "financial_delta_pct": safe_divide(financial_delta, baseline["current_gross_financial_cost"]),
-        "risk_score": safe_divide(risk_weighted_sum, adjusted_total) if adjusted_total else 0.0,
+        "financial_delta_pct": safe_divide(gross_financial_delta, baseline["current_gross_financial_cost"]),
+        "net_financial_delta_pct": safe_divide(net_financial_delta, baseline["current_net_financial_impact"]),
+        "risk_score": safe_divide(risk_weighted_sum, economic_total) if economic_total else 0.0,
         "rows": rows,
     }
-
 
 def compute_full_scenario(
     current_spend: Dict[str, float],
@@ -625,11 +787,18 @@ def compute_full_scenario(
                 "Region": country,
                 "Current Base Spend": result["current_base_spend"],
                 "Current Payment Term Days": result["current_payment_days"],
+                "Current Weighted Payment Days": result["current_weighted_payment_days"],
+                "New Weighted Payment Days": result["new_weighted_payment_days"],
+                "Current Effective Financial Rate": result["current_effective_financial_rate"],
+                "New Effective Financial Rate": result["new_effective_financial_rate"],
+                "Current Effective Return Rate": result["current_effective_return_rate"],
+                "New Effective Return Rate": result["new_effective_return_rate"],
                 "Current Gross Financial Cost": result["current_gross_financial_cost"],
                 "Current Capital Gain Offset": result["current_capital_gain_offset"],
                 "Current Net Financial Impact": result["current_net_financial_impact"],
                 "Current Adjusted Baseline": result["current_adjusted_baseline"],
                 "Current Total Spend": result["current_total_spend"],
+                "Current Economic Total Spend": result["current_economic_total_spend"],
                 "Current Spend": result["current_base_spend"],
                 "Proposal Before Finance": result["proposal_before_finance"],
                 "New Spend": result["proposal_before_finance"],
@@ -638,110 +807,110 @@ def compute_full_scenario(
                 "Net Financial Impact": result["net_financial_impact"],
                 "Net Financial Delta": result["net_financial_delta"],
                 "Spend Saving / Impact": result["spend_delta"],
-                "Financial Saving / Impact": result["financial_delta"],
+                "Gross Financial Saving / Impact": result["gross_financial_delta"],
+                "Financial Saving / Impact": result["gross_financial_delta"],
+                "Net Financial Saving / Impact": result["net_financial_delta"],
                 "Adjusted Proposal": result["adjusted_proposal"],
                 "New Total Spend": result["adjusted_proposal"],
-                "All In Saving / Impact": result["cost_delta"],
-                "Saving / Impact": result["cost_delta"],
+                "Gross All In Saving / Impact": result["gross_cost_delta"],
+                "Economic Adjusted Proposal": result["economic_adjusted_proposal"],
+                "New Economic Total Spend": result["economic_adjusted_proposal"],
+                "Economic Saving / Impact": result["economic_cost_delta"],
+                "All In Saving / Impact": result["economic_cost_delta"],
+                "Saving / Impact": result["economic_cost_delta"],
                 "Saving / Impact %": result["cost_delta_pct"],
+                "Gross Saving / Impact %": result["gross_cost_delta_pct"],
                 "Spend Saving / Impact %": result["spend_delta_pct"],
                 "Financial Saving / Impact %": result["financial_delta_pct"],
+                "Net Financial Saving / Impact %": result["net_financial_delta_pct"],
                 "Risk Score": result["risk_score"],
             }
         )
         detail_rows.extend(result["rows"])
 
-    latam_rows = [row for row in country_results if row["Region"] in LATAM_COUNTRIES]
-    latam_current_base = sum(row["Current Base Spend"] for row in latam_rows)
-    latam_current_gross = sum(row["Current Gross Financial Cost"] for row in latam_rows)
-    latam_current_offset = sum(row["Current Capital Gain Offset"] for row in latam_rows)
-    latam_current_net = sum(row["Current Net Financial Impact"] for row in latam_rows)
-    latam_current_adjusted = sum(row["Current Adjusted Baseline"] for row in latam_rows)
-    latam_current_total_spend = sum(row["Current Total Spend"] for row in latam_rows)
-    latam_before = sum(row["Proposal Before Finance"] for row in latam_rows)
-    latam_gross_finance = sum(row["Gross Financial Cost"] for row in latam_rows)
-    latam_capital_offset = sum(row["Capital Gain Offset"] for row in latam_rows)
-    latam_net_finance = sum(row["Net Financial Impact"] for row in latam_rows)
-    latam_net_delta = latam_gross_finance - latam_current_gross
-    latam_spend_delta = latam_before - latam_current_base
-    latam_adjusted = sum(row["Adjusted Proposal"] for row in latam_rows)
-    latam_all_in_delta = latam_adjusted - latam_current_total_spend
-    latam_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in latam_rows)
+    def aggregate_rows(rows: List[Dict[str, float]], region_name: str) -> Dict[str, float]:
+        current_base = sum(row["Current Base Spend"] for row in rows)
+        current_gross = sum(row["Current Gross Financial Cost"] for row in rows)
+        current_offset = sum(row["Current Capital Gain Offset"] for row in rows)
+        current_net = sum(row["Current Net Financial Impact"] for row in rows)
+        current_total_spend = sum(row["Current Total Spend"] for row in rows)
+        current_economic_total = sum(row["Current Economic Total Spend"] for row in rows)
+        current_weighted_days = safe_divide(
+            sum(row["Current Weighted Payment Days"] * row["Current Base Spend"] for row in rows),
+            current_base,
+        )
+
+        new_spend = sum(row["New Spend"] for row in rows)
+        new_gross = sum(row["Gross Financial Cost"] for row in rows)
+        new_offset = sum(row["Capital Gain Offset"] for row in rows)
+        new_net = sum(row["Net Financial Impact"] for row in rows)
+        new_total_spend = sum(row["New Total Spend"] for row in rows)
+        new_economic_total = sum(row["New Economic Total Spend"] for row in rows)
+        new_weighted_days = safe_divide(
+            sum(row["New Weighted Payment Days"] * row["New Spend"] for row in rows),
+            new_spend,
+        )
+
+        current_effective_rate = safe_divide(current_gross, current_base)
+        new_effective_rate = safe_divide(new_gross, new_spend)
+        current_effective_return = safe_divide(current_offset, current_base)
+        new_effective_return = safe_divide(new_offset, new_spend)
+
+        spend_delta = new_spend - current_base
+        gross_financial_delta = new_gross - current_gross
+        net_financial_delta = new_net - current_net
+        gross_all_in_delta = new_total_spend - current_total_spend
+        economic_delta = new_economic_total - current_economic_total
+        risk_weight = sum(row["Risk Score"] * row["New Economic Total Spend"] for row in rows)
+
+        return {
+            "Region": region_name,
+            "Current Base Spend": current_base,
+            "Current Payment Term Days": None,
+            "Current Weighted Payment Days": current_weighted_days,
+            "New Weighted Payment Days": new_weighted_days,
+            "Current Effective Financial Rate": current_effective_rate,
+            "New Effective Financial Rate": new_effective_rate,
+            "Current Effective Return Rate": current_effective_return,
+            "New Effective Return Rate": new_effective_return,
+            "Current Gross Financial Cost": current_gross,
+            "Current Capital Gain Offset": current_offset,
+            "Current Net Financial Impact": current_net,
+            "Current Adjusted Baseline": current_economic_total,
+            "Current Total Spend": current_total_spend,
+            "Current Economic Total Spend": current_economic_total,
+            "Current Spend": current_base,
+            "Proposal Before Finance": new_spend,
+            "New Spend": new_spend,
+            "Gross Financial Cost": new_gross,
+            "Capital Gain Offset": new_offset,
+            "Net Financial Impact": new_net,
+            "Net Financial Delta": net_financial_delta,
+            "Spend Saving / Impact": spend_delta,
+            "Gross Financial Saving / Impact": gross_financial_delta,
+            "Financial Saving / Impact": gross_financial_delta,
+            "Net Financial Saving / Impact": net_financial_delta,
+            "Adjusted Proposal": new_total_spend,
+            "New Total Spend": new_total_spend,
+            "Gross All In Saving / Impact": gross_all_in_delta,
+            "Economic Adjusted Proposal": new_economic_total,
+            "New Economic Total Spend": new_economic_total,
+            "Economic Saving / Impact": economic_delta,
+            "All In Saving / Impact": economic_delta,
+            "Saving / Impact": economic_delta,
+            "Saving / Impact %": safe_divide(economic_delta, current_economic_total),
+            "Gross Saving / Impact %": safe_divide(gross_all_in_delta, current_total_spend),
+            "Spend Saving / Impact %": safe_divide(spend_delta, current_base),
+            "Financial Saving / Impact %": safe_divide(gross_financial_delta, current_gross),
+            "Net Financial Saving / Impact %": safe_divide(net_financial_delta, current_net),
+            "Risk Score": safe_divide(risk_weight, new_economic_total) if new_economic_total else 0.0,
+        }
 
     brazil_row = next(row for row in country_results if row["Region"] == "Brazil")
-    total_current_base = sum(row["Current Base Spend"] for row in country_results)
-    total_current_gross = sum(row["Current Gross Financial Cost"] for row in country_results)
-    total_current_offset = sum(row["Current Capital Gain Offset"] for row in country_results)
-    total_current_net = sum(row["Current Net Financial Impact"] for row in country_results)
-    total_current_adjusted = sum(row["Current Adjusted Baseline"] for row in country_results)
-    total_current_total_spend = sum(row["Current Total Spend"] for row in country_results)
-    total_before = sum(row["Proposal Before Finance"] for row in country_results)
-    total_gross_finance = sum(row["Gross Financial Cost"] for row in country_results)
-    total_capital_offset = sum(row["Capital Gain Offset"] for row in country_results)
-    total_net_finance = sum(row["Net Financial Impact"] for row in country_results)
-    total_net_delta = total_gross_finance - total_current_gross
-    total_spend_delta = total_before - total_current_base
-    total_adjusted = sum(row["Adjusted Proposal"] for row in country_results)
-    total_all_in_delta = total_adjusted - total_current_total_spend
-    total_risk_weight = sum(row["Risk Score"] * row["Adjusted Proposal"] for row in country_results)
+    latam_row = aggregate_rows([row for row in country_results if row["Region"] in LATAM_COUNTRIES], "LATAM")
+    total_row = aggregate_rows(country_results, "Total")
 
-    executive_rows = [
-        brazil_row,
-        {
-            "Region": "LATAM",
-            "Current Base Spend": latam_current_base,
-            "Current Payment Term Days": None,
-            "Current Gross Financial Cost": latam_current_gross,
-            "Current Capital Gain Offset": latam_current_offset,
-            "Current Net Financial Impact": latam_current_net,
-            "Current Adjusted Baseline": latam_current_adjusted,
-            "Current Total Spend": latam_current_total_spend,
-            "Current Spend": latam_current_base,
-            "Proposal Before Finance": latam_before,
-            "New Spend": latam_before,
-            "Gross Financial Cost": latam_gross_finance,
-            "Capital Gain Offset": latam_capital_offset,
-            "Net Financial Impact": latam_net_finance,
-            "Net Financial Delta": latam_net_delta,
-            "Spend Saving / Impact": latam_spend_delta,
-            "Financial Saving / Impact": latam_net_delta,
-            "Adjusted Proposal": latam_adjusted,
-            "New Total Spend": latam_adjusted,
-            "All In Saving / Impact": latam_all_in_delta,
-            "Saving / Impact": latam_all_in_delta,
-            "Saving / Impact %": safe_divide(latam_all_in_delta, latam_current_total_spend),
-            "Spend Saving / Impact %": safe_divide(latam_spend_delta, latam_current_base),
-            "Financial Saving / Impact %": safe_divide(latam_net_delta, latam_current_gross),
-            "Risk Score": safe_divide(latam_risk_weight, latam_adjusted) if latam_adjusted else 0.0,
-        },
-        {
-            "Region": "Total",
-            "Current Base Spend": total_current_base,
-            "Current Payment Term Days": None,
-            "Current Gross Financial Cost": total_current_gross,
-            "Current Capital Gain Offset": total_current_offset,
-            "Current Net Financial Impact": total_current_net,
-            "Current Adjusted Baseline": total_current_adjusted,
-            "Current Total Spend": total_current_total_spend,
-            "Current Spend": total_current_base,
-            "Proposal Before Finance": total_before,
-            "New Spend": total_before,
-            "Gross Financial Cost": total_gross_finance,
-            "Capital Gain Offset": total_capital_offset,
-            "Net Financial Impact": total_net_finance,
-            "Net Financial Delta": total_net_delta,
-            "Spend Saving / Impact": total_spend_delta,
-            "Financial Saving / Impact": total_net_delta,
-            "Adjusted Proposal": total_adjusted,
-            "New Total Spend": total_adjusted,
-            "All In Saving / Impact": total_all_in_delta,
-            "Saving / Impact": total_all_in_delta,
-            "Saving / Impact %": safe_divide(total_all_in_delta, total_current_total_spend),
-            "Spend Saving / Impact %": safe_divide(total_spend_delta, total_current_base),
-            "Financial Saving / Impact %": safe_divide(total_net_delta, total_current_gross),
-            "Risk Score": safe_divide(total_risk_weight, total_adjusted) if total_adjusted else 0.0,
-        },
-    ]
+    executive_rows = [brazil_row, latam_row, total_row]
 
     return pd.DataFrame(executive_rows), pd.DataFrame(detail_rows)
 
@@ -783,8 +952,8 @@ def compute_candidate_country_cost(
     return {
         "country": country,
         "combo": combo,
-        "adjusted_proposal": result["adjusted_proposal"],
-        # Cost delta convention: negative = saving, positive = impact.
+        "adjusted_proposal": result["economic_adjusted_proposal"],
+        # Economic cost delta convention: negative = saving, positive = impact.
         "saving": result["cost_delta"],
         "risk_score": result["risk_score"],
         "saving_pct": result["cost_delta_pct"],
@@ -909,23 +1078,23 @@ def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
         fig.add_trace(
             go.Bar(
                 x=chart_df["Region"],
-                y=chart_df["Current Total Spend"],
-                name="Current Total Spend",
+                y=chart_df["Current Economic Total Spend"],
+                name="Current Economic Total",
                 marker_color="#94a3b8",
-                hovertemplate="Current Total Spend<br>" + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="Current Economic Total<br>" + currency + " %{y:,.2f}<extra></extra>",
             )
         )
         fig.add_trace(
             go.Bar(
                 x=chart_df["Region"],
-                y=chart_df["New Total Spend"],
-                name="New Total Spend",
+                y=chart_df["New Economic Total Spend"],
+                name="New Economic Total",
                 marker_color="#2563eb",
-                hovertemplate="New Total Spend<br>" + currency + " %{y:,.2f}<extra></extra>",
+                hovertemplate="New Economic Total<br>" + currency + " %{y:,.2f}<extra></extra>",
             )
         )
         fig.update_layout(
-            title="Brazil and LATAM: Current Total Spend vs New Total Spend",
+            title="Brazil and LATAM: Economic Total Spend after Working-Capital Carry",
             barmode="group",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
@@ -937,7 +1106,7 @@ def plot_executive_comparison(summary_df: pd.DataFrame, currency: str) -> None:
         apply_graphite_chart_theme(fig)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.bar_chart(chart_df.set_index("Region")[["Current Total Spend", "New Total Spend"]])
+        st.bar_chart(chart_df.set_index("Region")[["Current Economic Total Spend", "New Economic Total Spend"]])
 
 
 def plot_saving_impact(summary_df: pd.DataFrame, currency: str) -> None:
@@ -952,15 +1121,15 @@ def plot_saving_impact(summary_df: pd.DataFrame, currency: str) -> None:
                 marker_color=colors,
                 text=[format_delta(v, currency, compact=True) for v in chart_df["Saving / Impact"]],
                 textposition="outside",
-                hovertemplate="%{x}<br>All-In Saving/Impact: " + currency + " %{y:,.2f}<br>Negative = saving<extra></extra>",
+                hovertemplate="%{x}<br>Economic Saving/Impact: " + currency + " %{y:,.2f}<br>Negative = saving<extra></extra>",
             )
         )
         fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
         fig.update_layout(
-            title="All-In Saving / Impact by Executive Region",
+            title="Economic Saving / Impact by Executive Region",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
-            yaxis_title=f"All-In Saving / Impact ({currency}) - negative = saving",
+            yaxis_title=f"Economic Saving / Impact ({currency}) - negative = saving",
             plot_bgcolor="white",
             paper_bgcolor="white",
             showlegend=False,
@@ -972,13 +1141,13 @@ def plot_saving_impact(summary_df: pd.DataFrame, currency: str) -> None:
 
 
 def plot_supplier_mix(details_df: pd.DataFrame) -> None:
-    mix_df = details_df.groupby("Supplier", as_index=False)["Adjusted Proposal Spend"].sum()
+    mix_df = details_df.groupby("Supplier", as_index=False)["Economic Adjusted Proposal Spend"].sum()
     if PLOTLY_AVAILABLE:
         fig = go.Figure(
             data=[
                 go.Pie(
                     labels=mix_df["Supplier"],
-                    values=mix_df["Adjusted Proposal Spend"],
+                    values=mix_df["Economic Adjusted Proposal Spend"],
                     hole=0.55,
                     textinfo="label+percent",
                     textfont=dict(color=GRAPHITE),
@@ -987,7 +1156,7 @@ def plot_supplier_mix(details_df: pd.DataFrame) -> None:
             ]
         )
         fig.update_layout(
-            title="Adjusted Proposal Spend Mix by Supplier",
+            title="Economic Proposal Spend Mix by Supplier",
             height=410,
             margin=dict(l=20, r=20, t=55, b=30),
             plot_bgcolor="white",
@@ -1045,12 +1214,12 @@ with st.sidebar:
     )
     optimization_step = st.selectbox(
         "Optimization allocation step",
-        options=[10, 5],
+        options=[10, 5, 2, 1],
         index=1,
-        help="5% is more precise. 10% is faster for online environments.",
+        help="1% is the most precise but slower. 5% is a good online default.",
     )
     st.markdown("---")
-    st.caption("The optimizer is an embedded heuristic engine. It does not call any external API.")
+    st.caption("The optimizer is an embedded heuristic engine. It does not call any external API. It optimizes economic all-in cost after working-capital carry.")
 
 
 # =============================================================================
@@ -1125,50 +1294,69 @@ with input_tab_1:
 with input_tab_2:
     render_section_header(
         "Financial Assumptions by Country",
-        "Each country has its own supplier financing reference rate and current payment term. The executive view uses gross financial cost only, without capital-gain offset.",
+        "Each country has its own supplier financing reference rate, treasury return assumption and current payment term. The final economic view offsets supplier financing with working-capital carry.",
     )
     for country in COUNTRIES:
         st.markdown(f"**{country}**")
-        fc1, fc2, fc3 = st.columns(3)
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
         default_financing_rate = {"Brazil": 15.00, "Mexico": 7.00, "Argentina": 35.00, "Colombia": 10.00}[country]
+        default_return_rate = {"Brazil": 15.00, "Mexico": 7.00, "Argentina": 35.00, "Colombia": 10.00}[country]
         default_reference_days = 360
         default_current_payment_days = 360
         with fc1:
             financing_rate = st.number_input(
-                f"{country} financial rate (%)",
+                f"{country} supplier financing rate (%)",
                 min_value=0.0,
                 value=float(default_financing_rate),
                 step=0.05,
                 format="%.4f",
                 key=f"financing_rate_{country}",
-                help="Reference financial rate used to calculate current and new payment-term cost.",
+                help="Reference financial rate used to calculate supplier payment-term cost.",
             )
         with fc2:
             financing_days = st.number_input(
-                f"{country} financial reference period days",
+                f"{country} supplier financing period days",
                 min_value=1,
                 value=int(default_reference_days),
                 step=1,
                 key=f"financing_days_{country}",
             )
         with fc3:
+            investment_return_rate = st.number_input(
+                f"{country} investment return rate (%)",
+                min_value=0.0,
+                value=float(default_return_rate),
+                step=0.05,
+                format="%.4f",
+                key=f"investment_return_rate_{country}",
+                help="Treasury/cash return earned while payment is deferred. This offsets supplier financing cost.",
+            )
+        with fc4:
+            investment_return_days = st.number_input(
+                f"{country} investment return period days",
+                min_value=1,
+                value=int(default_reference_days),
+                step=1,
+                key=f"investment_return_days_{country}",
+            )
+        with fc5:
             current_payment_days = st.number_input(
                 f"{country} current payment term days",
                 min_value=0,
                 value=int(default_current_payment_days),
                 step=1,
                 key=f"current_payment_days_{country}",
-                help="Used to calculate Current Financial Cost = Current Spend x equivalent financial rate for the current term.",
+                help="Used to calculate current financial cost and current capital gain offset.",
             )
         financial_assumptions[country] = {
             "financing_rate_pct": financing_rate,
             "financing_days": financing_days,
-            "investment_return_rate_pct": 0.0,
-            "investment_return_days": financing_days,
+            "investment_return_rate_pct": investment_return_rate,
+            "investment_return_days": investment_return_days,
             "current_payment_days": current_payment_days,
         }
         st.caption(
-            f"{country}: Current Financial Cost and New Financial Cost are calculated using the same country financial rate logic. Capital-gain offset is not applied in this executive comparison."
+            f"{country}: Net financial impact = supplier financing cost minus capital gain offset from keeping cash invested during the payment term."
         )
 with input_tab_3:
     render_section_header(
@@ -1237,7 +1425,7 @@ with input_tab_4:
             "Automatic",
             type="primary" if st.session_state["share_projection_mode"] == "Automatic" else "secondary",
             use_container_width=True,
-            help="When one supplier share is changed, the other supplier shares are automatically rebalanced proportionally to keep the country total at 100%.",
+            help="When one supplier share is changed, the other supplier shares are automatically rebalanced proportionally to keep the country total at 100% while respecting Kraljic minimum locks.",
         ):
             st.session_state["share_projection_mode"] = "Automatic"
     with mode_col_2:
@@ -1245,19 +1433,19 @@ with input_tab_4:
             "Manual",
             type="primary" if st.session_state["share_projection_mode"] == "Manual" else "secondary",
             use_container_width=True,
-            help="Each supplier share can be moved independently. The effective model share is normalized for calculation if the visible total is different from 100%.",
+            help="Each supplier share can be moved independently. Kraljic minimum suppliers remain locked at their minimum floor.",
         ):
             st.session_state["share_projection_mode"] = "Manual"
     with mode_col_3:
         if st.session_state["share_projection_mode"] == "Automatic":
             st.info(
                 "Automatic mode is active: change one supplier slider and the other shares will rebalance proportionally. "
-                "This is only a projection gadget; spend and payment terms remain controlled in Supplier Proposals."
+                "Kraljic minimum shares are locked as slider floors. Supplier proposal fields remain controlled in Supplier Proposals."
             )
         else:
             st.warning(
-                "Manual mode is active: sliders do not modify each other. If the visible total is not 100%, "
-                "the model uses the normalized Effective Share % shown below."
+                "Manual mode is active: sliders do not modify each other. Kraljic minimum shares are still locked as slider floors. "
+                "If the visible total is not 100%, the model uses the normalized Effective Share % shown below."
             )
 
     for country in COUNTRIES:
@@ -1266,43 +1454,8 @@ with input_tab_4:
                 "Projected shares drive the scenario calculation in real time. Supplier expected spend and payment terms remain editable in the Supplier Proposals tab."
             )
 
-            # First row: share projection sliders only.
-            st.markdown("**Share Projection**")
-            share_cols = st.columns(4)
-            for idx_supplier, supplier in enumerate(SUPPLIERS):
-                share_key = f"share_{country}_{supplier}"
-                with share_cols[idx_supplier]:
-                    if st.session_state["share_projection_mode"] == "Automatic":
-                        st.slider(
-                            supplier,
-                            min_value=0.0,
-                            max_value=100.0,
-                            step=0.1,
-                            key=share_key,
-                            on_change=auto_adjust_supplier_share,
-                            args=(country, supplier),
-                            help="Automatic mode: changing this supplier rebalances the remaining suppliers proportionally.",
-                        )
-                    else:
-                        st.slider(
-                            supplier,
-                            min_value=0.0,
-                            max_value=100.0,
-                            step=0.1,
-                            key=share_key,
-                            help="Manual mode: this supplier can be moved independently. The effective model share is normalized below.",
-                        )
-
-            raw_shares[country] = get_slider_share_values(country)
-            visible_total = sum(raw_shares[country].values())
-
-            if st.session_state["share_projection_mode"] == "Manual" and abs(visible_total - 100.0) > 0.01:
-                st.caption(
-                    f"Visible manual share total: {visible_total:.1f}%. The calculation will use normalized Effective Share % to keep the scenario at 100%."
-                )
-            else:
-                st.caption(f"Visible share total: {visible_total:.1f}%")
-
+            # Kraljic controls must be rendered before share sliders so the selected
+            # minimum can be pushed into the slider floor in the same run.
             st.markdown("**Kraljic Minimum and Risk Controls**")
             for supplier in SUPPLIERS:
                 ac1, ac2, ac3 = st.columns([1.25, 1, 1])
@@ -1311,16 +1464,18 @@ with input_tab_4:
                         f"{supplier} | Kraljic minimum required",
                         value=False,
                         key=f"kraljic_{country}_{supplier}",
+                        help="When selected, this supplier's Share Projection slider is automatically locked at or above the minimum share.",
                     )
                 with ac2:
                     min_share = st.number_input(
                         f"{supplier} | Minimum share %",
                         min_value=0.0,
                         max_value=100.0,
-                        value=20.0 if kraljic_required else 0.0,
+                        value=20.0,
                         step=1.0,
                         key=f"min_{country}_{supplier}",
                         disabled=not kraljic_required,
+                        help="This value becomes the minimum selectable value in the supplier share slider when Kraljic minimum is required.",
                     )
                 with ac3:
                     risk_score = st.slider(
@@ -1341,6 +1496,54 @@ with input_tab_4:
             total_min = sum(minimums[country].values())
             if total_min > 100.0:
                 st.error(f"{country}: Kraljic minimum shares sum to {total_min:.1f}%. Reduce minimum requirements to 100% or less.")
+            else:
+                # Lock the slider state at or above the selected Kraljic minimums
+                # before Streamlit creates the slider widgets.
+                enforce_kraljic_minimums_on_slider_state(country, minimums[country])
+
+            st.markdown("**Share Projection**")
+            st.caption("Kraljic-selected suppliers cannot be moved below their minimum share floor.")
+            share_cols = st.columns(4)
+            for idx_supplier, supplier in enumerate(SUPPLIERS):
+                share_key = f"share_{country}_{supplier}"
+                supplier_minimum = 0.0 if total_min > 100.0 else float(minimums[country].get(supplier, 0.0))
+                with share_cols[idx_supplier]:
+                    if st.session_state["share_projection_mode"] == "Automatic":
+                        st.slider(
+                            supplier,
+                            min_value=supplier_minimum,
+                            max_value=100.0,
+                            step=0.1,
+                            key=share_key,
+                            on_change=auto_adjust_supplier_share,
+                            args=(country, supplier),
+                            help=(
+                                f"Automatic mode: changing this supplier rebalances the others proportionally. "
+                                f"Kraljic minimum floor: {supplier_minimum:.1f}%."
+                            ),
+                        )
+                    else:
+                        st.slider(
+                            supplier,
+                            min_value=supplier_minimum,
+                            max_value=100.0,
+                            step=0.1,
+                            key=share_key,
+                            help=(
+                                f"Manual mode: this supplier can be moved independently, but not below its Kraljic floor. "
+                                f"Kraljic minimum floor: {supplier_minimum:.1f}%."
+                            ),
+                        )
+
+            raw_shares[country] = get_slider_share_values(country)
+            visible_total = sum(raw_shares[country].values())
+
+            if st.session_state["share_projection_mode"] == "Manual" and abs(visible_total - 100.0) > 0.01:
+                st.caption(
+                    f"Visible manual share total: {visible_total:.1f}%. The calculation will use normalized Effective Share % to keep the scenario at 100%."
+                )
+            else:
+                st.caption(f"Visible share total: {visible_total:.1f}%")
 
             effective_shares[country] = normalize_with_minimums(raw_shares[country], minimums[country])
             effective_df = pd.DataFrame(
@@ -1417,7 +1620,7 @@ with t3:
     render_kpi_card(
         "Current Financial Cost",
         format_money(total_row["Current Gross Financial Cost"], currency_symbol, True),
-        "Current spend x current payment-term rate",
+        f"Effective rate {format_percent(total_row['Current Effective Financial Rate'])} | Avg {total_row['Current Weighted Payment Days']:.0f} days",
         "neutral",
         compact=True,
     )
@@ -1425,7 +1628,7 @@ with t4:
     render_kpi_card(
         "New Financial Cost",
         format_money(total_row["Gross Financial Cost"], currency_symbol, True),
-        "New spend x proposed payment-term rate",
+        f"Effective rate {format_percent(total_row['New Effective Financial Rate'])} | Avg {total_row['New Weighted Payment Days']:.0f} days",
         "neutral",
         compact=True,
     )
@@ -1446,9 +1649,69 @@ with t6:
         compact=True,
     )
 
+st.caption(
+    "Gross financial-cost audit: Current Financial Cost uses current payment terms by country. "
+    "New Financial Cost uses each supplier proposal payment term and country financing rate. "
+    "The economic decision view below also subtracts the capital-gain offset earned while cash remains invested."
+)
+
 st.markdown('<div class="executive-row-spacer"></div>', unsafe_allow_html=True)
 
-# Row 2 - total savings/impact decomposition.
+# Row 2 - working-capital economics.
+st.markdown("**Working capital economic view**")
+wc1, wc2, wc3, wc4, wc5, wc6 = st.columns(6)
+with wc1:
+    render_kpi_card(
+        "Current Capital Gain",
+        format_money(total_row["Current Capital Gain Offset"], currency_symbol, True),
+        f"Return offset | {format_percent(total_row['Current Effective Return Rate'])}",
+        "good",
+        compact=True,
+    )
+with wc2:
+    render_kpi_card(
+        "New Capital Gain",
+        format_money(total_row["Capital Gain Offset"], currency_symbol, True),
+        f"Return offset | {format_percent(total_row['New Effective Return Rate'])}",
+        "good",
+        compact=True,
+    )
+with wc3:
+    render_kpi_card(
+        "Current Economic Total",
+        format_money(total_row["Current Economic Total Spend"], currency_symbol, True),
+        "Current spend + net financial impact",
+        "neutral",
+        compact=True,
+    )
+with wc4:
+    render_kpi_card(
+        "New Economic Total",
+        format_money(total_row["New Economic Total Spend"], currency_symbol, True),
+        "New spend + net financial impact",
+        "neutral",
+        compact=True,
+    )
+with wc5:
+    render_kpi_card(
+        "Net Financial Saving/Impact",
+        format_delta(total_row["Net Financial Saving / Impact"], currency_symbol, True),
+        "New net financial impact - current net financial impact",
+        delta_tone(total_row["Net Financial Saving / Impact"]),
+        compact=True,
+    )
+with wc6:
+    render_kpi_card(
+        "Economic All In",
+        format_delta(total_row["Economic Saving / Impact"], currency_symbol, True),
+        "New economic total - current economic total",
+        delta_tone(total_row["Economic Saving / Impact"]),
+        compact=True,
+    )
+
+st.markdown('<div class="executive-row-spacer"></div>', unsafe_allow_html=True)
+
+# Row 3 - total savings/impact decomposition.
 st.markdown("**Total saving / impact decomposition**")
 d1, d2, d3, d4 = st.columns(4)
 with d1:
@@ -1461,18 +1724,18 @@ with d1:
     )
 with d2:
     render_kpi_card(
-        "Financial Saving/Impact",
-        format_delta(total_row["Financial Saving / Impact"], currency_symbol, True),
-        "New financial cost - current financial cost",
-        delta_tone(total_row["Financial Saving / Impact"]),
+        "Gross Financial Saving/Impact",
+        format_delta(total_row["Gross Financial Saving / Impact"], currency_symbol, True),
+        "New gross financial cost - current gross financial cost",
+        delta_tone(total_row["Gross Financial Saving / Impact"]),
         compact=True,
     )
 with d3:
     render_kpi_card(
-        "All In Saving/Impact",
-        format_delta(total_row["All In Saving / Impact"], currency_symbol, True),
-        "New total spend - current total spend",
-        delta_tone(total_row["All In Saving / Impact"]),
+        "Economic All In Saving/Impact",
+        format_delta(total_row["Economic Saving / Impact"], currency_symbol, True),
+        "New economic total - current economic total",
+        delta_tone(total_row["Economic Saving / Impact"]),
         compact=True,
     )
 with d4:
@@ -1499,18 +1762,18 @@ with br1:
     )
 with br2:
     render_kpi_card(
-        "Financial Saving/Impact",
-        format_delta(brazil_row["Financial Saving / Impact"], currency_symbol, True),
-        "New financial cost - current financial cost",
-        delta_tone(brazil_row["Financial Saving / Impact"]),
+        "Gross Financial Saving/Impact",
+        format_delta(brazil_row["Gross Financial Saving / Impact"], currency_symbol, True),
+        "New gross financial cost - current gross financial cost",
+        delta_tone(brazil_row["Gross Financial Saving / Impact"]),
         compact=True,
     )
 with br3:
     render_kpi_card(
-        "All In Saving/Impact",
-        format_delta(brazil_row["All In Saving / Impact"], currency_symbol, True),
-        "New total spend - current total spend",
-        delta_tone(brazil_row["All In Saving / Impact"]),
+        "Economic All In Saving/Impact",
+        format_delta(brazil_row["Economic Saving / Impact"], currency_symbol, True),
+        "New economic total - current economic total",
+        delta_tone(brazil_row["Economic Saving / Impact"]),
         compact=True,
     )
 
@@ -1529,18 +1792,18 @@ with la1:
     )
 with la2:
     render_kpi_card(
-        "Financial Saving/Impact",
-        format_delta(latam_row["Financial Saving / Impact"], currency_symbol, True),
-        "New financial cost - current financial cost",
-        delta_tone(latam_row["Financial Saving / Impact"]),
+        "Gross Financial Saving/Impact",
+        format_delta(latam_row["Gross Financial Saving / Impact"], currency_symbol, True),
+        "New gross financial cost - current gross financial cost",
+        delta_tone(latam_row["Gross Financial Saving / Impact"]),
         compact=True,
     )
 with la3:
     render_kpi_card(
-        "All In Saving/Impact",
-        format_delta(latam_row["All In Saving / Impact"], currency_symbol, True),
-        "New total spend - current total spend",
-        delta_tone(latam_row["All In Saving / Impact"]),
+        "Economic All In Saving/Impact",
+        format_delta(latam_row["Economic Saving / Impact"], currency_symbol, True),
+        "New economic total - current economic total",
+        delta_tone(latam_row["Economic Saving / Impact"]),
         compact=True,
     )
 
@@ -1550,9 +1813,9 @@ if is_saving:
         <div class="decision-card decision-good">
             <div class="decision-title">Recommended scenario is financially attractive under the current allocation</div>
             <div class="decision-body">
-                The new total spend is below the current total spend by
+                The new economic total spend is below the current economic baseline by
                 <b>{format_delta(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
-                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b> all-in, with a weighted risk score of
+                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b> economic all-in, with a weighted risk score of
                 <b>{total_row['Risk Score']:.2f}/5</b>.
             </div>
         </div>
@@ -1565,9 +1828,9 @@ else:
         <div class="decision-card decision-bad">
             <div class="decision-title">Current allocation creates a cost impact under the current assumptions</div>
             <div class="decision-body">
-                The new total spend is above the current total spend by
+                The new economic total spend is above the current economic baseline by
                 <b>{format_delta(total_row['Saving / Impact'], currency_symbol)}</b>, equivalent to
-                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b> all-in. Use Cost Optimization to search for a better cost x risk allocation.
+                <b>{format_percent(abs(total_row['Saving / Impact %']))}</b> economic all-in. Use Cost Optimization to search for a better cost x risk allocation.
             </div>
         </div>
         """,
@@ -1599,11 +1862,19 @@ ordered_summary_columns = [
     "New Spend",
     "Current Gross Financial Cost",
     "Gross Financial Cost",
+    "Current Capital Gain Offset",
+    "Capital Gain Offset",
+    "Current Net Financial Impact",
+    "Net Financial Impact",
     "Current Total Spend",
     "New Total Spend",
+    "Current Economic Total Spend",
+    "New Economic Total Spend",
     "Spend Saving / Impact",
-    "Financial Saving / Impact",
-    "All In Saving / Impact",
+    "Gross Financial Saving / Impact",
+    "Net Financial Saving / Impact",
+    "Gross All In Saving / Impact",
+    "Economic Saving / Impact",
     "Saving / Impact %",
     "Risk Score",
 ]
@@ -1611,22 +1882,34 @@ display_summary = display_summary[[col for col in ordered_summary_columns if col
 display_summary = display_summary.rename(columns={
     "Current Base Spend": "Current Spend",
     "New Spend": "New Spend",
-    "Current Gross Financial Cost": "Current Financial Cost",
-    "Gross Financial Cost": "New Financial Cost",
-    "Current Total Spend": "Current Total Spend",
-    "New Total Spend": "New Total Spend",
+    "Current Gross Financial Cost": "Current Gross Financial Cost",
+    "Gross Financial Cost": "New Gross Financial Cost",
+    "Current Capital Gain Offset": "Current Capital Gain",
+    "Capital Gain Offset": "New Capital Gain",
+    "Current Net Financial Impact": "Current Net Financial Impact",
+    "Net Financial Impact": "New Net Financial Impact",
+    "Current Total Spend": "Current Gross Total Spend",
+    "New Total Spend": "New Gross Total Spend",
+    "Current Economic Total Spend": "Current Economic Total Spend",
+    "New Economic Total Spend": "New Economic Total Spend",
 })
 for column in [
     "Current Spend",
     "New Spend",
-    "Current Financial Cost",
-    "New Financial Cost",
-    "Current Total Spend",
-    "New Total Spend",
+    "Current Gross Financial Cost",
+    "New Gross Financial Cost",
+    "Current Capital Gain",
+    "New Capital Gain",
+    "Current Net Financial Impact",
+    "New Net Financial Impact",
+    "Current Gross Total Spend",
+    "New Gross Total Spend",
+    "Current Economic Total Spend",
+    "New Economic Total Spend",
 ]:
     if column in display_summary.columns:
         display_summary[column] = display_summary[column].map(lambda x: format_money(x, currency_symbol))
-for column in ["Spend Saving / Impact", "Financial Saving / Impact", "All In Saving / Impact"]:
+for column in ["Spend Saving / Impact", "Gross Financial Saving / Impact", "Net Financial Saving / Impact", "Gross All In Saving / Impact", "Economic Saving / Impact"]:
     if column in display_summary.columns:
         display_summary[column] = display_summary[column].map(lambda x: format_delta(x, currency_symbol))
 if "Saving / Impact %" in display_summary.columns:
@@ -1637,7 +1920,7 @@ st.dataframe(display_summary, use_container_width=True)
 
 with st.expander("Supplier-level proposal details"):
     display_details = details_df.copy()
-    for money_col in ["Proposal Spend", "Allocated Spend Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal Spend"]:
+    for money_col in ["Proposal Spend", "Allocated Spend Before Finance", "Gross Financial Cost", "Capital Gain Offset", "Net Financial Impact", "Adjusted Proposal Spend", "Economic Adjusted Proposal Spend"]:
         display_details[money_col] = display_details[money_col].map(lambda x: format_money(x, currency_symbol))
     display_details["Supplier Financing Rate"] = display_details["Supplier Financing Rate"].map(format_percent)
     display_details["Investment Return Rate"] = display_details["Investment Return Rate"].map(format_percent)
@@ -1653,7 +1936,7 @@ with st.expander("Supplier-level proposal details"):
 
 render_section_header(
     "Cost Optimization",
-    "Searches the best allocation considering supplier proposal cost, country financial cost, Kraljic minimum shares and weighted risk score.",
+    "Searches the best allocation considering supplier proposal cost, payment-term financing, working-capital carry, Kraljic minimum shares and weighted risk score.",
 )
 
 opt_col1, opt_col2 = st.columns([1, 3])
@@ -1663,8 +1946,8 @@ with opt_col2:
     st.markdown(
         """
         <div class="small-note">
-        Optimization objective: minimize all-in cost delta versus current total spend while respecting Kraljic minimum requirements. Negative cost delta = saving.
-        This is an embedded heuristic optimizer, not an external API call.
+        Optimization objective: minimize economic all-in cost delta versus current economic baseline while respecting Kraljic minimum requirements. Negative cost delta = saving.
+        The optimizer considers gross supplier financing, treasury capital-gain offset, payment terms and risk. This is an embedded heuristic optimizer, not an external API call.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1710,20 +1993,32 @@ if st.session_state.get("optimization_message"):
         opt_display = opt_display.rename(columns={
             "Current Base Spend": "Current Spend",
             "New Spend": "New Spend",
-            "Current Gross Financial Cost": "Current Financial Cost",
-            "Gross Financial Cost": "New Financial Cost",
+            "Current Gross Financial Cost": "Current Gross Financial Cost",
+            "Gross Financial Cost": "New Gross Financial Cost",
+            "Current Capital Gain Offset": "Current Capital Gain",
+            "Capital Gain Offset": "New Capital Gain",
+            "Current Net Financial Impact": "Current Net Financial Impact",
+            "Net Financial Impact": "New Net Financial Impact",
+            "Current Total Spend": "Current Gross Total Spend",
+            "New Total Spend": "New Gross Total Spend",
         })
         for column in [
             "Current Spend",
             "New Spend",
-            "Current Financial Cost",
-            "New Financial Cost",
-            "Current Total Spend",
-            "New Total Spend",
+            "Current Gross Financial Cost",
+            "New Gross Financial Cost",
+            "Current Capital Gain",
+            "New Capital Gain",
+            "Current Net Financial Impact",
+            "New Net Financial Impact",
+            "Current Gross Total Spend",
+            "New Gross Total Spend",
+            "Current Economic Total Spend",
+            "New Economic Total Spend",
         ]:
             if column in opt_display.columns:
                 opt_display[column] = opt_display[column].map(lambda x: format_money(x, currency_symbol))
-        for column in ["Spend Saving / Impact", "Financial Saving / Impact", "All In Saving / Impact"]:
+        for column in ["Spend Saving / Impact", "Gross Financial Saving / Impact", "Net Financial Saving / Impact", "Gross All In Saving / Impact", "Economic Saving / Impact"]:
             if column in opt_display.columns:
                 opt_display[column] = opt_display[column].map(lambda x: format_delta(x, currency_symbol))
         if "Saving / Impact %" in opt_display.columns:
@@ -1733,9 +2028,9 @@ if st.session_state.get("optimization_message"):
         st.markdown("**Optimized executive summary**")
         st.dataframe(opt_display, use_container_width=True)
     with o2:
-        allocation_view = optimized_details[["Country", "Supplier", "Effective Share %", "Adjusted Proposal Spend", "Risk Score"]].copy()
+        allocation_view = optimized_details[["Country", "Supplier", "Effective Share %", "Economic Adjusted Proposal Spend", "Risk Score"]].copy()
         allocation_view["Effective Share %"] = allocation_view["Effective Share %"].map(lambda x: f"{x:.1f}%")
-        allocation_view["Adjusted Proposal Spend"] = allocation_view["Adjusted Proposal Spend"].map(lambda x: format_money(x, currency_symbol))
+        allocation_view["Economic Adjusted Proposal Spend"] = allocation_view["Economic Adjusted Proposal Spend"].map(lambda x: format_money(x, currency_symbol))
         allocation_view["Risk Score"] = allocation_view["Risk Score"].map(lambda x: f"{x:.1f}/5")
         st.markdown("**Optimized supplier allocation now applied**")
         st.dataframe(allocation_view, use_container_width=True)
@@ -1745,10 +2040,10 @@ if st.session_state.get("optimization_message"):
         <div class="insight-box">
             <b>Automatic optimization reading</b><br><br>
             The optimizer searched allocation combinations in {optimization_step}% increments by country, respected all Kraljic minimum-share constraints,
-            calculated both current and new gross financial costs without capital-gain offset,
-            and selected the allocation with the lowest all-in cost delta versus current total spend. Risk was used as the tie-breaker.
+            calculated gross financial cost and capital-gain offset for current and new terms,
+            and selected the allocation with the lowest economic all-in cost delta versus the current economic baseline. Risk was used as the tie-breaker.
             <br><br>
-            Best new total spend now active: <b>{format_money(optimized_total['New Total Spend'], currency_symbol)}</b><br>
+            Best economic new total spend now active: <b>{format_money(optimized_total['New Economic Total Spend'], currency_symbol)}</b><br>
             Best all-in saving/impact now active: <b>{format_delta(optimized_total['Saving / Impact'], currency_symbol)}</b><br>
             Weighted risk score: <b>{optimized_total['Risk Score']:.2f}/5</b>
         </div>
