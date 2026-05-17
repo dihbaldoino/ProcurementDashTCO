@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v23 FINAL - Finance Logic, Constraints, Inventory Ownership and Optimization Review
+Version v25 FINAL - Treasury Return Offset Logic
 
 Run:
     pip install -r requirements.txt
@@ -15,6 +15,7 @@ This dashboard compares current spend vs. supplier proposals using:
 - supplier capacity / max-share constraints with infeasibility warnings
 - exact linear-programming cost optimization when SciPy is available, with grid fallback
 - proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
+- gross financial impact is explicitly offset by incremental treasury return to produce net financial saving/impact
 
 Key modeling guardrails
 -----------------------
@@ -81,7 +82,12 @@ DEFAULT_FINANCIAL_RATE = {
 DEFAULT_REFERENCE_DAYS = {country: 120 for country in COUNTRIES}
 # Default aligned with the executive test table: the current payment term defaults
 # to the country financial-rate reference period. Users can still override it.
-DEFAULT_CURRENT_TERM = {country: 120 for country in COUNTRIES}
+DEFAULT_CURRENT_TERM = {
+    "Brazil": 120,
+    "Mexico": 60,
+    "Argentina": 60,
+    "Colombia": 60,
+}
 DEFAULT_TREASURY_RETURN = {
     "Brazil": 5.07,
     "Mexico": 2.50,
@@ -783,6 +789,9 @@ def calc_scenario(
             "New Total Spend": prop["new_gross_total"],
             "Current Capital Gain": cur["capital_gain"],
             "New Capital Gain": prop["new_capital_gain"],
+            "Current Net Financial Effect": cur["gross_financial_cost"] - cur["capital_gain"],
+            "New Net Financial Effect": prop["new_gross_financial_cost"] - prop["new_capital_gain"],
+            "Net Financial Delta": (prop["new_gross_financial_cost"] - prop["new_capital_gain"]) - (cur["gross_financial_cost"] - cur["capital_gain"]),
             "Current Inventory Cost": cur["inventory_cost"],
             "New Inventory Cost": prop["new_inventory_cost"],
             "Current Economic Total": cur["economic_total"],
@@ -791,6 +800,7 @@ def calc_scenario(
             "Financial Delta": prop["new_gross_financial_cost"] - cur["gross_financial_cost"],
             "Gross All-In Delta": prop["new_gross_total"] - cur["gross_total"],
             "Capital Gain Delta": prop["new_capital_gain"] - cur["capital_gain"],
+            "Treasury Return Offset Delta": cur["capital_gain"] - prop["new_capital_gain"],
             "Inventory Delta": prop["new_inventory_cost"] - cur["inventory_cost"],
             "Economic All-In Delta": prop["new_economic_total"] - cur["economic_total"],
             "Weighted Risk": prop["weighted_risk"],
@@ -798,6 +808,11 @@ def calc_scenario(
             "New Avg Payment Days": prop["avg_payment_days"],
             "Current Effective Financial Rate": cur["effective_financial_rate"],
             "New Avg Financial Rate": prop["avg_financial_rate"],
+            "Current Capital Gain": cur["capital_gain"],
+            "New Capital Gain": prop["new_capital_gain"],
+            "Current Net Financial Effect": cur["gross_financial_cost"] - cur["capital_gain"],
+            "New Net Financial Effect": prop["new_gross_financial_cost"] - prop["new_capital_gain"],
+            "Net Financial Delta": (prop["new_gross_financial_cost"] - prop["new_capital_gain"]) - (cur["gross_financial_cost"] - cur["capital_gain"]),
             "Current Effective Treasury Rate": cur["effective_treasury_rate"],
             "New Avg Treasury Rate": prop["avg_treasury_rate"],
             "Current Return Days": cur["payment_days"],
@@ -817,6 +832,9 @@ def calc_scenario(
             "New Total Spend": "sum",
             "Current Capital Gain": "sum",
             "New Capital Gain": "sum",
+            "Current Net Financial Effect": "sum",
+            "New Net Financial Effect": "sum",
+            "Net Financial Delta": "sum",
             "Current Inventory Cost": "sum",
             "New Inventory Cost": "sum",
             "Current Economic Total": "sum",
@@ -825,6 +843,7 @@ def calc_scenario(
             "Financial Delta": "sum",
             "Gross All-In Delta": "sum",
             "Capital Gain Delta": "sum",
+            "Treasury Return Offset Delta": "sum",
             "Inventory Delta": "sum",
             "Economic All-In Delta": "sum",
         }
@@ -847,9 +866,10 @@ def calc_scenario(
     total = {}
     for col in [
         "Current Spend", "New Spend", "Current Financial Cost", "New Financial Cost", "Current Total Spend",
-        "New Total Spend", "Current Capital Gain", "New Capital Gain", "Current Inventory Cost", "New Inventory Cost",
-        "Current Economic Total", "New Economic Total", "Spend Delta", "Financial Delta", "Gross All-In Delta",
-        "Capital Gain Delta", "Inventory Delta", "Economic All-In Delta"
+        "New Total Spend", "Current Capital Gain", "New Capital Gain", "Current Net Financial Effect", "New Net Financial Effect",
+        "Current Inventory Cost", "New Inventory Cost", "Current Economic Total", "New Economic Total",
+        "Spend Delta", "Financial Delta", "Net Financial Delta", "Gross All-In Delta",
+        "Capital Gain Delta", "Treasury Return Offset Delta", "Inventory Delta", "Economic All-In Delta"
     ]:
         total[col] = country_df[col].sum()
     total["Weighted Risk"] = safe_divide((country_df["Weighted Risk"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
@@ -858,6 +878,42 @@ def calc_scenario(
     total["New Avg Financial Rate"] = safe_divide((country_df["New Avg Financial Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     total["New Avg Treasury Rate"] = safe_divide((country_df["New Avg Treasury Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     return country_df, group_df, supplier_df, total
+
+
+def calc_full_supplier_reference_stack(
+    supplier: str,
+    country_inputs: Dict[str, Dict],
+    proposal_inputs: Dict[str, Dict[str, Dict]],
+    method: str,
+    payment_day_overrides: Dict[str, float] | None = None,
+) -> Dict[str, float]:
+    """Build a 100% allocation reference stack for a single supplier across all countries.
+
+    This is useful for executive benchmarking, e.g. showing the scenario where
+    100% of the total volume is awarded to ChemPrime under its proposed price
+    and payment terms.
+    """
+    total_spend = 0.0
+    total_financial_cost = 0.0
+    total_total_spend = 0.0
+    weighted_payment_days_num = 0.0
+    for country in COUNTRIES:
+        inp = country_inputs[country]
+        supplier_data = proposal_inputs[country][supplier]
+        spend = supplier_data["spend"]
+        payment_days = payment_day_overrides.get(country, supplier_data["payment_days"]) if payment_day_overrides else supplier_data["payment_days"]
+        fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], payment_days, method)
+        financial_cost = spend * fin_rate
+        total_spend += spend
+        total_financial_cost += financial_cost
+        total_total_spend += spend + financial_cost
+        weighted_payment_days_num += spend * payment_days
+    return {
+        "Reference Spend": total_spend,
+        "Reference Financial Cost": total_financial_cost,
+        "Reference Total Spend": total_total_spend,
+        "Reference Avg Payment Days": safe_divide(weighted_payment_days_num, total_spend),
+    }
 
 # =============================================================================
 # Optimization engine
@@ -1123,35 +1179,89 @@ with input_tabs[0]:
     country_inputs: Dict[str, Dict] = {}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             with c1:
-                current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"v23_current_spend__{country}")
+                current_spend = st.number_input(
+                    f"{country} current spend",
+                    min_value=0.0,
+                    value=DEFAULT_CURRENT_SPEND[country],
+                    step=100_000.0,
+                    format="%.2f",
+                    key=f"v24_current_spend__{country}",
+                )
+                current_payment_days = st.number_input(
+                    f"{country} current payment term days",
+                    min_value=1,
+                    value=DEFAULT_CURRENT_TERM[country],
+                    step=1,
+                    key=f"v24_current_payment_days__{country}",
+                    help="This is the CURRENT baseline payment term. It does not change when supplier proposal terms change.",
+                )
             with c2:
-                financial_rate_pct = st.number_input(f"{country} financial rate for current period (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v23_financial_rate__{country}")
-                financial_reference_days = st.number_input(f"{country} current / reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v23_financial_ref_days__{country}")
+                financial_rate_pct = st.number_input(
+                    f"{country} financial rate (%)",
+                    min_value=0.0,
+                    value=DEFAULT_FINANCIAL_RATE[country],
+                    step=0.05,
+                    format="%.4f",
+                    key=f"v24_financial_rate__{country}",
+                    help="Financial cost rate for the reference period below. Example: 4.84% for 120 days.",
+                )
+                financial_reference_days = st.number_input(
+                    f"{country} financial rate reference days",
+                    min_value=1,
+                    value=DEFAULT_REFERENCE_DAYS[country],
+                    step=1,
+                    key=f"v24_financial_ref_days__{country}",
+                    help="Period attached to the financial rate. Proposal terms will be converted from this base to each supplier payment term.",
+                )
             with c3:
-                treasury_return_pct = st.number_input(f"{country} net treasury return for current period (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v23_treasury_return__{country}")
-                st.caption("Treasury return uses the same current/reference period days above.")
+                treasury_return_pct = st.number_input(
+                    f"{country} net treasury return (%)",
+                    min_value=0.0,
+                    value=DEFAULT_TREASURY_RETURN[country],
+                    step=0.05,
+                    format="%.4f",
+                    key=f"v24_treasury_return__{country}",
+                    help="Treasury/capital return rate for the reference period below. If your treasury return is better than supplier financing, longer payment terms create value.",
+                )
+                treasury_reference_days = st.number_input(
+                    f"{country} treasury return reference days",
+                    min_value=1,
+                    value=DEFAULT_TREASURY_REF_DAYS[country],
+                    step=1,
+                    key=f"v24_treasury_ref_days__{country}",
+                )
             with c4:
-                inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"v23_inventory_rate__{country}")
-                current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"v23_current_inventory_days__{country}")
-            # IMPORTANT: the current/reference period is the current baseline period.
-            # Current cost is NOT recalculated using proposal payment terms.
-            # Proposal costs are recalculated supplier-by-supplier using each supplier payment term.
-            current_payment_days = int(financial_reference_days)
-            treasury_reference_days = int(financial_reference_days)
+                inventory_carry_rate_pct = st.number_input(
+                    f"{country} inventory carrying rate (% p.a.)",
+                    min_value=0.0,
+                    value=DEFAULT_INVENTORY_CARRY_RATE[country],
+                    step=0.05,
+                    format="%.4f",
+                    key=f"v24_inventory_rate__{country}",
+                )
+                current_inventory_days = st.number_input(
+                    f"{country} current inventory days",
+                    min_value=0,
+                    value=DEFAULT_CURRENT_INVENTORY_DAYS[country],
+                    step=1,
+                    key=f"v24_current_inventory_days__{country}",
+                )
+            with c5:
+                st.markdown("<div class='small-note'><b>Baseline logic</b><br>Current financial/treasury effects use the current payment term. Supplier proposals use each supplier payment term as the new financial and treasury return period.</div>", unsafe_allow_html=True)
             country_inputs[country] = {
                 "current_spend": float(current_spend),
-                "current_payment_days": current_payment_days,
+                "current_payment_days": int(current_payment_days),
                 "financial_rate_pct": float(financial_rate_pct),
                 "financial_reference_days": int(financial_reference_days),
                 "treasury_return_pct": float(treasury_return_pct),
-                "treasury_reference_days": treasury_reference_days,
+                "treasury_reference_days": int(treasury_reference_days),
                 "inventory_carry_rate_pct": float(inventory_carry_rate_pct),
                 "current_inventory_days": int(current_inventory_days),
             }
             st.caption(
-                f"{country} baseline uses {current_payment_days} days. Supplier proposals will use their own payment terms as new financial/treasury periods."
+                f"{country}: financial rate is referenced to {financial_reference_days} days; current baseline uses {current_payment_days} payment days; supplier proposals use each supplier payment term."
             )
 
 with input_tabs[1]:
@@ -1473,14 +1583,46 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.expander("Show financial cost audit by country"):
+with st.expander("Show gross financial cost and treasury return audit by country"):
+    st.markdown(
+        """
+        **Audit logic:** Gross Financial Delta is only the payment-term supplier financing cost impact.
+        The correct finance decision view is **Net Financial Delta = Gross Financial Delta + Treasury Return Offset**,
+        where Treasury Return Offset equals `Current Treasury Return - New Treasury Return`. A negative value is favorable because
+        additional treasury return is offsetting financial cost.
+        """
+    )
     audit_cols = [
-        "Country", "Current Spend", "Current Payment Days", "Current Effective Financial Rate", "Current Financial Cost",
-        "New Spend", "New Avg Payment Days", "New Avg Financial Rate", "New Financial Cost", "Financial Delta"
+        "Country",
+        "Current Spend",
+        "Current Payment Days",
+        "Current Effective Financial Rate",
+        "Current Financial Cost",
+        "Current Capital Gain",
+        "New Spend",
+        "New Avg Payment Days",
+        "New Avg Financial Rate",
+        "New Financial Cost",
+        "New Capital Gain",
+        "Financial Delta",
+        "Treasury Return Offset Delta",
+        "Net Financial Delta",
     ]
     audit_df = country_df[audit_cols].copy()
-    for col in ["Current Spend", "Current Financial Cost", "New Spend", "New Financial Cost", "Financial Delta"]:
-        audit_df[col] = audit_df[col].map(lambda x: format_money(x, currency_symbol, signed=(col == "Financial Delta")))
+    money_cols = [
+        "Current Spend",
+        "Current Financial Cost",
+        "Current Capital Gain",
+        "New Spend",
+        "New Financial Cost",
+        "New Capital Gain",
+        "Financial Delta",
+        "Treasury Return Offset Delta",
+        "Net Financial Delta",
+    ]
+    signed_cols = {"Financial Delta", "Treasury Return Offset Delta", "Net Financial Delta"}
+    for col in money_cols:
+        audit_df[col] = audit_df[col].map(lambda x, col=col: format_money(x, currency_symbol, signed=(col in signed_cols)))
     for col in ["Current Effective Financial Rate", "New Avg Financial Rate"]:
         audit_df[col] = audit_df[col].map(format_pct)
     audit_df["Current Payment Days"] = audit_df["Current Payment Days"].map(lambda x: f"{x:.0f} dd")
@@ -1491,7 +1633,7 @@ with st.expander("Show financial cost audit by country"):
 # Executive output
 # =============================================================================
 
-render_section("Executive Result", "Decision-ready view with commercial spend, gross payment-term financial cost, working-capital economic value and cost x risk recommendation.")
+render_section("Executive Result", "Decision-ready view separating gross payment-term financial cost from treasury return offset. Net financial saving/impact is used for the finance decision view.")
 
 st.markdown('<div class="plain-title">Total cost stack</div>', unsafe_allow_html=True)
 row1 = st.columns(6)
@@ -1508,37 +1650,115 @@ with row1[4]:
 with row1[5]:
     render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
 
+chemprime_reference = calc_full_supplier_reference_stack(
+    supplier="ChemPrime",
+    country_inputs=country_inputs,
+    proposal_inputs=proposal_inputs,
+    method=rate_method,
+    payment_day_overrides={"Brazil": 90, "Mexico": 60, "Argentina": 60, "Colombia": 60},
+)
+
+st.markdown('<div class="plain-title">New ChemPrime condition stack</div>', unsafe_allow_html=True)
+row1b = st.columns(6)
+with row1b[0]:
+    render_kpi(
+        "100% ChemPrime Spend",
+        format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True),
+        "100% awarded to ChemPrime at proposed spend (+25%)",
+        "neutral",
+    )
+with row1b[1]:
+    render_kpi(
+        "New Spend",
+        format_money(total["New Spend"], currency_symbol, compact=True),
+        "Supplier proposals x shares",
+        "neutral",
+    )
+with row1b[2]:
+    render_kpi(
+        "100% ChemPrime Fin. Cost",
+        format_money(chemprime_reference["Reference Financial Cost"], currency_symbol, compact=True),
+        f"BR 90 dd | LATAM 60 dd financial terms",
+        "neutral",
+    )
+with row1b[3]:
+    render_kpi(
+        "New Financial Cost",
+        format_money(total["New Financial Cost"], currency_symbol, compact=True),
+        "New spend x proposed payment-term rates",
+        "neutral",
+    )
+with row1b[4]:
+    render_kpi(
+        "100% ChemPrime Total Spend",
+        format_money(chemprime_reference["Reference Total Spend"], currency_symbol, compact=True),
+        "100% ChemPrime spend + BR 90 dd / LATAM 60 dd financial cost",
+        "neutral",
+    )
+with row1b[5]:
+    render_kpi(
+        "New Total Spend",
+        format_money(total["New Total Spend"], currency_symbol, compact=True),
+        "New spend + new financial cost",
+        "neutral",
+    )
+
+st.markdown('<div class="plain-title">Working capital carry view</div>', unsafe_allow_html=True)
+wc_row = st.columns(5)
+with wc_row[0]:
+    render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
+with wc_row[1]:
+    render_kpi("New Treasury Return", format_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed payment terms", "good", short=True)
+with wc_row[2]:
+    render_kpi("Current Net Financial Effect", format_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Current financial cost - treasury return", delta_tone(total["Current Net Financial Effect"]), short=True)
+with wc_row[3]:
+    render_kpi("New Net Financial Effect", format_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost - treasury return", delta_tone(total["New Net Financial Effect"]), short=True)
+with wc_row[4]:
+    render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
+
 st.markdown('<div class="plain-title">Total decomposition</div>', unsafe_allow_html=True)
-row2 = st.columns(4)
+row2 = st.columns(6)
 with row2[0]:
     render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
 with row2[1]:
-    render_kpi("Financial Saving / Impact", format_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New financial cost - current financial cost", delta_tone(total["Financial Delta"]), short=True)
+    render_kpi("Gross Financial Saving / Impact", format_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New gross financial cost - current gross financial cost", delta_tone(total["Financial Delta"]), short=True)
 with row2[2]:
-    render_kpi("All-In Saving / Impact", format_money(total["Gross All-In Delta"], currency_symbol, compact=True, signed=True), "New total spend - current total spend", delta_tone(total["Gross All-In Delta"]), short=True)
+    render_kpi("Treasury Return Offset", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new treasury return", delta_tone(total["Treasury Return Offset Delta"]), short=True)
 with row2[3]:
+    render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross financial delta + treasury return offset", delta_tone(total["Net Financial Delta"]), short=True)
+with row2[4]:
+    render_kpi("Economic All-In Saving / Impact", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net financial effect + inventory carrying", delta_tone(total["Economic All-In Delta"]), short=True)
+with row2[5]:
     render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]), short=True)
 
 brazil_row = group_df[group_df["Group"] == "Brazil"].iloc[0]
 latam_row = group_df[group_df["Group"] == "LATAM"].iloc[0]
 
 st.markdown('<div class="plain-title">Brazil result</div>', unsafe_allow_html=True)
-row3 = st.columns(3)
+row3 = st.columns(5)
 with row3[0]:
     render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
 with row3[1]:
-    render_kpi("Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil new financial cost - current financial cost", delta_tone(brazil_row["Financial Delta"]), short=True)
+    render_kpi("Gross Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil gross financial cost delta", delta_tone(brazil_row["Financial Delta"]), short=True)
 with row3[2]:
-    render_kpi("All-In Saving / Impact", format_money(brazil_row["Gross All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil new total - current total", delta_tone(brazil_row["Gross All-In Delta"]), short=True)
+    render_kpi("Treasury Return Offset", format_money(brazil_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Brazil current return - new return", delta_tone(brazil_row["Treasury Return Offset Delta"]), short=True)
+with row3[3]:
+    render_kpi("Net Financial Saving / Impact", format_money(brazil_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil net financial effect after treasury return", delta_tone(brazil_row["Net Financial Delta"]), short=True)
+with row3[4]:
+    render_kpi("Economic All-In Saving / Impact", format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil spend + net financial effect + inventory", delta_tone(brazil_row["Economic All-In Delta"]), short=True)
 
 st.markdown('<div class="plain-title">LATAM result</div>', unsafe_allow_html=True)
-row4 = st.columns(3)
+row4 = st.columns(5)
 with row4[0]:
     render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
 with row4[1]:
-    render_kpi("Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM new financial cost - current financial cost", delta_tone(latam_row["Financial Delta"]), short=True)
+    render_kpi("Gross Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM gross financial cost delta", delta_tone(latam_row["Financial Delta"]), short=True)
 with row4[2]:
-    render_kpi("All-In Saving / Impact", format_money(latam_row["Gross All-In Delta"], currency_symbol, compact=True, signed=True), "LATAM new total - current total", delta_tone(latam_row["Gross All-In Delta"]), short=True)
+    render_kpi("Treasury Return Offset", format_money(latam_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "LATAM current return - new return", delta_tone(latam_row["Treasury Return Offset Delta"]), short=True)
+with row4[3]:
+    render_kpi("Net Financial Saving / Impact", format_money(latam_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM net financial effect after treasury return", delta_tone(latam_row["Net Financial Delta"]), short=True)
+with row4[4]:
+    render_kpi("Economic All-In Saving / Impact", format_money(latam_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "LATAM spend + net financial effect + inventory", delta_tone(latam_row["Economic All-In Delta"]), short=True)
 
 if total["Economic All-In Delta"] <= 0:
     st.markdown(
@@ -1588,8 +1808,8 @@ with chart_col1:
 with chart_col2:
     if PLOTLY_AVAILABLE:
         fig = go.Figure()
-        decomp_names = ["Spend Delta", "Financial Delta", "Capital Gain Delta", "Inventory Delta", "Economic Delta"]
-        decomp_vals = [total["Spend Delta"], total["Financial Delta"], -total["Capital Gain Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]
+        decomp_names = ["Spend Delta", "Net Financial Delta", "Inventory Delta", "Economic Delta"]
+        decomp_vals = [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]
         fig.add_trace(go.Bar(
             x=decomp_names,
             y=decomp_vals,
@@ -1602,7 +1822,7 @@ with chart_col2:
         fig.update_layout(title="Economic Value Decomposition", height=430, yaxis_title=f"Delta ({currency_symbol})")
         st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
     else:
-        st.bar_chart(pd.DataFrame({"Delta": [total["Spend Delta"], total["Financial Delta"], -total["Capital Gain Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]}, index=["Spend", "Financial", "Capital gain", "Inventory", "Economic"]))
+        st.bar_chart(pd.DataFrame({"Delta": [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]}, index=["Spend", "Net Financial", "Inventory", "Economic"]))
 
 chart_col3, chart_col4 = st.columns([1.0, 1.0])
 with chart_col3:
@@ -1732,7 +1952,7 @@ st.download_button(
 st.markdown(
     """
     <div class="small-note">
-        Note: Commercial saving, financial cost, working-capital benefit and economic all-in value are intentionally separated.
+        Note: Gross financial cost is intentionally separated from treasury return offset. Net Financial Saving / Impact is the correct finance view after working-capital carry is considered.
         Finance/Treasury should validate financial and treasury-return assumptions before any official saving recognition.
     </div>
     """,
