@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v15 - Senior Director Edition
+Version v18 - Dynamic Payment-Term Return Period
 
 Run:
     pip install -r requirements.txt
@@ -13,6 +13,7 @@ This dashboard compares current spend vs. supplier proposals using:
 - inventory carrying cost
 - supplier risk and Kraljic minimum shares
 - automatic cost x risk allocation optimization
+- proposal financial and treasury return periods dynamically follow each supplier payment term
 """
 
 from __future__ import annotations
@@ -621,6 +622,8 @@ def calc_proposal_by_country(
         "weighted_risk_numerator": 0.0,
         "weighted_payment_days_numerator": 0.0,
         "weighted_financial_rate_numerator": 0.0,
+        "weighted_treasury_rate_numerator": 0.0,
+        "weighted_return_days_numerator": 0.0,
         "supplier_rows": [],
     }
     inp = country_inputs[country]
@@ -648,12 +651,17 @@ def calc_proposal_by_country(
         country_total["weighted_risk_numerator"] += allocated_spend * risk
         country_total["weighted_payment_days_numerator"] += allocated_spend * supplier_data["payment_days"]
         country_total["weighted_financial_rate_numerator"] += allocated_spend * fin_rate
+        country_total["weighted_treasury_rate_numerator"] += allocated_spend * treasury_rate
+        country_total["weighted_return_days_numerator"] += allocated_spend * supplier_data["payment_days"]
         country_total["supplier_rows"].append({
             "Country": country,
             "Supplier": supplier,
             "Share %": shares[supplier],
             "Allocated Spend": allocated_spend,
             "Payment Days": supplier_data["payment_days"],
+            "Return Days Used": supplier_data["payment_days"],
+            "Financial Rate Used": fin_rate,
+            "Treasury Return Rate Used": treasury_rate,
             "Supplier Financial Cost": gross_financial,
             "Capital Gain Offset": capital_gain,
             "Inventory Carrying Cost": inventory_cost,
@@ -663,7 +671,9 @@ def calc_proposal_by_country(
     spend = country_total["new_spend"]
     country_total["weighted_risk"] = safe_divide(country_total["weighted_risk_numerator"], spend)
     country_total["avg_payment_days"] = safe_divide(country_total["weighted_payment_days_numerator"], spend)
+    country_total["avg_return_days"] = safe_divide(country_total["weighted_return_days_numerator"], spend)
     country_total["avg_financial_rate"] = safe_divide(country_total["weighted_financial_rate_numerator"], spend)
+    country_total["avg_treasury_rate"] = safe_divide(country_total["weighted_treasury_rate_numerator"], spend)
     return country_total
 
 
@@ -705,6 +715,10 @@ def calc_scenario(
             "New Avg Payment Days": prop["avg_payment_days"],
             "Current Effective Financial Rate": cur["effective_financial_rate"],
             "New Avg Financial Rate": prop["avg_financial_rate"],
+            "Current Effective Treasury Rate": cur["effective_treasury_rate"],
+            "New Avg Treasury Rate": prop["avg_treasury_rate"],
+            "Current Return Days": cur["payment_days"],
+            "New Avg Return Days": prop["avg_return_days"],
         }
         rows.append(row)
         supplier_rows.extend(prop["supplier_rows"])
@@ -741,7 +755,9 @@ def calc_scenario(
             "Group": group,
             "Weighted Risk": safe_divide((subset["Weighted Risk"] * subset["New Spend"]).sum(), total_new_spend),
             "New Avg Payment Days": safe_divide((subset["New Avg Payment Days"] * subset["New Spend"]).sum(), total_new_spend),
+            "New Avg Return Days": safe_divide((subset["New Avg Return Days"] * subset["New Spend"]).sum(), total_new_spend),
             "New Avg Financial Rate": safe_divide((subset["New Avg Financial Rate"] * subset["New Spend"]).sum(), total_new_spend),
+            "New Avg Treasury Rate": safe_divide((subset["New Avg Treasury Rate"] * subset["New Spend"]).sum(), total_new_spend),
         })
     group_df = group_df.merge(pd.DataFrame(weighted_rows), on="Group", how="left")
 
@@ -755,7 +771,9 @@ def calc_scenario(
         total[col] = country_df[col].sum()
     total["Weighted Risk"] = safe_divide((country_df["Weighted Risk"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     total["New Avg Payment Days"] = safe_divide((country_df["New Avg Payment Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
+    total["New Avg Return Days"] = safe_divide((country_df["New Avg Return Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     total["New Avg Financial Rate"] = safe_divide((country_df["New Avg Financial Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
+    total["New Avg Treasury Rate"] = safe_divide((country_df["New Avg Treasury Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     return country_df, group_df, supplier_df, total
 
 # =============================================================================
@@ -833,7 +851,7 @@ def optimize_allocations(
             "Risk Gate Met": chosen["Weighted Risk"] <= risk_threshold,
         })
     rationale_df = pd.DataFrame(rationale_rows)
-    message = "Optimization applied. Shares were updated using lowest economic all-in cost as priority and weighted risk as tie-breaker."
+    message = "Optimization applied. Shares were updated using lowest economic all-in cost as priority, with financial cost and treasury return converted to each supplier payment term, and weighted risk as tie-breaker."
     return optimized, rationale_df, message
 
 # =============================================================================
@@ -877,7 +895,8 @@ input_tabs = st.tabs([
 ])
 
 with input_tabs[0]:
-    render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Treasury return is used only in the economic working-capital view.")
+    render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Treasury return is dynamically converted to the actual payment term used in each scenario.")
+    st.info("Dynamic return-period rule: current baseline uses each country current payment term; every supplier proposal uses that supplier proposed payment term as the new return period. Example: if the return rate reference is 60 days and a supplier proposes 120 payment days, the model converts the return to 120 days for that supplier.")
     country_inputs: Dict[str, Dict] = {}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
@@ -906,7 +925,7 @@ with input_tabs[0]:
             }
 
 with input_tabs[1]:
-    render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions.")
+    render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. The proposed payment term also becomes the investment return period for working-capital carry.")
     proposal_inputs: Dict[str, Dict[str, Dict]] = {country: {} for country in COUNTRIES}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
@@ -1276,9 +1295,9 @@ if show_advanced_economic:
     render_section("Working Capital Economic View", "This view separates P&L spend, payment-term financing, capital carry benefit and inventory carrying cost.")
     econ_cols = st.columns(5)
     with econ_cols[0]:
-        render_kpi("Current Capital Gain", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Current payment-term carry benefit", "good", short=True)
+        render_kpi("Current Capital Gain", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Uses current payment terms by country", "good", short=True)
     with econ_cols[1]:
-        render_kpi("New Capital Gain", format_money(total["New Capital Gain"], currency_symbol, compact=True), "Proposed payment-term carry benefit", "good", short=True)
+        render_kpi("New Capital Gain", format_money(total["New Capital Gain"], currency_symbol, compact=True), f"Uses supplier payment terms | avg {total.get("New Avg Return Days", 0):.0f}dd", "good", short=True)
     with econ_cols[2]:
         render_kpi("Inventory Delta", format_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New inventory cost - current inventory cost", delta_tone(total["Inventory Delta"]), short=True)
     with econ_cols[3]:
@@ -1308,7 +1327,7 @@ with detail_tabs[0]:
     money_cols = [c for c in display_country.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
     for col in money_cols:
         display_country[col] = display_country[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
-    for col in ["Weighted Risk", "Current Effective Financial Rate", "New Avg Financial Rate"]:
+    for col in ["Weighted Risk", "Current Effective Financial Rate", "New Avg Financial Rate", "Current Effective Treasury Rate", "New Avg Treasury Rate"]:
         if col in display_country:
             if "Rate" in col:
                 display_country[col] = display_country[col].map(format_pct)
