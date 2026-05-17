@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v22 - Payment-Term Weighting and Financial Delta Fix
+Version v23 FINAL - Finance Logic, Constraints, Inventory Ownership and Optimization Review
 
 Run:
     pip install -r requirements.txt
@@ -10,19 +10,35 @@ This dashboard compares current spend vs. supplier proposals using:
 - commercial spend
 - payment-term supplier financial cost
 - treasury/working-capital carry benefit
-- inventory carrying cost
+- inventory carrying cost with explicit ownership assumptions
 - supplier risk and Kraljic minimum shares
-- automatic cost x risk allocation optimization
+- supplier capacity / max-share constraints with infeasibility warnings
+- exact linear-programming cost optimization when SciPy is available, with grid fallback
 - proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
+
+Key modeling guardrails
+-----------------------
+1. Supplier proposal spend is a 100% volume-equivalent spend, before financial cost.
+2. Current baseline is never recalculated using proposal terms.
+3. Proposal financial cost and treasury return use each supplier proposed payment term.
+4. Negative deltas mean savings; positive deltas mean cost impact.
 """
 
 from __future__ import annotations
 
+import math
 from itertools import product
 from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 import streamlit as st
+
+try:
+    from scipy.optimize import linprog
+    SCIPY_AVAILABLE = True
+except Exception:
+    linprog = None
+    SCIPY_AVAILABLE = False
 
 try:
     import plotly.graph_objects as go
@@ -132,6 +148,22 @@ DEFAULT_SAFETY_STOCK_DAYS = {
         "OleoGlobal": 0,
         "Oleo Overseas Trading Co.": 0,
         "Comercio de Oleos Nacional Distribuicao": 0,
+    }
+    for country in COUNTRIES
+}
+
+INVENTORY_OWNERSHIP_OPTIONS = [
+    "Buyer owns transit + safety stock",
+    "Buyer owns safety stock only",
+    "Supplier/trader owns until delivery",
+    "Distributor holds local stock",
+]
+DEFAULT_INVENTORY_OWNERSHIP = {
+    country: {
+        "ChemPrime": "Buyer owns safety stock only",
+        "OleoGlobal": "Buyer owns transit + safety stock",
+        "Oleo Overseas Trading Co.": "Supplier/trader owns until delivery",
+        "Comercio de Oleos Nacional Distribuicao": "Distributor holds local stock",
     }
     for country in COUNTRIES
 }
@@ -406,18 +438,33 @@ def get_min_shares() -> Dict[str, float]:
 
 
 def get_max_shares() -> Dict[str, float]:
+    """Return supplier maximum/capacity shares.
+
+    Important: this function does NOT silently override max share when a
+    Kraljic minimum is higher than capacity. That situation is strategically
+    infeasible and must be surfaced to the user instead of hidden.
+    """
     maxs = {}
     for supplier in SUPPLIERS:
         approved = bool(st.session_state.get(approved_key(supplier), DEFAULT_APPROVED[supplier]))
-        required = bool(st.session_state.get(kraljic_key(supplier), DEFAULT_KRALJIC_REQUIRED[supplier]))
-        min_required = float(st.session_state.get(min_key(supplier), DEFAULT_MIN_SHARE[supplier])) if required else 0.0
         raw_max = float(st.session_state.get(max_key(supplier), DEFAULT_MAX_SHARE[supplier])) if approved else 0.0
-
-        # Streamlit sliders cannot be rendered with max < min.
-        # Business rule: if a Kraljic minimum is required, that strategic floor overrides
-        # a conflicting max/capacity input for UI stability and model feasibility.
-        maxs[supplier] = max(raw_max, min_required)
+        maxs[supplier] = raw_max
     return maxs
+
+
+def constraint_issues(mins: Dict[str, float], maxs: Dict[str, float]) -> List[str]:
+    issues: List[str] = []
+    for supplier in SUPPLIERS:
+        if mins[supplier] > maxs[supplier] + 1e-9:
+            issues.append(
+                f"{SHORT_SUPPLIER[supplier]} has Kraljic minimum {mins[supplier]:.0f}% "
+                f"above max/capacity {maxs[supplier]:.0f}%."
+            )
+    if sum(mins.values()) > 100.0 + 1e-9:
+        issues.append("Kraljic minimum shares exceed 100%.")
+    if sum(maxs.values()) < 100.0 - 1e-9:
+        issues.append("Supplier max/capacity constraints cannot reach 100%.")
+    return issues
 
 
 def clamp_shares_to_bounds(country: str) -> None:
@@ -431,12 +478,16 @@ def clamp_shares_to_bounds(country: str) -> None:
 
 
 def allocate_with_bounds(preferences: Dict[str, float], mins: Dict[str, float], maxs: Dict[str, float], total: float = 100.0) -> Dict[str, float]:
-    """Project preferences to shares that sum to total while respecting min/max bounds."""
+    """Project preferences to shares that sum to total while respecting min/max bounds.
+
+    If bounds are infeasible, this function remains stable for display purposes,
+    but the UI and optimizer separately flag the infeasibility.
+    """
+    maxs = {s: max(float(maxs[s]), float(mins[s])) for s in SUPPLIERS}
     if sum(mins.values()) > total + 1e-9:
-        return mins.copy()
+        return {s: safe_divide(mins[s], sum(mins.values())) * total for s in SUPPLIERS}
     if sum(maxs.values()) < total - 1e-9:
-        # Impossible to reach 100 under max constraints. Return capped and let UI show warning.
-        return maxs.copy()
+        return {s: safe_divide(maxs[s], sum(maxs.values())) * total for s in SUPPLIERS}
 
     shares = {s: mins[s] for s in SUPPLIERS}
     remaining = total - sum(shares.values())
@@ -585,6 +636,21 @@ def supplier_risk_scores(risk_inputs: Dict[str, Dict[str, float]], risk_weights:
     return scores
 
 
+def inventory_days_from_ownership(ownership: str, lead_time_days: int, safety_stock_days: int) -> int:
+    """Translate inventory ownership assumption into carrying-cost days.
+
+    This avoids overstating inventory carrying cost when a trader/supplier or
+    local distributor keeps ownership until delivery.
+    """
+    if ownership == "Buyer owns transit + safety stock":
+        return int(lead_time_days) + int(safety_stock_days)
+    if ownership == "Buyer owns safety stock only":
+        return int(safety_stock_days)
+    if ownership in {"Supplier/trader owns until delivery", "Distributor holds local stock"}:
+        return 0
+    return int(lead_time_days) + int(safety_stock_days)
+
+
 def calc_current_by_country(country: str, country_inputs: Dict[str, Dict], method: str) -> Dict[str, float]:
     inp = country_inputs[country]
     spend = inp["current_spend"]
@@ -641,7 +707,11 @@ def calc_proposal_by_country(
         allocated_spend = supplier_data["spend"] * share
         fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], supplier_data["payment_days"], method)
         treasury_rate = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], supplier_data["payment_days"], method)
-        inventory_days = supplier_data["lead_time_days"] + supplier_data["safety_stock_days"]
+        inventory_days = inventory_days_from_ownership(
+            supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
+            supplier_data["lead_time_days"],
+            supplier_data["safety_stock_days"],
+        )
         inventory_rate = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inventory_days, method)
         gross_financial = allocated_spend * fin_rate
         capital_gain = allocated_spend * treasury_rate
@@ -675,6 +745,8 @@ def calc_proposal_by_country(
             "Treasury Return Rate Used": treasury_rate,
             "Supplier Financial Cost": gross_financial,
             "Capital Gain Offset": capital_gain,
+            "Inventory Ownership": supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
+            "Inventory Days Charged": inventory_days,
             "Inventory Carrying Cost": inventory_cost,
             "Economic Total": economic_total,
             "Risk Score": risk,
@@ -792,14 +864,162 @@ def calc_scenario(
 # =============================================================================
 
 def enumerate_share_combinations(mins: Dict[str, float], maxs: Dict[str, float], step: int = 5) -> List[Dict[str, float]]:
-    min_units = {s: int(round(mins[s] / step)) for s in SUPPLIERS}
-    max_units = {s: int(round(maxs[s] / step)) for s in SUPPLIERS}
-    total_units = int(100 / step)
+    """Enumerate feasible share combinations using conservative rounding.
+
+    Minimum constraints are rounded UP and max/capacity constraints are rounded
+    DOWN so the optimizer never violates a strategic floor or capacity ceiling.
+    """
+    if any(mins[s] > maxs[s] + 1e-9 for s in SUPPLIERS):
+        return []
+    min_units = {s: int(math.ceil(mins[s] / step - 1e-12)) for s in SUPPLIERS}
+    max_units = {s: int(math.floor(maxs[s] / step + 1e-12)) for s in SUPPLIERS}
+    total_units = int(round(100 / step))
     combos = []
     for vals in product(*(range(min_units[s], max_units[s] + 1) for s in SUPPLIERS)):
         if sum(vals) == total_units:
             combos.append({s: vals[i] * step for i, s in enumerate(SUPPLIERS)})
     return combos
+
+
+def _supplier_unit_economic_cost(
+    country: str,
+    supplier: str,
+    country_inputs: Dict[str, Dict],
+    proposal_inputs: Dict[str, Dict[str, Dict]],
+    method: str,
+) -> float:
+    """Economic cost generated if supplier gets 100% country share."""
+    inp = country_inputs[country]
+    supplier_data = proposal_inputs[country][supplier]
+    spend = supplier_data["spend"]
+    fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], supplier_data["payment_days"], method)
+    treasury_rate = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], supplier_data["payment_days"], method)
+    inventory_days = inventory_days_from_ownership(
+        supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
+        supplier_data["lead_time_days"],
+        supplier_data["safety_stock_days"],
+    )
+    inventory_rate = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inventory_days, method)
+    return spend * (1 + fin_rate - treasury_rate + inventory_rate)
+
+
+def _optimize_allocations_lp(
+    country_inputs: Dict[str, Dict],
+    proposal_inputs: Dict[str, Dict[str, Dict]],
+    supplier_risk: Dict[str, float],
+    method: str,
+    risk_threshold: float,
+) -> Tuple[Dict[str, Dict[str, float]], str]:
+    """Exact linear optimization using scipy.linprog.
+
+    Decision variables are country-supplier shares in fractions. The objective
+    minimizes proposal economic cost. Since current cost is constant, this is
+    equivalent to minimizing economic all-in delta. Risk is constrained by the
+    preferred risk threshold when feasible.
+    """
+    if not SCIPY_AVAILABLE:
+        raise RuntimeError("SciPy is not available")
+
+    mins = get_min_shares()
+    maxs = get_max_shares()
+    issues = constraint_issues(mins, maxs)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+    variables = [(country, supplier) for country in COUNTRIES for supplier in SUPPLIERS]
+    n = len(variables)
+
+    # Add a very small risk penalty to break true cost ties without allowing risk
+    # to dominate cost. Cost remains priority #1.
+    mean_cost = sum(_supplier_unit_economic_cost(c, s, country_inputs, proposal_inputs, method) for c, s in variables) / max(n, 1)
+    risk_tiebreaker = mean_cost * 1e-7
+    c = []
+    for country, supplier in variables:
+        c.append(_supplier_unit_economic_cost(country, supplier, country_inputs, proposal_inputs, method) + risk_tiebreaker * supplier_risk[supplier])
+
+    # Each country must sum to 100%.
+    A_eq = []
+    b_eq = []
+    for country in COUNTRIES:
+        row = [0.0] * n
+        for i, (c_country, _) in enumerate(variables):
+            if c_country == country:
+                row[i] = 1.0
+        A_eq.append(row)
+        b_eq.append(1.0)
+
+    # Risk threshold by country: sum(spend*x*(risk-threshold)) <= 0.
+    A_ub = []
+    b_ub = []
+    for country in COUNTRIES:
+        row = [0.0] * n
+        for i, (c_country, supplier) in enumerate(variables):
+            if c_country == country:
+                spend = proposal_inputs[country][supplier]["spend"]
+                row[i] = spend * (supplier_risk[supplier] - risk_threshold)
+        A_ub.append(row)
+        b_ub.append(0.0)
+
+    bounds = []
+    for _, supplier in variables:
+        bounds.append((mins[supplier] / 100.0, maxs[supplier] / 100.0))
+
+    result = linprog(c=c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+    risk_gate_used = True
+
+    # If risk threshold makes the model infeasible, solve without the risk gate
+    # but still use risk as a tiny tie-breaker. This is disclosed in the rationale.
+    if not result.success:
+        result = linprog(c=c, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+        risk_gate_used = False
+
+    if not result.success:
+        raise ValueError(f"No feasible allocation found: {result.message}")
+
+    optimized: Dict[str, Dict[str, float]] = {country: {} for country in COUNTRIES}
+    for value, (country, supplier) in zip(result.x, variables):
+        optimized[country][supplier] = round(float(value) * 100.0, 4)
+
+    method_message = "Exact LP optimizer used" if risk_gate_used else "Exact LP optimizer used; preferred risk gate was infeasible, so cost optimization ran without the risk ceiling"
+    return optimized, method_message
+
+
+def _optimize_allocations_grid(
+    country_inputs: Dict[str, Dict],
+    proposal_inputs: Dict[str, Dict[str, Dict]],
+    supplier_risk: Dict[str, float],
+    method: str,
+    risk_threshold: float,
+    optimization_step: int,
+) -> Tuple[Dict[str, Dict[str, float]], str]:
+    mins = get_min_shares()
+    maxs = get_max_shares()
+    issues = constraint_issues(mins, maxs)
+    if issues:
+        raise ValueError("; ".join(issues))
+    candidates = enumerate_share_combinations(mins, maxs, step=optimization_step)
+    if not candidates:
+        raise ValueError("No feasible allocation found under current Kraljic / max-share constraints.")
+
+    optimized = {}
+    for country in COUNTRIES:
+        current_row = calc_current_by_country(country, country_inputs, method)
+        best_under_risk = None
+        best_overall = None
+        for shares in candidates:
+            prop = calc_proposal_by_country(country, shares, country_inputs, proposal_inputs, supplier_risk, method)
+            economic_delta = prop["new_economic_total"] - current_row["economic_total"]
+            gross_delta = prop["new_gross_total"] - current_row["gross_total"]
+            key = (economic_delta, prop["weighted_risk"], gross_delta)
+            row = {"Shares": shares, "Economic Delta": economic_delta, "Weighted Risk": prop["weighted_risk"], "Gross All-In Delta": gross_delta}
+            if best_overall is None or key < (best_overall["Economic Delta"], best_overall["Weighted Risk"], best_overall["Gross All-In Delta"]):
+                best_overall = row
+            if prop["weighted_risk"] <= risk_threshold:
+                if best_under_risk is None or key < (best_under_risk["Economic Delta"], best_under_risk["Weighted Risk"], best_under_risk["Gross All-In Delta"]):
+                    best_under_risk = row
+        chosen = best_under_risk if best_under_risk is not None else best_overall
+        optimized[country] = chosen["Shares"]
+    return optimized, f"Grid optimizer used at {optimization_step}% step"
 
 
 def optimize_allocations(
@@ -810,59 +1030,50 @@ def optimize_allocations(
     risk_threshold: float,
     optimization_step: int,
 ) -> Tuple[Dict[str, Dict[str, float]], pd.DataFrame, str]:
-    mins = get_min_shares()
-    maxs = get_max_shares()
-    if sum(mins.values()) > 100.0 + 1e-9:
-        raise ValueError("Kraljic minimum shares exceed 100%. Reduce minimum shares before optimizing.")
-    if sum(maxs.values()) < 100.0 - 1e-9:
-        raise ValueError("Supplier maximum shares do not allow 100% allocation. Increase max shares or approve more suppliers.")
-    candidates = enumerate_share_combinations(mins, maxs, step=optimization_step)
-    if not candidates:
-        raise ValueError("No feasible allocation found under current Kraljic / max-share constraints.")
+    """Optimize allocation by economic all-in value, then risk.
 
-    optimized = {}
+    Uses exact linear programming when SciPy is available; otherwise falls back
+    to grid search with conservative minimum/maximum rounding.
+    """
+    try:
+        optimized, optimizer_message = _optimize_allocations_lp(
+            country_inputs=country_inputs,
+            proposal_inputs=proposal_inputs,
+            supplier_risk=supplier_risk,
+            method=method,
+            risk_threshold=risk_threshold,
+        )
+    except Exception as lp_exc:
+        optimized, optimizer_message = _optimize_allocations_grid(
+            country_inputs=country_inputs,
+            proposal_inputs=proposal_inputs,
+            supplier_risk=supplier_risk,
+            method=method,
+            risk_threshold=risk_threshold,
+            optimization_step=optimization_step,
+        )
+        optimizer_message += f" (LP unavailable/infeasible: {lp_exc})"
+
+    # Build an explainable rationale table.
     rationale_rows = []
-    for country in COUNTRIES:
-        current_row = calc_current_by_country(country, country_inputs, method)
-        best_under_risk = None
-        best_overall = None
-        evaluated = []
-        for shares in candidates:
-            prop = calc_proposal_by_country(country, shares, country_inputs, proposal_inputs, supplier_risk, method)
-            economic_delta = prop["new_economic_total"] - current_row["economic_total"]
-            gross_delta = prop["new_gross_total"] - current_row["gross_total"]
-            spend_delta = prop["new_spend"] - current_row["base_spend"]
-            row = {
-                "Country": country,
-                "Shares": shares,
-                "Economic Delta": economic_delta,
-                "Gross All-In Delta": gross_delta,
-                "Spend Delta": spend_delta,
-                "Weighted Risk": prop["weighted_risk"],
-                "New Economic Total": prop["new_economic_total"],
-                "New Gross Total": prop["new_gross_total"],
-                "New Spend": prop["new_spend"],
-            }
-            evaluated.append(row)
-            key = (economic_delta, prop["weighted_risk"], gross_delta)
-            if best_overall is None or key < (best_overall["Economic Delta"], best_overall["Weighted Risk"], best_overall["Gross All-In Delta"]):
-                best_overall = row
-            if prop["weighted_risk"] <= risk_threshold:
-                if best_under_risk is None or key < (best_under_risk["Economic Delta"], best_under_risk["Weighted Risk"], best_under_risk["Gross All-In Delta"]):
-                    best_under_risk = row
-        chosen = best_under_risk if best_under_risk is not None else best_overall
-        optimized[country] = chosen["Shares"]
+    country_df_opt, _, _, total_opt = calc_scenario(optimized, country_inputs, proposal_inputs, supplier_risk, method)
+    for _, row in country_df_opt.iterrows():
+        country = row["Country"]
         rationale_rows.append({
             "Country": country,
-            "Chosen Risk": chosen["Weighted Risk"],
-            "Economic Delta": chosen["Economic Delta"],
-            "Gross All-In Delta": chosen["Gross All-In Delta"],
-            "Spend Delta": chosen["Spend Delta"],
-            **{SHORT_SUPPLIER[s]: chosen["Shares"][s] for s in SUPPLIERS},
-            "Risk Gate Met": chosen["Weighted Risk"] <= risk_threshold,
+            "Chosen Risk": row["Weighted Risk"],
+            "Economic Delta": row["Economic All-In Delta"],
+            "Gross All-In Delta": row["Gross All-In Delta"],
+            "Spend Delta": row["Spend Delta"],
+            **{SHORT_SUPPLIER[s]: optimized[country][s] for s in SUPPLIERS},
+            "Risk Gate Met": row["Weighted Risk"] <= risk_threshold,
         })
     rationale_df = pd.DataFrame(rationale_rows)
-    message = "Optimization applied. Shares were updated using lowest economic all-in cost as priority, with financial cost and treasury return converted to each supplier payment term, and weighted risk as tie-breaker."
+    message = (
+        f"Optimization applied. {optimizer_message}. Objective: lowest economic all-in cost first, "
+        "with payment-term financial cost, treasury return, inventory ownership/carrying cost and supplier risk considered. "
+        f"Total optimized economic delta: {total_opt['Economic All-In Delta']:,.2f}."
+    )
     return optimized, rationale_df, message
 
 # =============================================================================
@@ -873,7 +1084,8 @@ with st.sidebar:
     st.markdown("## Executive Settings")
     currency_symbol = st.text_input("Currency", value="USD")
     rate_method = st.radio("Rate conversion method", options=["Compound", "Linear"], index=0)
-    optimization_step = st.select_slider("Optimization share grid", options=[1, 2, 5, 10], value=5, help="Lower grid = deeper optimization, slower runtime.")
+    optimization_step = st.select_slider("Fallback optimization share grid", options=[1, 2, 5, 10], value=5, help="Used only if exact LP optimization is unavailable/infeasible. Lower grid = deeper but slower fallback.")
+    st.caption("Optimizer: exact LP available" if SCIPY_AVAILABLE else "Optimizer: grid fallback only; SciPy not available")
     risk_threshold = st.slider("Preferred weighted risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
     show_advanced_economic = st.checkbox("Show working capital economic view", value=True)
 
@@ -913,16 +1125,16 @@ with input_tabs[0]:
         with st.expander(country, expanded=(country == "Brazil")):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"v22_current_spend__{country}")
+                current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"v23_current_spend__{country}")
             with c2:
-                financial_rate_pct = st.number_input(f"{country} financial rate for current period (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v22_financial_rate__{country}")
-                financial_reference_days = st.number_input(f"{country} current / reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v22_financial_ref_days__{country}")
+                financial_rate_pct = st.number_input(f"{country} financial rate for current period (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v23_financial_rate__{country}")
+                financial_reference_days = st.number_input(f"{country} current / reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v23_financial_ref_days__{country}")
             with c3:
-                treasury_return_pct = st.number_input(f"{country} net treasury return for current period (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v22_treasury_return__{country}")
+                treasury_return_pct = st.number_input(f"{country} net treasury return for current period (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v23_treasury_return__{country}")
                 st.caption("Treasury return uses the same current/reference period days above.")
             with c4:
-                inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"v22_inventory_rate__{country}")
-                current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"v22_current_inventory_days__{country}")
+                inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"v23_inventory_rate__{country}")
+                current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"v23_current_inventory_days__{country}")
             # IMPORTANT: the current/reference period is the current baseline period.
             # Current cost is NOT recalculated using proposal payment terms.
             # Proposal costs are recalculated supplier-by-supplier using each supplier payment term.
@@ -949,15 +1161,16 @@ with input_tabs[1]:
         with st.expander(country, expanded=(country == "Brazil")):
             for supplier in SUPPLIERS:
                 st.markdown(f"<div class='supplier-box'><span class='pill'>{SHORT_SUPPLIER[supplier]}</span>", unsafe_allow_html=True)
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3, c4, c5 = st.columns([1.35, 0.9, 0.9, 0.9, 1.25])
                 with c1:
                     spend = st.number_input(
-                        f"{country} | {supplier} | Expected spend",
+                        f"{country} | {supplier} | 100% volume-equivalent spend",
                         min_value=0.0,
                         value=DEFAULT_PROPOSAL_SPEND[country][supplier],
                         step=50_000.0,
                         format="%.2f",
                         key=f"proposal_spend__{country}__{supplier}",
+                        help="Enter the spend this supplier would represent if it supplied 100% of the country volume. The Share Projection applies the allocation percentage later.",
                     )
                 with c2:
                     payment_days = st.number_input(
@@ -983,12 +1196,21 @@ with input_tabs[1]:
                         step=1,
                         key=f"safety_stock__{country}__{supplier}",
                     )
+                with c5:
+                    inventory_ownership = st.selectbox(
+                        f"{country} | {supplier} | Inventory ownership",
+                        options=INVENTORY_OWNERSHIP_OPTIONS,
+                        index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][supplier]),
+                        key=f"inventory_ownership__{country}__{supplier}",
+                        help="Defines how many days are charged with inventory carrying cost.",
+                    )
                 st.markdown("</div>", unsafe_allow_html=True)
                 proposal_inputs[country][supplier] = {
                     "spend": float(spend),
                     "payment_days": int(payment_days),
                     "lead_time_days": int(lead_time_days),
                     "safety_stock_days": int(safety_stock_days),
+                    "inventory_ownership": inventory_ownership,
                 }
 
 with input_tabs[2]:
@@ -1034,15 +1256,13 @@ with input_tabs[3]:
     share_mode = st.radio("Share control mode", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
     mins_now = get_min_shares()
     maxs_now = get_max_shares()
-    min_sum = sum(mins_now.values())
-    max_sum = sum(maxs_now.values())
-    invalid_minimums = min_sum > 100.0
-    invalid_capacity = max_sum < 100.0
+    issues_now = constraint_issues(mins_now, maxs_now)
+    invalid_constraints = bool(issues_now)
 
-    if invalid_minimums:
-        st.error("Kraljic minimum shares exceed 100%. Reduce minimum requirements.")
-    if invalid_capacity:
-        st.error("Supplier maximum/capacity constraints cannot reach 100%. Increase max share or approve more suppliers.")
+    if invalid_constraints:
+        st.error("Constraint setup is infeasible. Please fix before using Cost Optimization.")
+        for issue in issues_now:
+            st.warning(issue)
 
     supplier_risk_preview = supplier_risk_scores(risk_inputs, risk_weights)
 
@@ -1052,7 +1272,7 @@ with input_tabs[3]:
     opt_col1, opt_col2 = st.columns([0.28, 0.72])
     with opt_col1:
         if st.button("Cost Optimization", type="primary", use_container_width=True, key="cost_optimization_top"):
-            if invalid_minimums or invalid_capacity:
+            if invalid_constraints:
                 st.error("Optimization cannot run while Kraljic minimums or max/capacity constraints are infeasible.")
             else:
                 try:
@@ -1098,10 +1318,23 @@ with input_tabs[3]:
                     max_value = float(maxs_now[supplier])
                     key = share_key(country, supplier)
                     current_value = float(st.session_state.get(key, DEFAULT_SHARES[country][supplier]))
-                    current_value = max(min_value, min(max_value, current_value))
-                    st.session_state[key] = current_value
 
-                    if max_value <= min_value + 1e-9:
+                    if max_value < min_value - 1e-9:
+                        # Infeasible constraint: do not render a broken slider.
+                        raw = min_value
+                        st.warning(
+                            f"{SHORT_SUPPLIER[supplier]} infeasible: floor {min_value:.0f}% > capacity {max_value:.0f}%."
+                        )
+                        st.slider(
+                            SHORT_SUPPLIER[supplier],
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=min(raw, 100.0),
+                            step=1.0,
+                            key=f"{key}__display_infeasible",
+                            disabled=True,
+                        )
+                    elif max_value <= min_value + 1e-9:
                         raw = float(min_value)
                         st.session_state[key] = raw
                         st.slider(
@@ -1115,8 +1348,10 @@ with input_tabs[3]:
                         )
                         st.caption(f"Locked at {raw:.0f}% by Kraljic/capacity constraint")
                     else:
+                        current_value = max(min_value, min(max_value, current_value))
+                        st.session_state[key] = current_value
                         kwargs = {}
-                        if share_mode == "Automatic":
+                        if share_mode == "Automatic" and not invalid_constraints:
                             kwargs = {"on_change": rebalance_after_slider_change, "args": (country, supplier)}
                         raw = st.slider(
                             SHORT_SUPPLIER[supplier],
@@ -1174,15 +1409,11 @@ render_section(
 
 current_mins_for_optimization = get_min_shares()
 current_maxs_for_optimization = get_max_shares()
-optimization_blocked = False
+optimization_issues = constraint_issues(current_mins_for_optimization, current_maxs_for_optimization)
+optimization_blocked = bool(optimization_issues)
 
-if sum(current_mins_for_optimization.values()) > 100.0:
-    optimization_blocked = True
-    st.error("Optimization cannot run: Kraljic minimum shares exceed 100%.")
-
-if sum(current_maxs_for_optimization.values()) < 100.0:
-    optimization_blocked = True
-    st.error("Optimization cannot run: supplier max/capacity constraints cannot reach 100%.")
+for issue in optimization_issues:
+    st.error(f"Optimization cannot run: {issue}")
 
 opt_main_col, opt_note_col = st.columns([0.24, 0.76])
 with opt_main_col:

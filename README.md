@@ -1,6 +1,6 @@
-# Executive Procurement TCO & Should-Cost Dashboard v15
+# Executive Procurement TCO & Should-Cost Dashboard v23 FINAL
 
-Senior Director Edition for strategic raw-material sourcing decisions.
+Final reviewed version for strategic raw-material sourcing decisions.
 
 ## Run locally
 
@@ -9,46 +9,40 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## What is new in v15
+## Core modeling rules
 
-- Commercial spend, gross payment-term financial cost and working-capital economic value are separated.
-- Current and new scenarios are compared apples-to-apples.
-- Country-specific payment-term rates, treasury returns and inventory carrying rates.
-- Supplier proposal inputs remain active and independent from the share sliders.
-- Share Projection has Automatic and Manual modes.
-- Kraljic minimum share locks the supplier floor in the sliders.
-- Supplier approval and maximum share/capacity constraints.
-- Multi-dimensional supplier risk scoring and weighted risk.
-- Cost Optimization updates the share sliders automatically.
-- Optimization minimizes economic all-in cost first and uses weighted risk as tie-breaker.
-- Executive charts include Total Cost Stack, Economic Value Decomposition, Supplier Share Projection and Cost x Risk Decision Map.
+1. **Current baseline is independent from proposals.** Current financial cost and current treasury return use the country current/reference period only.
+2. **Supplier proposals use their own proposed payment term.** A 150-day supplier proposal uses a 150-day financial-rate period and a 150-day treasury-return period.
+3. **Supplier proposal spend is 100% volume-equivalent spend before financial cost.** The share projection applies the allocation later.
+4. **Negative delta = saving. Positive delta = impact.** This is used across spend, financial cost, all-in cost and economic value.
+5. **Inventory carrying cost follows ownership.** Lead time is only charged when the buyer owns inventory during transit/stock.
 
-## Procurement convention
+## Final improvements included
 
-Delta values are displayed as:
+- Clear separation between Commercial Spend, Financial Cost, Treasury/Working-Capital Carry, Inventory Carrying Cost and Economic All-In Value.
+- Explicit financial audit by country.
+- Payment terms and return periods are recalculated supplier-by-supplier.
+- Share Projection remains a scenario gadget; supplier proposal inputs remain active and independent.
+- Kraljic minimum shares, supplier approval and capacity constraints.
+- Infeasible constraints are surfaced instead of silently overridden.
+- Exact linear-programming optimization with SciPy when available; conservative grid fallback otherwise.
+- Optimization minimizes economic all-in cost first and uses supplier risk as a secondary factor.
+- Inventory ownership assumptions by supplier/country.
+- Supplier risk matrix and weighted risk.
+- Executive charts: Total Cost Stack, Economic Value Decomposition, Supplier Share Projection and Cost x Risk Decision Map.
 
-- Negative = saving, shown in green.
-- Positive = impact, shown in red.
+## Business case preset
 
-## Important note
+The app is preloaded with the DFO / Isopropyl Palmitate scenario:
 
-Financial cost and treasury return assumptions should be validated by Finance/Treasury before official saving recognition.
+- Current spend: BRL 20MM.
+- ChemPrime: +25% price, 90-day payment term.
+- OleoGlobal: 15% below old price, 70-day payment term.
+- Overseas: OleoGlobal + 5%, 150-day payment term.
+- Distribuicao: OleoGlobal + 9%, 120-day payment term.
+- Default strategic allocation: 40% ChemPrime, 40% Overseas, 20% Distribuicao.
+- Country-specific financial rates, treasury returns and carrying rates.
 
-## Business Case Preset v16
+## Governance note
 
-This version is preloaded with the DFO Isopropyl Palmitate business case assumptions:
-
-- Current spend: BRL 20MM total, with 65% Brazil / 35% LATAM.
-- ChemPrime new proposal: +25% price increase.
-- OleoGlobal economics: 15% below old price.
-- Overseas route: OleoGlobal price + 5%, 150-day payment term.
-- Local distributor route: OleoGlobal price + 9%, 120-day payment term.
-- Proposed allocation: 40% ChemPrime, 40% Overseas, 20% Local Distribution.
-- Country-specific payment-term financial rates, treasury return rates and carrying rates loaded from the business case assumptions.
-
-Recommended use:
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+Commercial saving, financial impact and working-capital benefit should be reported separately. Final saving recognition should be aligned with Finance/Treasury/Controllership.
