@@ -56,50 +56,50 @@ DEFAULT_CURRENT_SPEND = {
     "Colombia": 1_500_000.0,
 }
 DEFAULT_FINANCIAL_RATE = {
-    "Brazil": 15.0,
-    "Mexico": 7.0,
-    "Argentina": 35.0,
-    "Colombia": 10.0,
+    "Brazil": 4.84,
+    "Mexico": 2.32,
+    "Argentina": 10.52,
+    "Colombia": 3.07,
 }
-DEFAULT_REFERENCE_DAYS = {country: 360 for country in COUNTRIES}
-DEFAULT_CURRENT_TERM = {country: 360 for country in COUNTRIES}
-DEFAULT_TREASURY_RETURN = DEFAULT_FINANCIAL_RATE.copy()
-DEFAULT_TREASURY_REF_DAYS = {country: 360 for country in COUNTRIES}
+DEFAULT_REFERENCE_DAYS = {country: 120 for country in COUNTRIES}
+DEFAULT_CURRENT_TERM = {
+    "Brazil": 120,
+    "Mexico": 60,
+    "Argentina": 60,
+    "Colombia": 60,
+}
+DEFAULT_TREASURY_RETURN = {
+    "Brazil": 5.07,
+    "Mexico": 2.50,
+    "Argentina": 10.90,
+    "Colombia": 3.40,
+}
+DEFAULT_TREASURY_REF_DAYS = {country: 120 for country in COUNTRIES}
 DEFAULT_INVENTORY_CARRY_RATE = {
-    "Brazil": 12.0,
-    "Mexico": 7.0,
-    "Argentina": 30.0,
-    "Colombia": 9.0,
+    "Brazil": 23.0,
+    "Mexico": 15.0,
+    "Argentina": 35.0,
+    "Colombia": 22.0,
 }
-DEFAULT_CURRENT_INVENTORY_DAYS = {country: 0 for country in COUNTRIES}
+DEFAULT_CURRENT_INVENTORY_DAYS = {country: 30 for country in COUNTRIES}
 
 # Validation example shared by the user.
-DEFAULT_PROPOSAL_SPEND = {
-    "Brazil": {
-        "ChemPrime": 16_250_000.0,
-        "OleoGlobal": 9_750_000.0,
-        "Oleo Overseas Trading Co.": 10_237_500.0,
-        "Comercio de Oleos Nacional Distribuicao": 10_530_000.0,
-    },
-    "Mexico": {
-        "ChemPrime": 3_750_000.0,
-        "OleoGlobal": 2_250_000.0,
-        "Oleo Overseas Trading Co.": 2_362_500.0,
-        "Comercio de Oleos Nacional Distribuicao": 2_430_000.0,
-    },
-    "Argentina": {
-        "ChemPrime": 3_125_000.0,
-        "OleoGlobal": 1_875_000.0,
-        "Oleo Overseas Trading Co.": 1_968_750.0,
-        "Comercio de Oleos Nacional Distribuicao": 2_025_000.0,
-    },
-    "Colombia": {
-        "ChemPrime": 1_875_000.0,
-        "OleoGlobal": 1_125_000.0,
-        "Oleo Overseas Trading Co.": 1_181_250.0,
-        "Comercio de Oleos Nacional Distribuicao": 1_215_000.0,
-    },
-}
+DEFAULT_PROPOSAL_SPEND = {'Argentina': {'ChemPrime': 3125000.0,
+               'Comercio de Oleos Nacional Distribuicao': 2316250.0,
+               'Oleo Overseas Trading Co.': 2231250.0,
+               'OleoGlobal': 2125000.0},
+ 'Brazil': {'ChemPrime': 16250000.0,
+            'Comercio de Oleos Nacional Distribuicao': 12044500.0,
+            'Oleo Overseas Trading Co.': 11602500.0,
+            'OleoGlobal': 11050000.0},
+ 'Colombia': {'ChemPrime': 1875000.0,
+              'Comercio de Oleos Nacional Distribuicao': 1389750.0,
+              'Oleo Overseas Trading Co.': 1338750.0,
+              'OleoGlobal': 1275000.0},
+ 'Mexico': {'ChemPrime': 3750000.0,
+            'Comercio de Oleos Nacional Distribuicao': 2779500.0,
+            'Oleo Overseas Trading Co.': 2677500.0,
+            'OleoGlobal': 2550000.0}}
 DEFAULT_PAYMENT_TERM = {
     country: {
         "ChemPrime": 90,
@@ -111,19 +111,19 @@ DEFAULT_PAYMENT_TERM = {
 }
 DEFAULT_LEAD_TIME_DAYS = {
     country: {
-        "ChemPrime": 15,
-        "OleoGlobal": 18,
-        "Oleo Overseas Trading Co.": 55,
-        "Comercio de Oleos Nacional Distribuicao": 22,
+        "ChemPrime": 30,
+        "OleoGlobal": 120,
+        "Oleo Overseas Trading Co.": 120,
+        "Comercio de Oleos Nacional Distribuicao": 30,
     }
     for country in COUNTRIES
 }
 DEFAULT_SAFETY_STOCK_DAYS = {
     country: {
-        "ChemPrime": 8,
-        "OleoGlobal": 10,
-        "Oleo Overseas Trading Co.": 22,
-        "Comercio de Oleos Nacional Distribuicao": 12,
+        "ChemPrime": 0,
+        "OleoGlobal": 0,
+        "Oleo Overseas Trading Co.": 0,
+        "Comercio de Oleos Nacional Distribuicao": 0,
     }
     for country in COUNTRIES
 }
@@ -131,8 +131,8 @@ DEFAULT_SHARES = {
     country: {
         "ChemPrime": 40.0,
         "OleoGlobal": 0.0,
-        "Oleo Overseas Trading Co.": 30.0,
-        "Comercio de Oleos Nacional Distribuicao": 30.0,
+        "Oleo Overseas Trading Co.": 40.0,
+        "Comercio de Oleos Nacional Distribuicao": 20.0,
     }
     for country in COUNTRIES
 }
@@ -401,8 +401,14 @@ def get_max_shares() -> Dict[str, float]:
     maxs = {}
     for supplier in SUPPLIERS:
         approved = bool(st.session_state.get(approved_key(supplier), DEFAULT_APPROVED[supplier]))
-        raw_max = float(st.session_state.get(max_key(supplier), DEFAULT_MAX_SHARE[supplier]))
-        maxs[supplier] = raw_max if approved else 0.0
+        required = bool(st.session_state.get(kraljic_key(supplier), DEFAULT_KRALJIC_REQUIRED[supplier]))
+        min_required = float(st.session_state.get(min_key(supplier), DEFAULT_MIN_SHARE[supplier])) if required else 0.0
+        raw_max = float(st.session_state.get(max_key(supplier), DEFAULT_MAX_SHARE[supplier])) if approved else 0.0
+
+        # Streamlit sliders cannot be rendered with max < min.
+        # Business rule: if a Kraljic minimum is required, that strategic floor overrides
+        # a conflicting max/capacity input for UI stability and model feasibility.
+        maxs[supplier] = max(raw_max, min_required)
     return maxs
 
 
@@ -1007,21 +1013,40 @@ with input_tabs[3]:
                     current_value = float(st.session_state.get(key, DEFAULT_SHARES[country][supplier]))
                     current_value = max(min_value, min(max_value, current_value))
                     st.session_state[key] = current_value
-                    kwargs = {}
-                    if share_mode == "Automatic":
-                        kwargs = {"on_change": rebalance_after_slider_change, "args": (country, supplier)}
-                    raw = st.slider(
-                        SHORT_SUPPLIER[supplier],
-                        min_value=min_value,
-                        max_value=max_value,
-                        value=current_value,
-                        step=1.0,
-                        key=key,
-                        **kwargs,
-                    )
+
+                    # If min and max are the same, render a disabled visual slider with a
+                    # separate key. This avoids StreamlitAPIException while making it clear
+                    # that the share is locked by Kraljic/capacity constraints.
+                    if max_value <= min_value + 1e-9:
+                        raw = float(min_value)
+                        st.session_state[key] = raw
+                        st.slider(
+                            SHORT_SUPPLIER[supplier],
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=raw,
+                            step=1.0,
+                            key=f"{key}__display_locked",
+                            disabled=True,
+                        )
+                        st.caption(f"Locked at {raw:.0f}% by Kraljic/capacity constraint")
+                    else:
+                        kwargs = {}
+                        if share_mode == "Automatic":
+                            kwargs = {"on_change": rebalance_after_slider_change, "args": (country, supplier)}
+                        raw = st.slider(
+                            SHORT_SUPPLIER[supplier],
+                            min_value=min_value,
+                            max_value=max_value,
+                            value=current_value,
+                            step=1.0,
+                            key=key,
+                            **kwargs,
+                        )
+                        if mins_now[supplier] > 0:
+                            st.caption(f"Kraljic floor: {mins_now[supplier]:.0f}%")
+
                     raw_shares[supplier] = float(raw)
-                    if mins_now[supplier] > 0:
-                        st.caption(f"Kraljic floor: {mins_now[supplier]:.0f}%")
 
             if share_mode == "Manual":
                 effective = allocate_with_bounds(raw_shares, mins_now, maxs_now, total=100.0)
