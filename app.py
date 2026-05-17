@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v18 - Dynamic Payment-Term Return Period
+Version v21 - Financial Audit and Current-Term Clarity
 
 Run:
     pip install -r requirements.txt
@@ -63,12 +63,9 @@ DEFAULT_FINANCIAL_RATE = {
     "Colombia": 3.07,
 }
 DEFAULT_REFERENCE_DAYS = {country: 120 for country in COUNTRIES}
-DEFAULT_CURRENT_TERM = {
-    "Brazil": 120,
-    "Mexico": 60,
-    "Argentina": 60,
-    "Colombia": 60,
-}
+# Default aligned with the executive test table: the current payment term defaults
+# to the country financial-rate reference period. Users can still override it.
+DEFAULT_CURRENT_TERM = {country: 120 for country in COUNTRIES}
 DEFAULT_TREASURY_RETURN = {
     "Brazil": 5.07,
     "Mexico": 2.50,
@@ -923,6 +920,12 @@ with input_tabs[0]:
                 "inventory_carry_rate_pct": float(inventory_carry_rate_pct),
                 "current_inventory_days": int(current_inventory_days),
             }
+            if int(current_payment_days) != int(financial_reference_days):
+                st.warning(
+                    f"{country}: current payment term ({int(current_payment_days)} days) is different from the financial reference period "
+                    f"({int(financial_reference_days)} days). Current Financial Cost will be converted to the current payment term, "
+                    "while each supplier proposal will use its own proposed payment term."
+                )
 
 with input_tabs[1]:
     render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. Each supplier payment term is used to calculate the NEW supplier financial cost and NEW treasury return period for that proposal only.")
@@ -1144,6 +1147,99 @@ for country in COUNTRIES:
     final_shares[country] = allocate_with_bounds(raw, get_min_shares(), get_max_shares(), total=100.0)
 
 country_df, group_df, supplier_df, total = calc_scenario(final_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
+
+# =============================================================================
+# Always-visible Cost Optimization panel
+# =============================================================================
+
+render_section(
+    "Cost Optimization",
+    "Run the optimizer from here at any time. It will respect Kraljic minimum shares, supplier capacity, approved-supplier flags, payment terms, financial rates, treasury return and inventory carrying cost."
+)
+
+current_mins_for_optimization = get_min_shares()
+current_maxs_for_optimization = get_max_shares()
+optimization_blocked = False
+
+if sum(current_mins_for_optimization.values()) > 100.0:
+    optimization_blocked = True
+    st.error("Optimization cannot run: Kraljic minimum shares exceed 100%.")
+
+if sum(current_maxs_for_optimization.values()) < 100.0:
+    optimization_blocked = True
+    st.error("Optimization cannot run: supplier max/capacity constraints cannot reach 100%.")
+
+opt_main_col, opt_note_col = st.columns([0.24, 0.76])
+with opt_main_col:
+    run_global_optimization = st.button(
+        "Cost Optimization",
+        type="primary",
+        use_container_width=True,
+        key="cost_optimization_always_visible",
+        disabled=optimization_blocked,
+    )
+
+with opt_note_col:
+    st.markdown(
+        """
+        <div class="insight-box" style="min-height: 92px; padding: 14px 16px;">
+            <b>Optimization logic</b><br>
+            Searches the best allocation by minimizing economic all-in cost first and weighted risk second.
+            If a better allocation is found, the Share Projection sliders are updated automatically after the page refreshes.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+if run_global_optimization:
+    try:
+        optimized_shares, rationale_df, opt_message = optimize_allocations(
+            country_inputs=country_inputs,
+            proposal_inputs=proposal_inputs,
+            supplier_risk=supplier_risk,
+            method=rate_method,
+            risk_threshold=risk_threshold,
+            optimization_step=int(optimization_step),
+        )
+        st.session_state["pending_optimized_shares"] = optimized_shares
+        st.session_state["optimization_rationale_df"] = rationale_df
+        st.session_state["optimization_message"] = opt_message
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Optimization failed: {exc}")
+
+if st.session_state.get("optimization_message"):
+    st.success(st.session_state.get("optimization_message"))
+
+# =============================================================================
+# Financial calculation audit
+# =============================================================================
+
+st.markdown(
+    """
+    <div class="insight-box" style="min-height: 90px; padding: 14px 16px; margin-bottom: 14px;">
+        <b>Financial calculation audit</b><br>
+        Current Financial Cost is calculated only from <b>current spend × financial rate equivalent to the current payment term</b>.
+        New Financial Cost is calculated from <b>allocated supplier proposal spend × financial rate equivalent to each supplier proposed payment term</b>.
+        Supplier payment terms never overwrite the current baseline.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.expander("Show financial cost audit by country"):
+    audit_cols = [
+        "Country", "Current Spend", "Current Payment Days", "Current Effective Financial Rate", "Current Financial Cost",
+        "New Spend", "New Avg Payment Days", "New Avg Financial Rate", "New Financial Cost", "Financial Delta"
+    ]
+    audit_df = country_df[audit_cols].copy()
+    for col in ["Current Spend", "Current Financial Cost", "New Spend", "New Financial Cost", "Financial Delta"]:
+        audit_df[col] = audit_df[col].map(lambda x: format_money(x, currency_symbol, signed=(col == "Financial Delta")))
+    for col in ["Current Effective Financial Rate", "New Avg Financial Rate"]:
+        audit_df[col] = audit_df[col].map(format_pct)
+    audit_df["Current Payment Days"] = audit_df["Current Payment Days"].map(lambda x: f"{x:.0f} dd")
+    audit_df["New Avg Payment Days"] = audit_df["New Avg Payment Days"].map(lambda x: f"{x:.0f} dd")
+    st.dataframe(audit_df, use_container_width=True)
 
 # =============================================================================
 # Executive output
