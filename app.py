@@ -895,8 +895,8 @@ input_tabs = st.tabs([
 ])
 
 with input_tabs[0]:
-    render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Treasury return is dynamically converted to the actual payment term used in each scenario.")
-    st.info("Dynamic return-period rule: current baseline uses each country current payment term; every supplier proposal uses that supplier proposed payment term as the new return period. Example: if the return rate reference is 60 days and a supplier proposes 120 payment days, the model converts the return to 120 days for that supplier.")
+    render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Current financial and return rates use the current payment term only; proposal rates are recalculated later using each supplier proposed payment term.")
+    st.info("Rate-period rule: current baseline uses the current payment term for each country. Supplier proposals use the supplier proposed payment term as the new financial-rate period and new treasury-return period. Example: if the current term is 60 days and a supplier proposes 120 days, the current side remains 60 days while the proposal side is recalculated to 120 days.")
     country_inputs: Dict[str, Dict] = {}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
@@ -905,11 +905,11 @@ with input_tabs[0]:
                 current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"current_spend__{country}")
                 current_payment_days = st.number_input(f"{country} current payment term days", min_value=0, value=DEFAULT_CURRENT_TERM[country], step=1, key=f"current_term__{country}")
             with c2:
-                financial_rate_pct = st.number_input(f"{country} payment-term financial rate (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"financial_rate__{country}")
-                financial_reference_days = st.number_input(f"{country} financial rate period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"financial_ref_days__{country}")
+                financial_rate_pct = st.number_input(f"{country} financial reference rate (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"financial_rate__{country}")
+                financial_reference_days = st.number_input(f"{country} financial reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"financial_ref_days__{country}")
             with c3:
-                treasury_return_pct = st.number_input(f"{country} net treasury return (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"treasury_return__{country}")
-                treasury_reference_days = st.number_input(f"{country} treasury return period days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"treasury_ref_days__{country}")
+                treasury_return_pct = st.number_input(f"{country} net treasury return reference rate (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"treasury_return__{country}")
+                treasury_reference_days = st.number_input(f"{country} treasury return reference period days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"treasury_ref_days__{country}")
             with c4:
                 inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"inventory_rate__{country}")
                 current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"current_inventory_days__{country}")
@@ -925,7 +925,7 @@ with input_tabs[0]:
             }
 
 with input_tabs[1]:
-    render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. The proposed payment term also becomes the investment return period for working-capital carry.")
+    render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. Each supplier payment term is used to calculate the NEW supplier financial cost and NEW treasury return period for that proposal only.")
     proposal_inputs: Dict[str, Dict[str, Dict]] = {country: {} for country in COUNTRIES}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
@@ -1002,16 +1002,66 @@ with input_tabs[2]:
                     )
 
 with input_tabs[3]:
-    render_section("Share Projection & Cost Optimization", "Use sliders as a scenario gadget while supplier proposal inputs remain fully active. Automatic mode keeps allocation at 100% respecting Kraljic floors.")
+    render_section(
+        "Share Projection & Cost Optimization",
+        "Use sliders as a scenario gadget while supplier proposal inputs remain fully active. Cost Optimization automatically searches the best allocation and updates the sliders."
+    )
+
+    st.info(
+        "Rate-period rule: Current baseline uses each country's current payment term only. "
+        "Supplier proposals use each supplier's proposed payment term as the NEW financial-rate period and the NEW treasury-return period. "
+        "Proposal payment terms never overwrite the current baseline."
+    )
+
     share_mode = st.radio("Share control mode", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
     mins_now = get_min_shares()
     maxs_now = get_max_shares()
     min_sum = sum(mins_now.values())
     max_sum = sum(maxs_now.values())
-    if min_sum > 100.0:
+    invalid_minimums = min_sum > 100.0
+    invalid_capacity = max_sum < 100.0
+
+    if invalid_minimums:
         st.error("Kraljic minimum shares exceed 100%. Reduce minimum requirements.")
-    if max_sum < 100.0:
+    if invalid_capacity:
         st.error("Supplier maximum/capacity constraints cannot reach 100%. Increase max share or approve more suppliers.")
+
+    supplier_risk_preview = supplier_risk_scores(risk_inputs, risk_weights)
+
+    # Keep the optimization control visible before the country sliders. In previous
+    # versions it appeared after all expanders, which made it easy to miss.
+    st.markdown("### Automatic Cost Optimization")
+    opt_col1, opt_col2 = st.columns([0.28, 0.72])
+    with opt_col1:
+        if st.button("Cost Optimization", type="primary", use_container_width=True, key="cost_optimization_top"):
+            if invalid_minimums or invalid_capacity:
+                st.error("Optimization cannot run while Kraljic minimums or max/capacity constraints are infeasible.")
+            else:
+                try:
+                    optimized_shares, rationale_df, opt_message = optimize_allocations(
+                        country_inputs=country_inputs,
+                        proposal_inputs=proposal_inputs,
+                        supplier_risk=supplier_risk_preview,
+                        method=rate_method,
+                        risk_threshold=risk_threshold,
+                        optimization_step=int(optimization_step),
+                    )
+                    st.session_state["pending_optimized_shares"] = optimized_shares
+                    st.session_state["optimization_rationale_df"] = rationale_df
+                    st.session_state["optimization_message"] = opt_message
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Optimization failed: {exc}")
+    with opt_col2:
+        st.caption(
+            "Objective: minimize economic all-in cost first, then weighted risk. "
+            "The optimizer respects Kraljic minimum shares, supplier max/capacity and approved-supplier flags. "
+            "After it runs, it automatically updates the Share Projection sliders."
+        )
+
+    if st.session_state.get("last_optimization_applied"):
+        st.success(st.session_state.get("optimization_message", "Optimization applied."))
+        st.session_state["last_optimization_applied"] = False
 
     all_shares: Dict[str, Dict[str, float]] = {}
     for country in COUNTRIES:
@@ -1033,9 +1083,6 @@ with input_tabs[3]:
                     current_value = max(min_value, min(max_value, current_value))
                     st.session_state[key] = current_value
 
-                    # If min and max are the same, render a disabled visual slider with a
-                    # separate key. This avoids StreamlitAPIException while making it clear
-                    # that the share is locked by Kraljic/capacity constraints.
                     if max_value <= min_value + 1e-9:
                         raw = float(min_value)
                         st.session_state[key] = raw
@@ -1081,35 +1128,9 @@ with input_tabs[3]:
             share_df = pd.DataFrame([{"Supplier": SHORT_SUPPLIER[s], "Effective Model Share %": effective[s]} for s in SUPPLIERS])
             st.dataframe(share_df, use_container_width=True)
 
-    supplier_risk_preview = supplier_risk_scores(risk_inputs, risk_weights)
     country_df_preview, group_df_preview, supplier_df_preview, total_preview = calc_scenario(
         all_shares, country_inputs, proposal_inputs, supplier_risk_preview, rate_method
     )
-
-    b1, b2 = st.columns([0.26, 0.74])
-    with b1:
-        if st.button("Cost Optimization", type="primary", use_container_width=True):
-            try:
-                optimized_shares, rationale_df, opt_message = optimize_allocations(
-                    country_inputs=country_inputs,
-                    proposal_inputs=proposal_inputs,
-                    supplier_risk=supplier_risk_preview,
-                    method=rate_method,
-                    risk_threshold=risk_threshold,
-                    optimization_step=int(optimization_step),
-                )
-                st.session_state["pending_optimized_shares"] = optimized_shares
-                st.session_state["optimization_rationale_df"] = rationale_df
-                st.session_state["optimization_message"] = opt_message
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Optimization failed: {exc}")
-    with b2:
-        st.caption("Optimization objective: minimize economic all-in cost first, then risk. Kraljic minimums, max shares/capacity and approval status are respected.")
-
-    if st.session_state.get("last_optimization_applied"):
-        st.success(st.session_state.get("optimization_message", "Optimization applied."))
-        st.session_state["last_optimization_applied"] = False
 
 # =============================================================================
 # Calculate scenario after inputs
