@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v21 - Financial Audit and Current-Term Clarity
+Version v22 - Payment-Term Weighting and Financial Delta Fix
 
 Run:
     pip install -r requirements.txt
@@ -13,7 +13,7 @@ This dashboard compares current spend vs. supplier proposals using:
 - inventory carrying cost
 - supplier risk and Kraljic minimum shares
 - automatic cost x risk allocation optimization
-- proposal financial and treasury return periods dynamically follow each supplier payment term
+- proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
 """
 
 from __future__ import annotations
@@ -82,22 +82,32 @@ DEFAULT_INVENTORY_CARRY_RATE = {
 DEFAULT_CURRENT_INVENTORY_DAYS = {country: 30 for country in COUNTRIES}
 
 # Validation example shared by the user.
-DEFAULT_PROPOSAL_SPEND = {'Argentina': {'ChemPrime': 3125000.0,
-               'Comercio de Oleos Nacional Distribuicao': 2316250.0,
-               'Oleo Overseas Trading Co.': 2231250.0,
-               'OleoGlobal': 2125000.0},
- 'Brazil': {'ChemPrime': 16250000.0,
-            'Comercio de Oleos Nacional Distribuicao': 12044500.0,
-            'Oleo Overseas Trading Co.': 11602500.0,
-            'OleoGlobal': 11050000.0},
- 'Colombia': {'ChemPrime': 1875000.0,
-              'Comercio de Oleos Nacional Distribuicao': 1389750.0,
-              'Oleo Overseas Trading Co.': 1338750.0,
-              'OleoGlobal': 1275000.0},
- 'Mexico': {'ChemPrime': 3750000.0,
-            'Comercio de Oleos Nacional Distribuicao': 2779500.0,
-            'Oleo Overseas Trading Co.': 2677500.0,
-            'OleoGlobal': 2550000.0}}
+DEFAULT_PROPOSAL_SPEND = {
+    "Brazil": {
+        "ChemPrime": 16_250_000.0,
+        "OleoGlobal": 9_750_000.0,
+        "Oleo Overseas Trading Co.": 10_237_500.0,
+        "Comercio de Oleos Nacional Distribuicao": 10_530_000.0,
+    },
+    "Mexico": {
+        "ChemPrime": 3_750_000.0,
+        "OleoGlobal": 2_250_000.0,
+        "Oleo Overseas Trading Co.": 2_362_500.0,
+        "Comercio de Oleos Nacional Distribuicao": 2_430_000.0,
+    },
+    "Argentina": {
+        "ChemPrime": 3_125_000.0,
+        "OleoGlobal": 1_875_000.0,
+        "Oleo Overseas Trading Co.": 1_968_750.0,
+        "Comercio de Oleos Nacional Distribuicao": 2_025_000.0,
+    },
+    "Colombia": {
+        "ChemPrime": 1_875_000.0,
+        "OleoGlobal": 1_125_000.0,
+        "Oleo Overseas Trading Co.": 1_181_250.0,
+        "Comercio de Oleos Nacional Distribuicao": 1_215_000.0,
+    },
+}
 DEFAULT_PAYMENT_TERM = {
     country: {
         "ChemPrime": 90,
@@ -618,6 +628,7 @@ def calc_proposal_by_country(
         "new_economic_total": 0.0,
         "weighted_risk_numerator": 0.0,
         "weighted_payment_days_numerator": 0.0,
+        "weighted_share_sum": 0.0,
         "weighted_financial_rate_numerator": 0.0,
         "weighted_treasury_rate_numerator": 0.0,
         "weighted_return_days_numerator": 0.0,
@@ -646,10 +657,13 @@ def calc_proposal_by_country(
         country_total["new_gross_total"] += gross_total
         country_total["new_economic_total"] += economic_total
         country_total["weighted_risk_numerator"] += allocated_spend * risk
-        country_total["weighted_payment_days_numerator"] += allocated_spend * supplier_data["payment_days"]
+        # Payment/return days are share-weighted for operational readability.
+        # Financial cost itself is still calculated supplier-by-supplier using allocated spend × equivalent rate.
+        country_total["weighted_payment_days_numerator"] += share * supplier_data["payment_days"]
+        country_total["weighted_share_sum"] += share
         country_total["weighted_financial_rate_numerator"] += allocated_spend * fin_rate
         country_total["weighted_treasury_rate_numerator"] += allocated_spend * treasury_rate
-        country_total["weighted_return_days_numerator"] += allocated_spend * supplier_data["payment_days"]
+        country_total["weighted_return_days_numerator"] += share * supplier_data["payment_days"]
         country_total["supplier_rows"].append({
             "Country": country,
             "Supplier": supplier,
@@ -667,8 +681,8 @@ def calc_proposal_by_country(
         })
     spend = country_total["new_spend"]
     country_total["weighted_risk"] = safe_divide(country_total["weighted_risk_numerator"], spend)
-    country_total["avg_payment_days"] = safe_divide(country_total["weighted_payment_days_numerator"], spend)
-    country_total["avg_return_days"] = safe_divide(country_total["weighted_return_days_numerator"], spend)
+    country_total["avg_payment_days"] = safe_divide(country_total["weighted_payment_days_numerator"], country_total["weighted_share_sum"])
+    country_total["avg_return_days"] = safe_divide(country_total["weighted_return_days_numerator"], country_total["weighted_share_sum"])
     country_total["avg_financial_rate"] = safe_divide(country_total["weighted_financial_rate_numerator"], spend)
     country_total["avg_treasury_rate"] = safe_divide(country_total["weighted_treasury_rate_numerator"], spend)
     return country_total
@@ -893,39 +907,40 @@ input_tabs = st.tabs([
 
 with input_tabs[0]:
     render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Current financial and return rates use the current payment term only; proposal rates are recalculated later using each supplier proposed payment term.")
-    st.info("Rate-period rule: current baseline uses the current payment term for each country. Supplier proposals use the supplier proposed payment term as the new financial-rate period and new treasury-return period. Example: if the current term is 60 days and a supplier proposes 120 days, the current side remains 60 days while the proposal side is recalculated to 120 days.")
+    st.info("Rate-period rule: the Financial Reference Period is the CURRENT baseline period. Current Financial Cost = Current Spend × the rate for that current period. Supplier proposals are recalculated supplier-by-supplier using each supplier proposed payment term as the NEW financial-rate and treasury-return period.")
     country_inputs: Dict[str, Dict] = {}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"current_spend__{country}")
-                current_payment_days = st.number_input(f"{country} current payment term days", min_value=0, value=DEFAULT_CURRENT_TERM[country], step=1, key=f"current_term__{country}")
+                current_spend = st.number_input(f"{country} current spend", min_value=0.0, value=DEFAULT_CURRENT_SPEND[country], step=100_000.0, format="%.2f", key=f"v22_current_spend__{country}")
             with c2:
-                financial_rate_pct = st.number_input(f"{country} financial reference rate (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"financial_rate__{country}")
-                financial_reference_days = st.number_input(f"{country} financial reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"financial_ref_days__{country}")
+                financial_rate_pct = st.number_input(f"{country} financial rate for current period (%)", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v22_financial_rate__{country}")
+                financial_reference_days = st.number_input(f"{country} current / reference period days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v22_financial_ref_days__{country}")
             with c3:
-                treasury_return_pct = st.number_input(f"{country} net treasury return reference rate (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"treasury_return__{country}")
-                treasury_reference_days = st.number_input(f"{country} treasury return reference period days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"treasury_ref_days__{country}")
+                treasury_return_pct = st.number_input(f"{country} net treasury return for current period (%)", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v22_treasury_return__{country}")
+                st.caption("Treasury return uses the same current/reference period days above.")
             with c4:
-                inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"inventory_rate__{country}")
-                current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"current_inventory_days__{country}")
+                inventory_carry_rate_pct = st.number_input(f"{country} inventory carrying rate (% p.a.)", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country], step=0.05, format="%.4f", key=f"v22_inventory_rate__{country}")
+                current_inventory_days = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country], step=1, key=f"v22_current_inventory_days__{country}")
+            # IMPORTANT: the current/reference period is the current baseline period.
+            # Current cost is NOT recalculated using proposal payment terms.
+            # Proposal costs are recalculated supplier-by-supplier using each supplier payment term.
+            current_payment_days = int(financial_reference_days)
+            treasury_reference_days = int(financial_reference_days)
             country_inputs[country] = {
                 "current_spend": float(current_spend),
-                "current_payment_days": int(current_payment_days),
+                "current_payment_days": current_payment_days,
                 "financial_rate_pct": float(financial_rate_pct),
                 "financial_reference_days": int(financial_reference_days),
                 "treasury_return_pct": float(treasury_return_pct),
-                "treasury_reference_days": int(treasury_reference_days),
+                "treasury_reference_days": treasury_reference_days,
                 "inventory_carry_rate_pct": float(inventory_carry_rate_pct),
                 "current_inventory_days": int(current_inventory_days),
             }
-            if int(current_payment_days) != int(financial_reference_days):
-                st.warning(
-                    f"{country}: current payment term ({int(current_payment_days)} days) is different from the financial reference period "
-                    f"({int(financial_reference_days)} days). Current Financial Cost will be converted to the current payment term, "
-                    "while each supplier proposal will use its own proposed payment term."
-                )
+            st.caption(
+                f"{country} baseline uses {current_payment_days} days. Supplier proposals will use their own payment terms as new financial/treasury periods."
+            )
 
 with input_tabs[1]:
     render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. Each supplier payment term is used to calculate the NEW supplier financial cost and NEW treasury return period for that proposal only.")
@@ -1219,9 +1234,9 @@ st.markdown(
     """
     <div class="insight-box" style="min-height: 90px; padding: 14px 16px; margin-bottom: 14px;">
         <b>Financial calculation audit</b><br>
-        Current Financial Cost is calculated only from <b>current spend × financial rate equivalent to the current payment term</b>.
-        New Financial Cost is calculated from <b>allocated supplier proposal spend × financial rate equivalent to each supplier proposed payment term</b>.
-        Supplier payment terms never overwrite the current baseline.
+        Current Financial Cost is calculated only from <b>current spend × financial rate for the current/reference period</b>.
+        New Financial Cost is calculated supplier-by-supplier from <b>allocated proposal spend × equivalent financial rate for each proposed payment term</b>.
+        The audit's new payment days are <b>share-weighted</b>; supplier payment terms never overwrite the current baseline.
     </div>
     """,
     unsafe_allow_html=True,
