@@ -281,6 +281,36 @@ st.markdown(
         .section-title {font-size: 1.12rem; font-weight: 850; color: #bfdbfe; margin-bottom: 3px;}
         .section-subtitle {font-size: 0.90rem; color: #e2e8f0; margin-bottom: 0;}
         .plain-title {font-size: 1.05rem; font-weight: 850; color: #f8fafc; margin-top: 10px; margin-bottom: 9px;}
+        .visual-breaker {
+            display: flex; align-items: center; gap: 14px;
+            padding: 15px 18px; margin: 24px 0 14px 0;
+            border-radius: 18px; border: 1px solid rgba(148, 163, 184, .26);
+            box-shadow: 0 12px 26px rgba(2, 6, 23, .18);
+            background: linear-gradient(135deg, rgba(15,23,42,.98) 0%, rgba(30,41,59,.96) 100%);
+            position: relative; overflow: hidden;
+        }
+        .visual-breaker::before {
+            content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 7px;
+            background: var(--accent, #3b82f6);
+        }
+        .visual-breaker::after {
+            content: ""; position: absolute; right: -72px; top: -72px; width: 165px; height: 165px;
+            background: var(--accent-soft, rgba(59,130,246,.13)); border-radius: 999px;
+        }
+        .visual-icon {
+            width: 42px; height: 42px; min-width: 42px; border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.25rem; background: var(--accent-soft, rgba(59,130,246,.16));
+            border: 1px solid var(--accent-border, rgba(59,130,246,.28));
+        }
+        .visual-title {font-size: 1.08rem; font-weight: 900; color: #f8fafc; margin-bottom: 2px;}
+        .visual-subtitle {font-size: .86rem; color: #cbd5e1; line-height: 1.32;}
+        .visual-tag {
+            margin-left: auto; padding: 6px 10px; border-radius: 999px;
+            font-size: .72rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase;
+            color: #e2e8f0; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+            white-space: nowrap; position: relative; z-index: 2;
+        }
         .kpi-card {
             background: #ffffff; border: 1px solid rgba(148, 163, 184, 0.26); border-radius: 22px;
             padding: 20px 22px; min-height: 165px; height: 165px; box-sizing: border-box;
@@ -374,6 +404,23 @@ def render_section(title: str, subtitle: str) -> None:
         <div class="section-header">
             <div class="section-title">{title}</div>
             <div class="section-subtitle">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_visual_breaker(title: str, subtitle: str, icon: str, accent: str, tag: str) -> None:
+    """Render a visual separator/header for executive dashboard sections."""
+    st.markdown(
+        f"""
+        <div class="visual-breaker" style="--accent:{accent}; --accent-soft:{accent}22; --accent-border:{accent}55;">
+            <div class="visual-icon">{icon}</div>
+            <div>
+                <div class="visual-title">{title}</div>
+                <div class="visual-subtitle">{subtitle}</div>
+            </div>
+            <div class="visual-tag">{tag}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1635,7 +1682,7 @@ with st.expander("Show gross financial cost and treasury return audit by country
 
 render_section("Executive Result", "Decision-ready view separating gross payment-term financial cost from treasury return offset. Net financial saving/impact is used for the finance decision view.")
 
-st.markdown('<div class="plain-title">Total cost stack</div>', unsafe_allow_html=True)
+render_visual_breaker('Total cost stack', 'Commercial spend and gross payment-term cost comparison.', '🧾', '#3b82f6', 'Cost baseline')
 row1 = st.columns(6)
 with row1[0]:
     render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
@@ -1658,7 +1705,7 @@ chemprime_reference = calc_full_supplier_reference_stack(
     payment_day_overrides={"Brazil": 90, "Mexico": 60, "Argentina": 60, "Colombia": 60},
 )
 
-st.markdown('<div class="plain-title">New ChemPrime condition stack</div>', unsafe_allow_html=True)
+render_visual_breaker('New ChemPrime condition stack', 'Benchmark scenario assuming 100% volume under revised ChemPrime conditions.', '🏭', '#f59e0b', 'Reference case')
 row1b = st.columns(6)
 with row1b[0]:
     render_kpi(
@@ -1703,7 +1750,7 @@ with row1b[5]:
         "neutral",
     )
 
-st.markdown('<div class="plain-title">Working capital carry view</div>', unsafe_allow_html=True)
+render_visual_breaker('Working capital carry view', 'Treasury return and net financial effect from payment-term differences.', '🏦', '#10b981', 'Cash timing')
 wc_row = st.columns(5)
 with wc_row[0]:
     render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
@@ -1716,7 +1763,7 @@ with wc_row[3]:
 with wc_row[4]:
     render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
 
-st.markdown('<div class="plain-title">Total decomposition</div>', unsafe_allow_html=True)
+render_visual_breaker('Total decomposition', 'Decision-ready breakdown of spend, financial effect, inventory and risk.', '🧩', '#8b5cf6', 'Decision view')
 row2 = st.columns(6)
 with row2[0]:
     render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
@@ -1734,7 +1781,7 @@ with row2[5]:
 brazil_row = group_df[group_df["Group"] == "Brazil"].iloc[0]
 latam_row = group_df[group_df["Group"] == "LATAM"].iloc[0]
 
-st.markdown('<div class="plain-title">Brazil result</div>', unsafe_allow_html=True)
+render_visual_breaker('Brazil result', 'Country-level result and impact drivers for Brazil.', '🇧🇷', '#06b6d4', 'Country view')
 row3 = st.columns(5)
 with row3[0]:
     render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
@@ -1747,7 +1794,7 @@ with row3[3]:
 with row3[4]:
     render_kpi("Economic All-In Saving / Impact", format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil spend + net financial effect + inventory", delta_tone(brazil_row["Economic All-In Delta"]), short=True)
 
-st.markdown('<div class="plain-title">LATAM result</div>', unsafe_allow_html=True)
+render_visual_breaker('LATAM result', 'Consolidated Mexico, Argentina and Colombia impact view.', '🌎', '#ec4899', 'Regional view')
 row4 = st.columns(5)
 with row4[0]:
     render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
