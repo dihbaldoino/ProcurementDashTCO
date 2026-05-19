@@ -1685,23 +1685,54 @@ with st.expander("Show gross financial cost and treasury return audit by country
 
 render_section("Executive Result", "Decision-ready view separating gross payment-term financial cost from treasury return offset. Net financial saving/impact is used for the finance decision view.")
 
-project_result_color = GREEN if total["Economic All-In Delta"] <= 0 else RED
+gross_total_saving_impact = total["Gross All-In Delta"]
+working_capital_gain_offset = total["Treasury Return Offset Delta"]
+total_saving_plus_working_capital = gross_total_saving_impact + working_capital_gain_offset
+final_economic_all_in = total["Economic All-In Delta"]
+
+project_result_color = GREEN if final_economic_all_in <= 0 else RED
 render_visual_breaker(
     'Total project saving',
-    'Final Brazil + LATAM all-in result including commercial spend, financial cost, treasury return and inventory carrying cost.',
+    'Final Brazil + LATAM result, explicitly separating gross total saving, working-capital gain and inventory-adjusted economic all-in.',
     '🏁',
     project_result_color,
     'Final project result'
 )
-project_cols = st.columns([2.0, 1.0, 1.0])
+project_cols = st.columns([1.2, 1.2, 1.55, 1.35])
 with project_cols[0]:
     render_kpi(
-        "Total Saving / Impact",
-        format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
-        "Brazil + LATAM | spend + net financial effect + inventory carrying",
-        delta_tone(total["Economic All-In Delta"]),
+        "Gross Total Saving / Impact",
+        format_money(gross_total_saving_impact, currency_symbol, compact=True, signed=True),
+        "New total spend - current total spend | before treasury return",
+        delta_tone(gross_total_saving_impact),
+        short=True,
     )
 with project_cols[1]:
+    render_kpi(
+        "Working Capital Gain",
+        format_money(working_capital_gain_offset, currency_symbol, compact=True, signed=True),
+        "Current treasury return - new treasury return | favorable when negative",
+        delta_tone(working_capital_gain_offset),
+        short=True,
+    )
+with project_cols[2]:
+    render_kpi(
+        "Total Saving + Working Capital",
+        format_money(total_saving_plus_working_capital, currency_symbol, compact=True, signed=True),
+        "Gross total saving/impact + incremental treasury return offset",
+        delta_tone(total_saving_plus_working_capital),
+    )
+with project_cols[3]:
+    render_kpi(
+        "Final Economic All-In",
+        format_money(final_economic_all_in, currency_symbol, compact=True, signed=True),
+        "Total saving + working capital + inventory carrying delta",
+        delta_tone(final_economic_all_in),
+        short=True,
+    )
+
+contribution_cols = st.columns(2)
+with contribution_cols[0]:
     render_kpi(
         "Brazil Contribution",
         format_money(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
@@ -1709,7 +1740,7 @@ with project_cols[1]:
         delta_tone(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"]),
         short=True,
     )
-with project_cols[2]:
+with contribution_cols[1]:
     render_kpi(
         "LATAM Contribution",
         format_money(group_df[group_df["Group"] == "LATAM"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
