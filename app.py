@@ -900,9 +900,11 @@ def calc_scenario(
     for group in ["Brazil", "LATAM"]:
         subset = country_df[country_df["Group"] == group]
         total_new_spend = subset["New Spend"].sum()
+        total_current_spend = subset["Current Spend"].sum()
         weighted_rows.append({
             "Group": group,
             "Weighted Risk": safe_divide((subset["Weighted Risk"] * subset["New Spend"]).sum(), total_new_spend),
+            "Current Avg Payment Days": safe_divide((subset["Current Payment Days"] * subset["Current Spend"]).sum(), total_current_spend),
             "New Avg Payment Days": safe_divide((subset["New Avg Payment Days"] * subset["New Spend"]).sum(), total_new_spend),
             "New Avg Return Days": safe_divide((subset["New Avg Return Days"] * subset["New Spend"]).sum(), total_new_spend),
             "New Avg Financial Rate": safe_divide((subset["New Avg Financial Rate"] * subset["New Spend"]).sum(), total_new_spend),
@@ -920,6 +922,7 @@ def calc_scenario(
     ]:
         total[col] = country_df[col].sum()
     total["Weighted Risk"] = safe_divide((country_df["Weighted Risk"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
+    total["Current Avg Payment Days"] = safe_divide((country_df["Current Payment Days"] * country_df["Current Spend"]).sum(), country_df["Current Spend"].sum())
     total["New Avg Payment Days"] = safe_divide((country_df["New Avg Payment Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     total["New Avg Return Days"] = safe_divide((country_df["New Avg Return Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
     total["New Avg Financial Rate"] = safe_divide((country_df["New Avg Financial Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
@@ -1682,6 +1685,39 @@ with st.expander("Show gross financial cost and treasury return audit by country
 
 render_section("Executive Result", "Decision-ready view separating gross payment-term financial cost from treasury return offset. Net financial saving/impact is used for the finance decision view.")
 
+project_result_color = GREEN if total["Economic All-In Delta"] <= 0 else RED
+render_visual_breaker(
+    'Total project saving',
+    'Final Brazil + LATAM all-in result including commercial spend, financial cost, treasury return and inventory carrying cost.',
+    '🏁',
+    project_result_color,
+    'Final project result'
+)
+project_cols = st.columns([2.0, 1.0, 1.0])
+with project_cols[0]:
+    render_kpi(
+        "Total Saving / Impact",
+        format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
+        "Brazil + LATAM | spend + net financial effect + inventory carrying",
+        delta_tone(total["Economic All-In Delta"]),
+    )
+with project_cols[1]:
+    render_kpi(
+        "Brazil Contribution",
+        format_money(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
+        "Brazil economic all-in delta",
+        delta_tone(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"]),
+        short=True,
+    )
+with project_cols[2]:
+    render_kpi(
+        "LATAM Contribution",
+        format_money(group_df[group_df["Group"] == "LATAM"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
+        "Mexico + Argentina + Colombia economic all-in delta",
+        delta_tone(group_df[group_df["Group"] == "LATAM"].iloc[0]["Economic All-In Delta"]),
+        short=True,
+    )
+
 render_visual_breaker('Total cost stack', 'Commercial spend and gross payment-term cost comparison.', '🧾', '#3b82f6', 'Cost baseline')
 row1 = st.columns(6)
 with row1[0]:
@@ -1781,30 +1817,38 @@ with row2[5]:
 brazil_row = group_df[group_df["Group"] == "Brazil"].iloc[0]
 latam_row = group_df[group_df["Group"] == "LATAM"].iloc[0]
 
-render_visual_breaker('Brazil result', 'Country-level result and impact drivers for Brazil.', '🇧🇷', '#06b6d4', 'Country view')
-row3 = st.columns(5)
+render_visual_breaker('Brazil result', 'Country-level result and impact drivers for Brazil, including payment-term movement.', '🇧🇷', '#06b6d4', 'Country view')
+row3 = st.columns(7)
 with row3[0]:
-    render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
+    render_kpi("Current Avg Payment Term", f"{brazil_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
 with row3[1]:
-    render_kpi("Gross Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil gross financial cost delta", delta_tone(brazil_row["Financial Delta"]), short=True)
+    render_kpi("New Proposal Avg Payment Term", f"{brazil_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
 with row3[2]:
-    render_kpi("Treasury Return Offset", format_money(brazil_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Brazil current return - new return", delta_tone(brazil_row["Treasury Return Offset Delta"]), short=True)
+    render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
 with row3[3]:
-    render_kpi("Net Financial Saving / Impact", format_money(brazil_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil net financial effect after treasury return", delta_tone(brazil_row["Net Financial Delta"]), short=True)
+    render_kpi("Gross Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil gross financial cost delta", delta_tone(brazil_row["Financial Delta"]), short=True)
 with row3[4]:
+    render_kpi("Treasury Return Offset", format_money(brazil_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Brazil current return - new return", delta_tone(brazil_row["Treasury Return Offset Delta"]), short=True)
+with row3[5]:
+    render_kpi("Net Financial Saving / Impact", format_money(brazil_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil net financial effect after treasury return", delta_tone(brazil_row["Net Financial Delta"]), short=True)
+with row3[6]:
     render_kpi("Economic All-In Saving / Impact", format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil spend + net financial effect + inventory", delta_tone(brazil_row["Economic All-In Delta"]), short=True)
 
-render_visual_breaker('LATAM result', 'Consolidated Mexico, Argentina and Colombia impact view.', '🌎', '#ec4899', 'Regional view')
-row4 = st.columns(5)
+render_visual_breaker('LATAM result', 'Consolidated Mexico, Argentina and Colombia impact view, including payment-term movement.', '🌎', '#ec4899', 'Regional view')
+row4 = st.columns(7)
 with row4[0]:
-    render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
+    render_kpi("Current Avg Payment Term", f"{latam_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
 with row4[1]:
-    render_kpi("Gross Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM gross financial cost delta", delta_tone(latam_row["Financial Delta"]), short=True)
+    render_kpi("New Proposal Avg Payment Term", f"{latam_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
 with row4[2]:
-    render_kpi("Treasury Return Offset", format_money(latam_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "LATAM current return - new return", delta_tone(latam_row["Treasury Return Offset Delta"]), short=True)
+    render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
 with row4[3]:
-    render_kpi("Net Financial Saving / Impact", format_money(latam_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM net financial effect after treasury return", delta_tone(latam_row["Net Financial Delta"]), short=True)
+    render_kpi("Gross Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM gross financial cost delta", delta_tone(latam_row["Financial Delta"]), short=True)
 with row4[4]:
+    render_kpi("Treasury Return Offset", format_money(latam_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "LATAM current return - new return", delta_tone(latam_row["Treasury Return Offset Delta"]), short=True)
+with row4[5]:
+    render_kpi("Net Financial Saving / Impact", format_money(latam_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM net financial effect after treasury return", delta_tone(latam_row["Net Financial Delta"]), short=True)
+with row4[6]:
     render_kpi("Economic All-In Saving / Impact", format_money(latam_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "LATAM spend + net financial effect + inventory", delta_tone(latam_row["Economic All-In Delta"]), short=True)
 
 if total["Economic All-In Delta"] <= 0:
