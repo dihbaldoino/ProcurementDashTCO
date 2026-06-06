@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v39 - Dynamic Country Scope + Visual Market Selector
+Version v41 - Local/Global View + Executive Dash View
 
 Run:
     pip install -r requirements.txt
@@ -63,7 +63,82 @@ COUNTRY_OPTIONS = [
     "United States", "Canada", "China", "India", "Germany", "France", "Spain", "Italy",
     "Netherlands", "United Kingdom", "Japan", "South Korea", "Thailand", "Indonesia", "Malaysia",
 ]
+COUNTRY_GEO_POINTS = {
+    "Brazil": {"lat": -14.2350, "lon": -51.9253},
+    "Mexico": {"lat": 23.6345, "lon": -102.5528},
+    "Argentina": {"lat": -38.4161, "lon": -63.6167},
+    "Colombia": {"lat": 4.5709, "lon": -74.2973},
+    "Chile": {"lat": -35.6751, "lon": -71.5430},
+    "Peru": {"lat": -9.1900, "lon": -75.0152},
+    "Uruguay": {"lat": -32.5228, "lon": -55.7658},
+    "Paraguay": {"lat": -23.4425, "lon": -58.4438},
+    "Ecuador": {"lat": -1.8312, "lon": -78.1834},
+    "Bolivia": {"lat": -16.2902, "lon": -63.5887},
+    "Costa Rica": {"lat": 9.7489, "lon": -83.7534},
+    "Guatemala": {"lat": 15.7835, "lon": -90.2308},
+    "Panama": {"lat": 8.5380, "lon": -80.7821},
+    "Dominican Republic": {"lat": 18.7357, "lon": -70.1627},
+    "United States": {"lat": 39.8283, "lon": -98.5795},
+    "Canada": {"lat": 56.1304, "lon": -106.3468},
+    "China": {"lat": 35.8617, "lon": 104.1954},
+    "India": {"lat": 20.5937, "lon": 78.9629},
+    "Germany": {"lat": 51.1657, "lon": 10.4515},
+    "France": {"lat": 46.2276, "lon": 2.2137},
+    "Spain": {"lat": 40.4637, "lon": -3.7492},
+    "Italy": {"lat": 41.8719, "lon": 12.5674},
+    "Netherlands": {"lat": 52.1326, "lon": 5.2913},
+    "United Kingdom": {"lat": 55.3781, "lon": -3.4360},
+    "Japan": {"lat": 36.2048, "lon": 138.2529},
+    "South Korea": {"lat": 35.9078, "lon": 127.7669},
+    "Thailand": {"lat": 15.8700, "lon": 100.9925},
+    "Indonesia": {"lat": -0.7893, "lon": 113.9213},
+    "Malaysia": {"lat": 4.2105, "lon": 101.9758},
+}
+
+LOCALITY_PRESETS = {
+    "Brazil": [
+        {"name": "São Paulo", "lat": -23.5505, "lon": -46.6333},
+        {"name": "Rio de Janeiro", "lat": -22.9068, "lon": -43.1729},
+        {"name": "Minas Gerais", "lat": -19.9167, "lon": -43.9345},
+        {"name": "Paraná", "lat": -25.4284, "lon": -49.2733},
+        {"name": "Bahia", "lat": -12.9777, "lon": -38.5016},
+        {"name": "Pernambuco", "lat": -8.0476, "lon": -34.8770},
+        {"name": "Rio Grande do Sul", "lat": -30.0346, "lon": -51.2177},
+        {"name": "Goiás", "lat": -16.6869, "lon": -49.2648},
+    ],
+    "Mexico": [
+        {"name": "Mexico City", "lat": 19.4326, "lon": -99.1332},
+        {"name": "Monterrey", "lat": 25.6866, "lon": -100.3161},
+        {"name": "Guadalajara", "lat": 20.6597, "lon": -103.3496},
+        {"name": "Querétaro", "lat": 20.5888, "lon": -100.3899},
+        {"name": "Puebla", "lat": 19.0414, "lon": -98.2063},
+    ],
+    "Argentina": [
+        {"name": "Buenos Aires", "lat": -34.6037, "lon": -58.3816},
+        {"name": "Córdoba", "lat": -31.4201, "lon": -64.1888},
+        {"name": "Rosario", "lat": -32.9442, "lon": -60.6505},
+        {"name": "Mendoza", "lat": -32.8895, "lon": -68.8458},
+    ],
+    "Colombia": [
+        {"name": "Bogotá", "lat": 4.7110, "lon": -74.0721},
+        {"name": "Medellín", "lat": 6.2442, "lon": -75.5812},
+        {"name": "Cali", "lat": 3.4516, "lon": -76.5320},
+        {"name": "Barranquilla", "lat": 10.9685, "lon": -74.7813},
+    ],
+}
+
+LOCALITY_FALLBACKS = [
+    {"name": "North region", "lat_offset": 4.0, "lon_offset": 0.0},
+    {"name": "Central region", "lat_offset": 0.0, "lon_offset": 0.0},
+    {"name": "South region", "lat_offset": -4.0, "lon_offset": 0.0},
+    {"name": "East region", "lat_offset": 0.0, "lon_offset": 4.0},
+    {"name": "West region", "lat_offset": 0.0, "lon_offset": -4.0},
+]
+
 COUNTRIES = DEFAULT_ACTIVE_COUNTRIES.copy()
+VIEW_SCOPE = "Global View"
+ANCHOR_COUNTRY = "Brazil"
+LOCALITY_COORDS = {}
 PRIMARY_COUNTRY = "Brazil"
 SECONDARY_GROUP = "LATAM"
 LATAM_COUNTRIES = ["Mexico", "Argentina", "Colombia"]
@@ -355,6 +430,77 @@ def seed_country_defaults(country: str) -> None:
 
 for _country_option in COUNTRY_OPTIONS:
     seed_country_defaults(_country_option)
+
+
+def _stable_offset(text: str, scale: float = 1.6) -> tuple[float, float]:
+    seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(text))
+    lat_offset = ((seed % 17) - 8) / 8 * scale
+    lon_offset = (((seed // 17) % 17) - 8) / 8 * scale
+    return lat_offset, lon_offset
+
+
+def get_country_geo(country: str) -> dict:
+    return COUNTRY_GEO_POINTS.get(country, {"lat": 0.0, "lon": 0.0})
+
+
+def build_locality_options(anchor_country: str) -> list[dict]:
+    presets = LOCALITY_PRESETS.get(anchor_country)
+    if presets:
+        return presets
+    base = get_country_geo(anchor_country)
+    return [
+        {"name": f"{anchor_country} - {item['name']}", "lat": base["lat"] + item["lat_offset"], "lon": base["lon"] + item["lon_offset"]}
+        for item in LOCALITY_FALLBACKS
+    ]
+
+
+def coord_for_analysis_unit(unit: str, anchor_country: str | None = None) -> dict:
+    if unit in LOCALITY_COORDS:
+        return LOCALITY_COORDS[unit]
+    if unit in COUNTRY_GEO_POINTS:
+        return COUNTRY_GEO_POINTS[unit]
+    base = get_country_geo(anchor_country or ANCHOR_COUNTRY)
+    dlat, dlon = _stable_offset(unit)
+    return {"lat": base["lat"] + dlat, "lon": base["lon"] + dlon}
+
+
+def ensure_analysis_unit_defaults(unit: str, template_country: str | None = None) -> None:
+    """Ensure all runtime dictionaries have sane defaults for either a country or a locality.
+
+    Local View reuses the same economic engine, so each locality is treated as an
+    analysis unit with country-like assumptions inherited from the anchor country.
+    """
+    template_country = template_country or unit
+    if unit not in DEFAULT_CURRENT_SPEND:
+        seed_country_defaults(unit)
+        if template_country in DEFAULT_CURRENT_SPEND:
+            DEFAULT_CURRENT_SPEND[unit] = float(DEFAULT_CURRENT_SPEND.get(template_country, DEFAULT_CURRENT_SPEND[unit]))
+            DEFAULT_FINANCIAL_RATE[unit] = float(DEFAULT_FINANCIAL_RATE.get(template_country, DEFAULT_FINANCIAL_RATE[unit]))
+            DEFAULT_REFERENCE_DAYS[unit] = int(DEFAULT_REFERENCE_DAYS.get(template_country, DEFAULT_REFERENCE_DAYS[unit]))
+            DEFAULT_CURRENT_TERM[unit] = int(DEFAULT_CURRENT_TERM.get(template_country, DEFAULT_CURRENT_TERM[unit]))
+            DEFAULT_TREASURY_RETURN[unit] = float(DEFAULT_TREASURY_RETURN.get(template_country, DEFAULT_TREASURY_RETURN[unit]))
+            DEFAULT_TREASURY_REF_DAYS[unit] = int(DEFAULT_TREASURY_REF_DAYS.get(template_country, DEFAULT_TREASURY_REF_DAYS[unit]))
+            DEFAULT_INVENTORY_CARRY_RATE[unit] = float(DEFAULT_INVENTORY_CARRY_RATE.get(template_country, DEFAULT_INVENTORY_CARRY_RATE[unit]))
+            DEFAULT_CURRENT_INVENTORY_DAYS[unit] = int(DEFAULT_CURRENT_INVENTORY_DAYS.get(template_country, DEFAULT_CURRENT_INVENTORY_DAYS[unit]))
+            # Split large-country defaults into a practical location-sized starting point.
+            DEFAULT_CURRENT_SPEND[unit] = max(DEFAULT_CURRENT_SPEND[unit] / 4.0, 100_000.0)
+            DEFAULT_DIRECT_VOLUME[unit] = max(float(DEFAULT_DIRECT_VOLUME.get(template_country, 100_000.0)) / 4.0, 10_000.0)
+            DEFAULT_DIRECT_CURRENCY[unit] = str(DEFAULT_DIRECT_CURRENCY.get(template_country, "USD"))
+            DEFAULT_SERVICE_CONTRACT_VALUE[unit] = max(float(DEFAULT_SERVICE_CONTRACT_VALUE.get(template_country, 1_000_000.0)) / 4.0, 100_000.0)
+    DEFAULT_PROPOSAL_SPEND.setdefault(unit, {})
+    DEFAULT_PAYMENT_TERM.setdefault(unit, {})
+    DEFAULT_LEAD_TIME_DAYS.setdefault(unit, {})
+    DEFAULT_SAFETY_STOCK_DAYS.setdefault(unit, {})
+    DEFAULT_INVENTORY_OWNERSHIP.setdefault(unit, {})
+    DEFAULT_SHARES.setdefault(unit, {})
+    base_spend = float(DEFAULT_CURRENT_SPEND.get(unit, COUNTRY_DEFAULT_TEMPLATE["current_spend"]))
+    for idx, supplier in enumerate(SUPPLIER_POOL, start=1):
+        DEFAULT_PROPOSAL_SPEND[unit].setdefault(supplier, base_spend)
+        DEFAULT_PAYMENT_TERM[unit].setdefault(supplier, int(DEFAULT_CURRENT_TERM.get(unit, COUNTRY_DEFAULT_TEMPLATE["current_term"])))
+        DEFAULT_LEAD_TIME_DAYS[unit].setdefault(supplier, 30)
+        DEFAULT_SAFETY_STOCK_DAYS[unit].setdefault(supplier, 0)
+        DEFAULT_INVENTORY_OWNERSHIP[unit].setdefault(supplier, "Supplier/trader owns until delivery")
+        DEFAULT_SHARES[unit].setdefault(supplier, 0.0)
 
 # Validation example shared by the user.
 DEFAULT_PROPOSAL_SPEND = {
@@ -732,6 +878,93 @@ st.markdown(
         }
         .matrix-header {font-size:.88rem; color:#cbd5e1; font-weight:850; margin: 10px 0 6px 0;}
         .supplier-expander-note {font-size:.78rem; color:#94a3b8; margin-top:-5px; margin-bottom:8px;}
+
+        /* v40: stronger alignment lock, spacing discipline and clickable decision-stack headers */
+        .major-section-spacer {height: 34px;}
+        .optimization-panel-spacer {height: 18px;}
+        .insight-box {margin-bottom: 18px !important;}
+        div[data-testid="stExpander"] {margin: 24px 0 30px 0 !important;}
+        div[data-testid="stExpander"] details summary {
+            min-height: 82px !important;
+            padding: 18px 22px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            border-radius: 22px !important;
+            background:
+                radial-gradient(circle at top right, rgba(96,165,250,.18), transparent 26%),
+                linear-gradient(135deg, rgba(15,23,42,.99) 0%, rgba(30,41,59,.97) 72%, rgba(49,46,129,.82) 100%) !important;
+            border-left: 8px solid #3b82f6 !important;
+            cursor: pointer !important;
+            transition: transform .16s ease, box-shadow .16s ease, filter .16s ease !important;
+            box-shadow: 0 12px 28px rgba(2,6,23,.20) !important;
+            white-space: normal !important;
+        }
+        div[data-testid="stExpander"] details summary:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.08);
+            box-shadow: 0 18px 38px rgba(2,6,23,.28) !important;
+        }
+        div[data-testid="stExpander"] details[open] summary {
+            border-bottom-left-radius: 0 !important;
+            border-bottom-right-radius: 0 !important;
+            margin-bottom: 18px !important;
+        }
+        div[data-testid="stExpander"] details summary p {
+            font-size: 0.98rem !important;
+            font-weight: 900 !important;
+            line-height: 1.28 !important;
+            color: #f8fafc !important;
+            margin: 0 !important;
+        }
+        div[data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {
+            padding: 4px 18px 18px 18px !important;
+        }
+        .stack-caption {display: none !important;}
+        .visual-breaker {margin-top: 4px !important; margin-bottom: 18px !important;}
+        .kpi-card {height: 156px !important; min-height: 156px !important; display:flex !important; justify-content:flex-start !important;}
+        .kpi-card.short {height: 138px !important; min-height: 138px !important;}
+        .kpi-label {min-height: 34px !important; display:flex; align-items:flex-start;}
+        .kpi-value {min-height: 35px !important; display:flex; align-items:center;}
+        .kpi-helper {min-height: 38px !important; display:block; overflow:hidden;}
+        .stNumberInput label, .stTextInput label, .stSelectbox label, .stSlider label, .stTextArea label, .stCheckbox label {
+            min-height: 58px !important;
+            max-height: 58px !important;
+            display: flex !important;
+            align-items: flex-end !important;
+            overflow: hidden !important;
+            line-height: 1.16 !important;
+        }
+        div[data-testid="stNumberInput"], div[data-testid="stTextInput"], div[data-testid="stSelectbox"] {
+            min-height: 104px !important;
+        }
+        div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input {
+            height: 42px !important;
+        }
+        div[data-testid="stHorizontalBlock"] {gap: 1.18rem !important; margin-bottom: 1.05rem !important;}
+        .supplier-box {min-height: 0 !important;}
+        .supplier-expander-note {margin: 0 0 18px 0 !important; padding: 10px 13px; border-radius: 14px; background: rgba(15,23,42,.45); border: 1px solid rgba(148,163,184,.18); color:#cbd5e1 !important;}
+        .chart-shell {animation: chartExpandReveal .82s cubic-bezier(.22,.90,.24,1) both !important;}
+        @keyframes chartExpandReveal {
+            from {opacity:0; transform: translateY(28px) scaleY(.92); transform-origin: bottom center;}
+            to {opacity:1; transform: translateY(0) scaleY(1); transform-origin: bottom center;}
+        }
+
+
+        .exec-dash-grid {display:grid; grid-template-columns: 1.1fr .9fr; gap:18px; margin:14px 0 22px 0; align-items:stretch;}
+        .exec-dash-panel {background:linear-gradient(135deg, #0f172a 0%, #111827 100%); border:1px solid rgba(148,163,184,.28); border-radius:24px; padding:20px 22px; box-shadow:0 14px 34px rgba(2,6,23,.22); min-height:170px; position:relative; overflow:hidden;}
+        .exec-dash-panel::after {content:""; position:absolute; right:-62px; top:-80px; width:190px; height:190px; border-radius:999px; background:rgba(37,99,235,.12);}
+        .exec-dash-title {font-weight:900; color:#f8fafc; font-size:1.08rem; margin-bottom:6px;}
+        .exec-dash-subtitle {color:#cbd5e1; font-size:.86rem; margin-bottom:16px;}
+        .exec-mini-grid {display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px;}
+        .exec-mini-card {background:rgba(255,255,255,.96); border:1px solid rgba(226,232,240,.95); border-radius:18px; padding:15px 16px; min-height:116px; box-shadow:0 10px 24px rgba(15,23,42,.10); display:flex; flex-direction:column; justify-content:space-between;}
+        .exec-mini-label {font-size:.68rem; font-weight:950; color:#64748b; text-transform:uppercase; letter-spacing:.10em; min-height:28px;}
+        .exec-mini-value {font-size:1.42rem; font-weight:950; color:#1d4ed8; line-height:1.1;}
+        .exec-mini-helper {font-size:.78rem; color:#64748b; line-height:1.25; min-height:31px;}
+        .exec-heat-toolbar {background:rgba(15,23,42,.06); border-radius:18px; border:1px solid rgba(148,163,184,.20); padding:12px 14px; margin-bottom:12px;}
+        .dash-pill-row {display:flex; gap:9px; flex-wrap:wrap; margin-top:8px;}
+        .dash-pill {border:1px solid rgba(148,163,184,.35); background:rgba(255,255,255,.08); color:#e5e7eb; padding:5px 10px; border-radius:999px; font-size:.73rem; font-weight:800;}
+        @media (max-width: 1100px) {.exec-dash-grid{grid-template-columns:1fr}.exec-mini-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -2462,42 +2695,106 @@ with st.sidebar:
         negotiated_unit = st.text_input("Main service unit / demand driver", value=str(cfg.get("driver_label", "service unit")), key="service_negotiated_unit")
         st.caption(f"Suggested productivity lens: {cfg.get('productivity_label', 'supplier-led productivity')}.")
 
-    st.markdown("### Market scope")
-    default_country_selection = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
-    default_country_selection = [c for c in default_country_selection if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
-    selected_countries = st.multiselect(
-        "Countries included in this analysis",
-        options=COUNTRY_OPTIONS,
-        default=default_country_selection,
-        key="selected_country_scope",
-        help="Select only the countries that matter for the sourcing case. The app automatically creates the country cards, proposal inputs, risk tables, share sliders and executive views.",
+    st.markdown("### View scope")
+    view_scope = st.radio(
+        "Analysis geography",
+        options=["Global View", "Local View"],
+        index=0,
+        horizontal=True,
+        key="market_view_scope",
+        help="Global View compares countries. Local View compares sites, plants, regions or business units inside the anchor country.",
     )
-    if not selected_countries:
-        selected_countries = ["Brazil"]
-        st.warning("At least one country is required. Brazil was temporarily selected as the anchor market.")
+    VIEW_SCOPE = view_scope
 
-    primary_default = st.session_state.get("primary_country_scope", selected_countries[0])
-    primary_index = selected_countries.index(primary_default) if primary_default in selected_countries else 0
-    primary_country_choice = st.selectbox(
-        "Primary / anchor country",
-        options=selected_countries,
-        index=primary_index,
-        key="primary_country_scope",
-        help="This country receives its own executive result stack. The remaining selected countries are consolidated as Other selected markets.",
-    )
-    COUNTRIES = list(selected_countries)
-    PRIMARY_COUNTRY = primary_country_choice
-    SECONDARY_GROUP = "Other selected markets"
+    if view_scope == "Global View":
+        st.markdown("### Market scope")
+        default_country_selection = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
+        default_country_selection = [c for c in default_country_selection if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
+        selected_countries = st.multiselect(
+            "Countries included in this analysis",
+            options=COUNTRY_OPTIONS,
+            default=default_country_selection,
+            key="selected_country_scope",
+            help="Select only the countries that matter for the sourcing case. The app automatically creates the country cards, proposal inputs, risk tables, share sliders and executive views.",
+        )
+        if not selected_countries:
+            selected_countries = ["Brazil"]
+            st.warning("At least one country is required. Brazil was temporarily selected as the anchor market.")
+
+        primary_default = st.session_state.get("primary_country_scope", selected_countries[0])
+        primary_index = selected_countries.index(primary_default) if primary_default in selected_countries else 0
+        primary_country_choice = st.selectbox(
+            "Primary / anchor country",
+            options=selected_countries,
+            index=primary_index,
+            key="primary_country_scope",
+            help="This country receives its own executive result stack. The remaining selected countries are consolidated as Other selected markets.",
+        )
+        COUNTRIES = list(selected_countries)
+        PRIMARY_COUNTRY = primary_country_choice
+        ANCHOR_COUNTRY = primary_country_choice
+        SECONDARY_GROUP = "Other selected markets"
+        scope_label = "country/countries"
+    else:
+        st.markdown("### Local scope")
+        anchor_country_choice = st.selectbox(
+            "Anchor country",
+            options=COUNTRY_OPTIONS,
+            index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country", "Brazil")) if st.session_state.get("local_anchor_country", "Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"),
+            key="local_anchor_country",
+            help="Local View analyses localities inside this country. Financial defaults are inherited from this anchor country and can be edited in the baseline tab.",
+        )
+        ANCHOR_COUNTRY = anchor_country_choice
+        locality_options_data = build_locality_options(anchor_country_choice)
+        locality_options = [item["name"] for item in locality_options_data]
+        for item in locality_options_data:
+            LOCALITY_COORDS[item["name"]] = {"lat": float(item["lat"]), "lon": float(item["lon"])}
+        default_locality_selection = st.session_state.get("selected_locality_scope", locality_options[: min(4, len(locality_options))])
+        default_locality_selection = [loc for loc in default_locality_selection if loc in locality_options] or locality_options[: min(3, len(locality_options))]
+        selected_localities = st.multiselect(
+            "Localities included in this analysis",
+            options=locality_options,
+            default=default_locality_selection,
+            key="selected_locality_scope",
+            help="Select sites, regions, cities, plants or business units inside the anchor country.",
+        )
+        custom_locality_text = st.text_area(
+            "Add custom localities / sites",
+            value=st.session_state.get("custom_locality_text", ""),
+            key="custom_locality_text",
+            placeholder="One per line, e.g. Plant 01\nDistribution Center North\nShared Services Hub",
+            height=86,
+            help="Custom locations inherit financial defaults from the anchor country. Map coordinates are estimated around the country center unless a preset exists.",
+        )
+        custom_localities = [line.strip() for line in custom_locality_text.splitlines() if line.strip()]
+        selected_countries = list(dict.fromkeys(selected_localities + custom_localities))
+        if not selected_countries:
+            selected_countries = [locality_options[0]]
+            st.warning("At least one locality is required. The first preset locality was selected temporarily.")
+        primary_default = st.session_state.get("primary_locality_scope", selected_countries[0])
+        primary_index = selected_countries.index(primary_default) if primary_default in selected_countries else 0
+        primary_country_choice = st.selectbox(
+            "Primary / anchor locality",
+            options=selected_countries,
+            index=primary_index,
+            key="primary_locality_scope",
+            help="This locality receives its own executive result stack. The other selected localities are consolidated.",
+        )
+        COUNTRIES = list(selected_countries)
+        PRIMARY_COUNTRY = primary_country_choice
+        SECONDARY_GROUP = "Other selected localities"
+        scope_label = "locality/localities"
+
     LATAM_COUNTRIES = [c for c in COUNTRIES if c != PRIMARY_COUNTRY]
     CUSTOM_FACTOR_COUNTRIES = ["All countries"] + COUNTRIES
     for _selected_country in COUNTRIES:
-        seed_country_defaults(_selected_country)
+        ensure_analysis_unit_defaults(_selected_country, ANCHOR_COUNTRY)
     market_chips = "".join([f"<span class='market-chip'>{escape(c)}</span>" for c in COUNTRIES])
     st.markdown(
         f"""
         <div class="market-scope-card">
-            <div class="market-scope-title">🌎 Dynamic market scope</div>
-            <div class="market-scope-meta"><b>{len(COUNTRIES)}</b> country/countries selected · anchor: <b>{escape(PRIMARY_COUNTRY)}</b></div>
+            <div class="market-scope-title">{'🌎 Global market scope' if view_scope == 'Global View' else '📍 Local market scope'}</div>
+            <div class="market-scope-meta"><b>{len(COUNTRIES)}</b> {scope_label} selected · anchor country: <b>{escape(ANCHOR_COUNTRY)}</b> · focus: <b>{escape(PRIMARY_COUNTRY)}</b></div>
             <div>{market_chips}</div>
         </div>
         """,
@@ -2537,11 +2834,6 @@ with st.sidebar:
 
     show_advanced_economic = st.checkbox("Show working capital economic view", value=True)
 
-    st.markdown("### Executive result stacks")
-    st.markdown(
-        "<div class='stack-control-note'>Result stacks are now controlled directly on the Executive Result screen. Use each stack chevron to expand only the views needed for the meeting.</div>",
-        unsafe_allow_html=True,
-    )
 
     with st.expander("Supplier names", expanded=False):
         st.caption("Edit the supplier names once here. The labels are saved in the current app session and reflected across proposal inputs, risk, share sliders, charts and tables.")
@@ -2564,13 +2856,14 @@ def show_stack(stack_name: str) -> bool:
 
 @contextmanager
 def result_stack(title: str, subtitle: str, icon: str, accent: str, tag: str, expanded: bool = False):
-    """Native Streamlit expandable result stack with a compact executive label."""
-    label = f"{icon}  {title}  ·  {tag}"
+    """Native Streamlit expandable result stack.
+
+    The expander header itself is the visual decision-stack button. Keeping the
+    title/subtitle in the clickable header avoids duplicate non-clickable headers
+    inside the expanded content and gives users a clean one-click custom view.
+    """
+    label = f"{icon}  {title}  ·  {tag}  —  {subtitle}"
     with st.expander(label, expanded=expanded):
-        st.markdown(
-            f"<div class='stack-caption' style='--accent:{accent};'>Use the chevron to collapse or expand this decision stack. {escape(subtitle)}</div>",
-            unsafe_allow_html=True,
-        )
         yield
 
 
@@ -2778,7 +3071,7 @@ with input_tabs[1]:
                 display_supplier = supplier_display_name(supplier)
                 proposal_label = f"📦 {supplier_short_name(supplier)} — {display_supplier}" if analysis_mode == "Direct Materials" else f"🧾 {supplier_short_name(supplier)} — {display_supplier}"
                 with st.expander(proposal_label, expanded=(country == PRIMARY_COUNTRY and supplier == SUPPLIERS[0])):
-                    st.markdown("<div class='supplier-expander-note'>Expand only the supplier proposal needed for the current review. This keeps the proposal tab clean even with up to 15 suppliers.</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='supplier-expander-note'>Supplier proposal is collapsed by default. Open only the offers needed for the review.</div>", unsafe_allow_html=True)
                     st.markdown(f"<div class='supplier-box'><span class='pill'>{supplier_short_html(supplier)}</span>", unsafe_allow_html=True)
                     direct_supplier_profile: Dict[str, float | str] = {}
                     service_supplier_profile: Dict[str, float | str] = {}
@@ -3268,6 +3561,241 @@ supplier_focus_df = build_supplier_focus_df(supplier_df, analysis_mode)
 focused_supplier_count = int(st.session_state.get("focused_supplier_count", min(4, len(SUPPLIERS))))
 top_focus_supplier_ids = supplier_focus_df.head(focused_supplier_count)["Supplier ID"].tolist() if not supplier_focus_df.empty else SUPPLIERS[:focused_supplier_count]
 
+
+def build_heatmap_dataframe(metric: str) -> pd.DataFrame:
+    rows = []
+    for _, row in country_df.iterrows():
+        unit = str(row["Country"])
+        loc = coord_for_analysis_unit(unit, ANCHOR_COUNTRY)
+        if metric == "Spend":
+            value = float(row.get("New Spend", 0.0))
+        elif metric == "Saving":
+            value = max(-float(row.get("Economic All-In Delta", 0.0)), 0.0)
+        elif metric == "Suppliers":
+            subset = supplier_df[(supplier_df["Country"] == unit) & (supplier_df["Share %"] > 0)] if not supplier_df.empty else pd.DataFrame()
+            value = float(subset["Supplier ID"].nunique()) if not subset.empty else 0.0
+        elif metric == "SLA / Performance":
+            subset = supplier_df[supplier_df["Country"] == unit] if not supplier_df.empty else pd.DataFrame()
+            if "Performance Score" in subset.columns and subset["Performance Score"].notna().any():
+                value = float(subset["Performance Score"].fillna(0).mean())
+            else:
+                value = max(0.0, 100.0 - float(row.get("Weighted Risk", 0.0)) * 18.0)
+        elif metric == "Risk":
+            value = float(row.get("Weighted Risk", 0.0))
+        else:
+            value = float(row.get("New Spend", 0.0))
+        rows.append({"Location": unit, "lat": float(loc["lat"]), "lon": float(loc["lon"]), "Metric": metric, "Value": value, "Economic Delta": float(row.get("Economic All-In Delta", 0.0)), "Risk": float(row.get("Weighted Risk", 0.0))})
+    return pd.DataFrame(rows)
+
+
+def render_executive_view_summary() -> None:
+    st.markdown(
+        f"""
+        <div class="exec-dash-panel" style="margin-top:16px;">
+            <div class="exec-dash-title">{'🌎 Global Executive View' if VIEW_SCOPE == 'Global View' else '📍 Local Executive View'}</div>
+            <div class="exec-dash-subtitle">Scope: <b>{escape(VIEW_SCOPE)}</b> · Anchor country: <b>{escape(ANCHOR_COUNTRY)}</b> · Focus: <b>{escape(PRIMARY_COUNTRY)}</b> · {len(COUNTRIES)} analysis unit(s)</div>
+            <div class="dash-pill-row">
+                <span class="dash-pill">Mode: {escape(analysis_mode)}</span>
+                <span class="dash-pill">Top focus suppliers: {focused_supplier_count}</span>
+                <span class="dash-pill">Risk: {total.get('Weighted Risk', 0):.2f}/5</span>
+                <span class="dash-pill">New avg term: {total.get('New Avg Payment Days', 0):.0f}dd</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(5, gap="medium")
+    with cols[0]:
+        render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Baseline", "neutral", short=True)
+    with cols[1]:
+        render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Proposal mix", delta_tone(total["Spend Delta"]), short=True)
+    with cols[2]:
+        render_kpi("Economic All-In", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + finance + WC + inventory", delta_tone(total["Economic All-In Delta"]), short=True)
+    with cols[3]:
+        render_kpi("Working Capital", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new", delta_tone(total["Treasury Return Offset Delta"]), short=True)
+    with cols[4]:
+        render_kpi("Weighted Risk", f"{total.get('Weighted Risk', 0):.2f}/5", "Lower is better", risk_tone(total.get("Weighted Risk", 0)), short=True)
+
+
+def render_executive_dash_view() -> None:
+    st.markdown(
+        f"""
+        <div class="section-header" style="margin-top:18px;">
+            <div class="section-title">Executive Dash View</div>
+            <div class="section-subtitle">Visual executive cockpit inspired by BI dashboards, preserving the tool identity while switching between global country analysis and local site analysis.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    unit_label = "Country" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} location"
+    dash_supplier_df = supplier_df.copy() if not supplier_df.empty else pd.DataFrame(columns=["Country", "Supplier", "Allocated Spend"])
+    dash_country_df = country_df.copy() if not country_df.empty else pd.DataFrame(columns=["Country", "New Spend", "Weighted Risk", "Economic All-In Delta"])
+
+    if not dash_supplier_df.empty:
+        dash_supplier_df["Dashboard Category"] = dash_supplier_df.apply(
+            lambda r: (
+                r.get("Service Scope")
+                or r.get("Item / Scope")
+                or r.get("Pricing Model")
+                or r.get("Incoterm")
+                or "General"
+            ), axis=1
+        )
+        dash_supplier_df["Dashboard Status"] = dash_supplier_df.apply(
+            lambda r: (
+                "High risk" if float(r.get("Risk Score", 0) or 0) >= 3.5 else
+                (r.get("Performance Tier") or ("Approved" if float(r.get("Share %", 0) or 0) > 0 else "Modelled"))
+            ), axis=1
+        )
+    else:
+        dash_supplier_df["Dashboard Category"] = []
+        dash_supplier_df["Dashboard Status"] = []
+
+    filter_panel_cols = st.columns(5, gap="small")
+    supplier_options = ["All"] + sorted(dash_supplier_df["Supplier"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
+    location_options = ["All"] + COUNTRIES
+    category_options = ["All"] + sorted(dash_supplier_df["Dashboard Category"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
+    status_options = ["All"] + sorted(dash_supplier_df["Dashboard Status"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
+
+    with filter_panel_cols[0]:
+        supplier_filter = st.selectbox("Supplier Name", supplier_options, key="exec_dash_supplier_filter")
+    with filter_panel_cols[1]:
+        location_filter = st.selectbox(unit_label, location_options, key="exec_dash_location_filter")
+    with filter_panel_cols[2]:
+        category_filter = st.selectbox("Category", category_options, key="exec_dash_category_filter")
+    with filter_panel_cols[3]:
+        status_filter = st.selectbox("Status", status_options, key="exec_dash_status_filter")
+    with filter_panel_cols[4]:
+        metric = st.selectbox(
+            "Heat map metric",
+            options=["Spend", "Saving", "Suppliers", "SLA / Performance", "Risk"],
+            index=0,
+            key="exec_dash_heat_metric",
+            help="Global View shows the world map for selected countries. Local View zooms into the anchor country and plots the selected localities.",
+        )
+
+    filtered_supplier = dash_supplier_df.copy()
+    if not filtered_supplier.empty:
+        if supplier_filter != "All":
+            filtered_supplier = filtered_supplier[filtered_supplier["Supplier"] == supplier_filter]
+        if location_filter != "All":
+            filtered_supplier = filtered_supplier[filtered_supplier["Country"] == location_filter]
+        if category_filter != "All":
+            filtered_supplier = filtered_supplier[filtered_supplier["Dashboard Category"] == category_filter]
+        if status_filter != "All":
+            filtered_supplier = filtered_supplier[filtered_supplier["Dashboard Status"] == status_filter]
+
+    filtered_units = sorted(filtered_supplier["Country"].unique().tolist()) if not filtered_supplier.empty else ([] if location_filter == "All" else [location_filter])
+    if location_filter != "All":
+        filtered_units = [location_filter]
+    if not filtered_units:
+        filtered_units = COUNTRIES.copy()
+    filtered_country = dash_country_df[dash_country_df["Country"].isin(filtered_units)].copy() if not dash_country_df.empty else pd.DataFrame()
+
+    def build_filtered_heatmap_df(selected_metric: str) -> pd.DataFrame:
+        rows = []
+        source_units = filtered_units if filtered_units else COUNTRIES
+        for unit in source_units:
+            loc = coord_for_analysis_unit(unit, ANCHOR_COUNTRY)
+            unit_country = filtered_country[filtered_country["Country"] == unit] if not filtered_country.empty else pd.DataFrame()
+            unit_supplier = filtered_supplier[filtered_supplier["Country"] == unit] if not filtered_supplier.empty else pd.DataFrame()
+            if selected_metric == "Spend":
+                value = float(unit_supplier["Allocated Spend"].sum()) if not unit_supplier.empty else float(unit_country.get("New Spend", pd.Series([0.0])).sum())
+            elif selected_metric == "Saving":
+                value = max(-float(unit_country["Economic All-In Delta"].sum()) if not unit_country.empty else 0.0, 0.0)
+            elif selected_metric == "Suppliers":
+                value = float(unit_supplier["Supplier ID"].nunique()) if not unit_supplier.empty else 0.0
+            elif selected_metric == "SLA / Performance":
+                value = float(unit_supplier["Performance Score"].fillna(0).mean()) if (not unit_supplier.empty and "Performance Score" in unit_supplier.columns) else max(0.0, 100.0 - float(unit_country.get("Weighted Risk", pd.Series([0.0])).mean()) * 18.0)
+            else:
+                value = float(unit_country["Weighted Risk"].mean()) if not unit_country.empty else 0.0
+            econ = float(unit_country["Economic All-In Delta"].sum()) if not unit_country.empty else 0.0
+            risk = float(unit_country["Weighted Risk"].mean()) if not unit_country.empty else 0.0
+            rows.append({"Location": unit, "lat": float(loc["lat"]), "lon": float(loc["lon"]), "Metric": selected_metric, "Value": value, "Economic Delta": econ, "Risk": risk})
+        return pd.DataFrame(rows)
+
+    heat_df = build_filtered_heatmap_df(metric)
+    total_orders = int(len(filtered_supplier)) if not filtered_supplier.empty else 0
+    total_quantity = float(filtered_supplier["100% Equivalent Volume"].fillna(0).sum()) if (not filtered_supplier.empty and analysis_mode == "Direct Materials") else float(filtered_supplier.get("Headcount / FTEs", pd.Series(dtype=float)).fillna(0).sum())
+    pending_payments = float(filtered_country["New Financial Cost"].sum()) if not filtered_country.empty else 0.0
+    paid_pct = 100.0 * safe_divide(float(filtered_country["Current Total Spend"].sum() - filtered_country["Current Financial Cost"].sum()) if not filtered_country.empty else 0.0, max(float(filtered_country["Current Total Spend"].sum()), 1.0) if not filtered_country.empty else 1.0)
+    total_cost = float(filtered_country["New Total Spend"].sum()) if not filtered_country.empty else 0.0
+
+    kpi_cols = st.columns(5, gap="small")
+    with kpi_cols[0]:
+        render_kpi("Total orders", f"{total_orders:,}", "Filtered supplier-country lines", "neutral", short=True)
+    with kpi_cols[1]:
+        qty_label = "Total quantity ordered" if analysis_mode == "Direct Materials" else "Total headcount / FTEs"
+        qty_fmt = f"{total_quantity:,.0f}" if abs(total_quantity) >= 100 else f"{total_quantity:,.2f}"
+        render_kpi(qty_label, qty_fmt, "Filtered demand driver", "neutral", short=True)
+    with kpi_cols[2]:
+        render_kpi("Pending payments", format_money(pending_payments, currency_symbol, compact=True), "New financial cost", delta_tone(pending_payments), short=True)
+    with kpi_cols[3]:
+        render_kpi("% paid", f"{paid_pct:,.2f}%", "Current baseline proxy", "neutral", short=True)
+    with kpi_cols[4]:
+        render_kpi("Total cost", format_money(total_cost, currency_symbol, compact=True), "New total spend", delta_tone(total_cost), short=True)
+
+    top_row_left, top_row_right = st.columns([1.15, 0.85], gap="large")
+    with top_row_left:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE and not heat_df.empty:
+            line_df = heat_df.sort_values("Location").copy()
+            fig_line = go.Figure()
+            fig_line.add_trace(go.Scatter(
+                x=line_df["Location"], y=line_df["Value"], mode="lines+markers+text",
+                text=[format_money(v, currency_symbol, compact=True) if metric in {"Spend", "Saving"} else f"{v:,.1f}" for v in line_df["Value"]],
+                textposition="top center", line=dict(width=3), marker=dict(size=10)
+            ))
+            fig_line.update_layout(title=f"{metric} by {unit_label}", height=320, yaxis_title=metric, transition=dict(duration=850, easing="cubic-in-out"))
+            st.plotly_chart(apply_chart_theme(fig_line), use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.dataframe(heat_df, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with top_row_right:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE and not heat_df.empty:
+            center_lat = float(heat_df["lat"].mean())
+            center_lon = float(heat_df["lon"].mean())
+            size_norm = heat_df["Value"].abs() / max(float(heat_df["Value"].abs().max()), 1.0)
+            marker_size = (20 + size_norm * 30).clip(lower=16, upper=50)
+            fig_map = go.Figure(go.Scattergeo(
+                lat=heat_df["lat"], lon=heat_df["lon"], text=heat_df["Location"], mode="markers+text", textposition="top center",
+                marker=dict(size=marker_size, color=heat_df["Value"], colorscale="Bluered" if metric == "Risk" else "Purples", showscale=True, opacity=0.82, line=dict(width=1, color="white")),
+                customdata=heat_df[["Economic Delta", "Risk"]].values,
+                hovertemplate="%{text}<br>" + metric + ": %{marker.color:,.2f}<br>Economic delta: " + currency_symbol + " %{customdata[0]:,.2f}<br>Risk: %{customdata[1]:.2f}/5<extra></extra>",
+            ))
+            projection_scale = 2.1 if VIEW_SCOPE == "Global View" else (4.8 if ANCHOR_COUNTRY in {"Brazil", "Mexico", "Argentina", "Colombia"} else 3.2)
+            fig_map.update_geos(visible=True, showcountries=True, showland=True, landcolor="#e2e8f0", countrycolor="#94a3b8", coastlinecolor="#94a3b8", projection_type="mercator", center={"lat": center_lat, "lon": center_lon}, projection_scale=projection_scale, fitbounds="locations" if len(heat_df) > 1 else False)
+            map_title = "World heat map" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} heat map"
+            fig_map.update_layout(title=f"{map_title} — {metric}", height=320, margin=dict(l=10, r=10, t=52, b=10), paper_bgcolor="white", plot_bgcolor="white", transition=dict(duration=900, easing="cubic-in-out"))
+            st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.dataframe(heat_df, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    bottom_left, bottom_right = st.columns([0.75, 1.25], gap="large")
+    with bottom_left:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        category_df = filtered_supplier.groupby("Dashboard Category", as_index=False)["Allocated Spend"].sum().sort_values("Allocated Spend", ascending=False) if not filtered_supplier.empty else pd.DataFrame(columns=["Dashboard Category", "Allocated Spend"])
+        if PLOTLY_AVAILABLE and not category_df.empty:
+            fig_pie = go.Figure(go.Pie(labels=category_df["Dashboard Category"], values=category_df["Allocated Spend"], hole=0.55, textinfo="label+percent"))
+            fig_pie.update_layout(title="Total cost by category", height=360, transition=dict(duration=800, easing="cubic-in-out"))
+            st.plotly_chart(apply_chart_theme(fig_pie), use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.dataframe(category_df, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with bottom_right:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        supplier_rank_df = filtered_supplier.groupby("Supplier", as_index=False)["Allocated Spend"].sum().sort_values("Allocated Spend", ascending=False).head(10) if not filtered_supplier.empty else pd.DataFrame(columns=["Supplier", "Allocated Spend"])
+        if PLOTLY_AVAILABLE and not supplier_rank_df.empty:
+            fig_bar = go.Figure(go.Bar(x=supplier_rank_df["Allocated Spend"], y=supplier_rank_df["Supplier"], orientation="h", text=supplier_rank_df["Allocated Spend"].map(lambda v: format_money(v, currency_symbol, compact=True)), textposition="auto"))
+            fig_bar.update_layout(title="Total cost by supplier name", height=360, xaxis_title="Allocated spend", yaxis_title="", transition=dict(duration=850, easing="cubic-in-out"))
+            st.plotly_chart(apply_chart_theme(fig_bar), use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.dataframe(supplier_rank_df, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
 # =============================================================================
 # Always-visible Cost Optimization panel
 # =============================================================================
@@ -3326,6 +3854,8 @@ if run_global_optimization:
 
 if st.session_state.get("optimization_message"):
     st.success(st.session_state.get("optimization_message"))
+
+st.markdown("<div class='major-section-spacer' style='height:48px;'></div>", unsafe_allow_html=True)
 
 # =============================================================================
 # Financial calculation audit
@@ -3390,11 +3920,21 @@ with st.expander("Show gross financial cost and treasury return audit by country
     st.dataframe(audit_df, use_container_width=True)
 
 # =============================================================================
+# Executive View and Executive Dash View
+# =============================================================================
+
+executive_view_tab, executive_dash_tab = st.tabs(["Executive View", "Executive Dash View"])
+with executive_view_tab:
+    render_executive_view_summary()
+with executive_dash_tab:
+    render_executive_dash_view()
+
+# =============================================================================
 # Executive output
 # =============================================================================
 
 render_section(
-    "Executive Result",
+    "Decision Stacks",
     "Decision-ready cockpit. Expand only the result stacks needed for the meeting and keep the screen clean."
 )
 
@@ -3409,14 +3949,6 @@ final_economic_all_in = total["Economic All-In Delta"]
 
 if not supplier_focus_df.empty:
     with result_stack("Top supplier focus lens", f"Executive view focused on the top {focused_supplier_count} supplier offer(s) from the {len(SUPPLIERS)} supplier universe.", "🎛️", "#2563eb" if analysis_mode == "Direct Materials" else "#7c3aed", "Supplier focus", expanded=False):
-        focus_accent = "#2563eb" if analysis_mode == "Direct Materials" else "#7c3aed"
-        render_visual_breaker(
-            "Top supplier focus lens",
-            f"Executive view focused on the top {focused_supplier_count} supplier offer(s) from the {len(SUPPLIERS)} supplier universe.",
-            "🎛️",
-            focus_accent,
-            "Supplier focus",
-        )
         focus_display = supplier_focus_df.head(focused_supplier_count).copy()
         focus_cols = ["Rank", "Supplier", "Executive Focus Metric", "Economic Total", "Risk Score"]
         if analysis_mode != "Direct Materials":
@@ -3440,14 +3972,6 @@ if not supplier_focus_df.empty:
         st.markdown("</div>", unsafe_allow_html=True)
     
 with result_stack("Total project saving", "Final selected-market result, separating gross total saving, working-capital gain and inventory-adjusted economic all-in.", "🏁", GREEN if final_economic_all_in <= 0 else RED, "Final project result", expanded=True):
-    project_result_color = GREEN if final_economic_all_in <= 0 else RED
-    render_visual_breaker(
-        "Total project saving",
-        f"Final result for selected market scope: {PRIMARY_COUNTRY} + {len(LATAM_COUNTRIES)} other market(s).",
-        "🏁",
-        project_result_color,
-        "Final project result",
-    )
     project_cols = st.columns([1.2, 1.2, 1.55, 1.35], gap="medium")
     with project_cols[0]:
         render_kpi(
@@ -3500,13 +4024,6 @@ with result_stack("Total project saving", "Final selected-market result, separat
         )
 
 with result_stack("AI Executive Copilot", "One-click concise executive recommendation based on the current scenario. Local preview today; the prompt payload is ready for external AI/API integration.", "🤖", "#6366f1", "AI brief", expanded=False):
-    render_visual_breaker(
-        "AI Executive Copilot",
-        "One-click concise executive recommendation based on the current scenario. Local preview today; the prompt payload is ready for external AI/API integration.",
-        "🤖",
-        "#6366f1",
-        "AI brief",
-    )
     ai_cols = st.columns([0.30, 0.70], gap="large")
     with ai_cols[0]:
         if st.button("Generate AI Executive Brief", type="primary", use_container_width=True, key="generate_ai_exec_brief"):
@@ -3543,7 +4060,6 @@ with result_stack("AI Executive Copilot", "One-click concise executive recommend
             )
 
 with result_stack("Total cost stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline", expanded=False):
-    render_visual_breaker("Total cost stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline")
     row1 = st.columns(6, gap="medium")
     with row1[0]:
         render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
@@ -3570,13 +4086,6 @@ if SUPPLIERS:
             method=rate_method,
             payment_day_overrides={c: (90 if c == "Brazil" else 60 if c in ["Mexico", "Argentina", "Colombia"] else proposal_inputs[c][primary_reference_supplier]["payment_days"]) for c in COUNTRIES},
         )
-        render_visual_breaker(
-            f"New {primary_reference_short} condition stack",
-            f"Benchmark scenario assuming 100% volume under revised {primary_reference_name} conditions.",
-            "🏭",
-            "#f59e0b",
-            "Reference case",
-        )
         row1b = st.columns(6, gap="medium")
         with row1b[0]:
             render_kpi(f"100% {primary_reference_short} Spend", format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True), f"100% awarded to {primary_reference_short} at proposed spend", "neutral")
@@ -3592,7 +4101,6 @@ if SUPPLIERS:
             render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
     
 with result_stack("Working capital carry view", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing", expanded=False):
-    render_visual_breaker("Working capital carry view", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing")
     wc_row = st.columns(5, gap="medium")
     with wc_row[0]:
         render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
@@ -3606,7 +4114,6 @@ with result_stack("Working capital carry view", "Treasury return and net financi
         render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
 
 with result_stack("Total decomposition", "Decision-ready breakdown of spend, financial effect, inventory and risk.", "🧩", "#8b5cf6", "Decision view", expanded=False):
-    render_visual_breaker("Total decomposition", "Decision-ready breakdown of spend, financial effect, inventory and risk.", "🧩", "#8b5cf6", "Decision view")
     row2 = st.columns(6, gap="medium")
     with row2[0]:
         render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
@@ -3622,7 +4129,6 @@ with result_stack("Total decomposition", "Decision-ready breakdown of spend, fin
         render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]), short=True)
 
 with result_stack(f"{PRIMARY_COUNTRY} result", f"Country-level result and impact drivers for {PRIMARY_COUNTRY}, including payment-term movement.", "📍", "#06b6d4", "Anchor market", expanded=False):
-    render_visual_breaker(f"{PRIMARY_COUNTRY} result", f"Country-level result and impact drivers for {PRIMARY_COUNTRY}, including payment-term movement.", "📍", "#06b6d4", "Anchor market")
     row3 = st.columns(7, gap="medium")
     with row3[0]:
         render_kpi("Current Avg Payment Term", f"{primary_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
@@ -3640,7 +4146,6 @@ with result_stack(f"{PRIMARY_COUNTRY} result", f"Country-level result and impact
         render_kpi("Economic All-In Saving / Impact", format_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} spend + net financial effect + inventory", delta_tone(primary_row["Economic All-In Delta"]), short=True)
 
 with result_stack(f"{SECONDARY_GROUP} result", f"Consolidated impact view for {len(LATAM_COUNTRIES)} other selected market(s), including payment-term movement.", "🌎", "#ec4899", "Regional view", expanded=False):
-    render_visual_breaker(f"{SECONDARY_GROUP} result", f"Consolidated impact view for {len(LATAM_COUNTRIES)} other selected market(s), including payment-term movement.", "🌎", "#ec4899", "Regional view")
     row4 = st.columns(7, gap="medium")
     with row4[0]:
         render_kpi("Current Avg Payment Term", f"{secondary_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
@@ -3689,7 +4194,6 @@ with result_stack("Decision recommendation", "Clear go/no-go interpretation of t
 # =============================================================================
 
 with result_stack("Charts", "Visual comparison of cost stack, decomposition and cost-risk trade-offs.", "📈", "#2563eb", "Visual analytics", expanded=False):
-    render_visual_breaker("Charts", "Visual comparison of cost stack, decomposition and cost-risk trade-offs.", "📈", "#2563eb", "Visual analytics")
     chart_col1, chart_col2 = st.columns([1.2, 1.0], gap="large")
     with chart_col1:
         st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)

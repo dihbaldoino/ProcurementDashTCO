@@ -1,21 +1,17 @@
-# Executive Procurement TCO & Should-Cost Dashboard — v39
+# Executive Procurement TCO & Should-Cost Dashboard — v41
 
-Two-in-one Streamlit cockpit for procurement decision making.
+## What is new in v41
 
-## Modes
-
-- **Direct Materials**: landed cost, FX, incoterm, MOQ, unit price × volume, inventory carrying, working capital and supplier optimization.
-- **Indirect / Services**: service scope, pricing model, headcount/FTE economics, hourly rates, overtime KPIs, supplier scorecards, contract leakage, open-cost / should-cost, productivity gains and risk-adjusted service TCO.
-
-## What changed in v39
-
-- Added a visual **Dynamic Market Scope** selector in the sidebar.
-- The user can select which countries are included in the analysis instead of being locked to Brazil, Mexico, Argentina and Colombia.
-- Added an **Anchor / Primary Country** selector. This country receives its own executive result stack.
-- All other selected countries are consolidated into **Other selected markets**.
-- Country cards, supplier proposals, supplier performance, custom analysis items, risk constraints, share sliders, optimization and executive results now follow the selected market scope.
-- New countries receive practical auto-seeded defaults so the tool remains simple and fast to use, while still allowing the buyer to edit the country assumptions.
-- Maintained the two visual identities: Direct Materials and Indirect / Services.
+- Added **Global View / Local View** in the sidebar.
+- **Global View** keeps the country-based analysis built in previous versions.
+- **Local View** lets the user analyze localities, sites, plants, regions or business units inside the selected anchor country.
+- Added **Executive View** tab with a concise executive summary.
+- Added **Executive Dash View** tab with a visual heatmap and ranking view.
+- The heatmap adapts to the selected scope:
+  - Global View: country-level points.
+  - Local View: locality-level points inside the anchor country.
+- Heatmap can be driven by: Spend, Saving, Suppliers, SLA / Performance or Risk.
+- Selected countries/localities automatically feed the same TCO, supplier proposal, risk, optimization and executive stacks.
 
 ## Run
 
@@ -23,9 +19,3 @@ Two-in-one Streamlit cockpit for procurement decision making.
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-## Notes
-
-- Negative deltas mean savings. Positive deltas mean cost impact.
-- Financial assumptions should be validated by Finance/Treasury before official saving recognition.
-- Services mode treats proposal spend as risk-adjusted Service TCO after productivity gains and custom adjustments.
