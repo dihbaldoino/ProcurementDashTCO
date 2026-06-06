@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v34 - Two-in-One Direct Materials + Indirect Services Executive Cockpit
+Version v36 - Visual Lock + Result Stack Visibility + AI Executive Copilot
 
 Run:
     pip install -r requirements.txt
@@ -17,7 +17,7 @@ This dashboard compares current spend vs. supplier proposals using:
 - proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
 - gross financial impact is explicitly offset by incremental treasury return to produce net financial saving/impact
 - Direct Materials mode calculates spend from landed unit price x volume before TCO analysis
-- Indirect / Services mode calculates service TCO with scope, pricing model, scorecards, productivity gains and contract leakage
+- Indirect / Services mode calculates service TCO with scope, pricing model, headcount/hour economics, scorecards, overtime KPIs, should-cost, productivity gains and contract leakage
 
 Key modeling guardrails
 -----------------------
@@ -62,12 +62,35 @@ SUPPLIERS = [
     "OleoGlobal",
     "Oleo Overseas Trading Co.",
     "Comercio de Oleos Nacional Distribuicao",
+    "Supplier 05",
+    "Supplier 06",
+    "Supplier 07",
+    "Supplier 08",
+    "Supplier 09",
+    "Supplier 10",
+    "Supplier 11",
+    "Supplier 12",
+    "Supplier 13",
+    "Supplier 14",
+    "Supplier 15",
 ]
+SUPPLIER_POOL = SUPPLIERS.copy()
 SHORT_SUPPLIER = {
     "ChemPrime": "ChemPrime",
     "OleoGlobal": "OleoGlobal",
     "Oleo Overseas Trading Co.": "Overseas",
     "Comercio de Oleos Nacional Distribuicao": "Distribuicao",
+    "Supplier 05": "Supplier 05",
+    "Supplier 06": "Supplier 06",
+    "Supplier 07": "Supplier 07",
+    "Supplier 08": "Supplier 08",
+    "Supplier 09": "Supplier 09",
+    "Supplier 10": "Supplier 10",
+    "Supplier 11": "Supplier 11",
+    "Supplier 12": "Supplier 12",
+    "Supplier 13": "Supplier 13",
+    "Supplier 14": "Supplier 14",
+    "Supplier 15": "Supplier 15",
 }
 
 # Supplier IDs remain fixed internally so calculations, widget keys and saved scenarios
@@ -221,12 +244,13 @@ SERVICE_SCOPE_CONFIG = {
     },
 }
 SERVICE_SCORECARD_WEIGHTS = {
-    "Cost competitiveness": 20.0,
-    "SLA / Delivery": 20.0,
-    "Quality of service": 15.0,
-    "Stakeholder satisfaction": 15.0,
+    "Cost competitiveness": 18.0,
+    "SLA / Delivery": 18.0,
+    "Quality of service": 14.0,
+    "Stakeholder satisfaction": 12.0,
     "Contract compliance": 10.0,
     "Productivity / Innovation": 10.0,
+    "Overtime control": 8.0,
     "Risk & compliance": 5.0,
     "ESG / diversity": 5.0,
 }
@@ -380,11 +404,66 @@ DEFAULT_RISK_WEIGHTS = {
     "Logistics": 10.0,
 }
 
+# Extend all default dictionaries to support a dynamic supplier universe up to 15 suppliers.
+# First four suppliers keep the original business-case defaults; the additional suppliers
+# start as approved, zero-share alternatives with conservative generic assumptions.
+for _supplier in SUPPLIER_POOL:
+    DEFAULT_SUPPLIER_DISPLAY_NAME.setdefault(_supplier, _supplier)
+    DEFAULT_SUPPLIER_SHORT_NAME.setdefault(_supplier, SHORT_SUPPLIER.get(_supplier, _supplier))
+    DEFAULT_KRALJIC_REQUIRED.setdefault(_supplier, False)
+    DEFAULT_MIN_SHARE.setdefault(_supplier, 0.0)
+    DEFAULT_MAX_SHARE.setdefault(_supplier, 100.0)
+    DEFAULT_APPROVED.setdefault(_supplier, True)
+    DEFAULT_RISK.setdefault(_supplier, {dim: 3.0 for dim in DEFAULT_RISK_WEIGHTS})
+
+for _country in COUNTRIES:
+    _base_spend = DEFAULT_CURRENT_SPEND[_country]
+    DEFAULT_PROPOSAL_SPEND.setdefault(_country, {})
+    DEFAULT_PAYMENT_TERM.setdefault(_country, {})
+    DEFAULT_LEAD_TIME_DAYS.setdefault(_country, {})
+    DEFAULT_SAFETY_STOCK_DAYS.setdefault(_country, {})
+    DEFAULT_INVENTORY_OWNERSHIP.setdefault(_country, {})
+    DEFAULT_SHARES.setdefault(_country, {})
+    for _idx, _supplier in enumerate(SUPPLIER_POOL, start=1):
+        DEFAULT_PROPOSAL_SPEND[_country].setdefault(_supplier, _base_spend)
+        DEFAULT_PAYMENT_TERM[_country].setdefault(_supplier, DEFAULT_CURRENT_TERM[_country])
+        DEFAULT_LEAD_TIME_DAYS[_country].setdefault(_supplier, 30)
+        DEFAULT_SAFETY_STOCK_DAYS[_country].setdefault(_supplier, 0)
+        DEFAULT_INVENTORY_OWNERSHIP[_country].setdefault(_supplier, "Supplier/trader owns until delivery")
+        DEFAULT_SHARES[_country].setdefault(_supplier, 0.0)
+
 GRAPHITE = "#1f2937"
 GREEN = "#047857"
 RED = "#b91c1c"
 BLUE = "#1d4ed8"
 AMBER = "#b45309"
+
+RESULT_STACK_OPTIONS = [
+    "Top supplier focus lens",
+    "Total project saving",
+    "AI Executive Copilot",
+    "Total cost stack",
+    "Reference supplier condition stack",
+    "Working capital carry view",
+    "Total decomposition",
+    "Brazil result",
+    "LATAM result",
+    "Decision recommendation",
+    "Charts",
+    "Working capital economic view",
+    "Detailed data",
+    "Download export",
+]
+DEFAULT_RESULT_STACKS = [
+    "Top supplier focus lens",
+    "Total project saving",
+    "AI Executive Copilot",
+    "Total decomposition",
+    "Brazil result",
+    "LATAM result",
+    "Charts",
+    "Download export",
+]
 
 # =============================================================================
 # Page setup and CSS
@@ -400,12 +479,17 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .block-container {padding-top: 1.2rem; padding-bottom: 2.2rem; max-width: 1600px;}
+        @keyframes fadeUp { from {opacity:0; transform: translateY(10px);} to {opacity:1; transform: translateY(0);} }
+        @keyframes subtlePulse { 0% {box-shadow:0 12px 28px rgba(15,23,42,.08);} 50% {box-shadow:0 16px 34px rgba(15,23,42,.13);} 100% {box-shadow:0 12px 28px rgba(15,23,42,.08);} }
+        .block-container {padding-top: 1.0rem; padding-bottom: 2.4rem; max-width: 1680px;}
         .executive-hero {
             background: linear-gradient(135deg, #020617 0%, #0f172a 48%, #1d4ed8 100%);
-            padding: 30px 34px; border-radius: 28px; color: white; margin-bottom: 22px;
-            box-shadow: 0 18px 45px rgba(15, 23, 42, 0.25);
+            padding: 32px 36px; border-radius: 30px; color: white; margin-bottom: 24px;
+            box-shadow: 0 20px 55px rgba(15, 23, 42, 0.28); animation: fadeUp .45s ease-out both;
         }
+        .hero-direct {background: radial-gradient(circle at top right, rgba(96,165,250,.42), transparent 30%), linear-gradient(135deg, #020617 0%, #0f172a 48%, #1d4ed8 100%);}
+        .hero-service {background: radial-gradient(circle at top right, rgba(168,85,247,.40), transparent 30%), linear-gradient(135deg, #111827 0%, #312e81 48%, #7c3aed 100%);}
+        .mode-chip {display:inline-block; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); color:#fff; font-size:.76rem; font-weight:900; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px;}
         .executive-hero h1 {font-size: 2.25rem; line-height: 1.1; margin-bottom: 0.35rem; font-weight: 850; color: #ffffff;}
         .executive-hero p {font-size: 1rem; color: rgba(255,255,255,0.88); margin-bottom: 0; max-width: 1140px;}
         .section-header {
@@ -448,11 +532,13 @@ st.markdown(
             white-space: nowrap; position: relative; z-index: 2;
         }
         .kpi-card {
-            background: #ffffff; border: 1px solid rgba(148, 163, 184, 0.26); border-radius: 22px;
-            padding: 20px 22px; min-height: 165px; height: 165px; box-sizing: border-box;
-            margin-bottom: 22px; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
-            display: flex; flex-direction: column; justify-content: flex-start;
+            background: #ffffff; border: 1px solid rgba(148, 163, 184, 0.26); border-radius: 24px;
+            padding: 22px 23px; min-height: 168px; height: 168px; box-sizing: border-box;
+            margin-bottom: 24px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+            display: flex; flex-direction: column; justify-content: flex-start; animation: fadeUp .35s ease-out both;
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
         }
+        .kpi-card:hover {transform: translateY(-3px); box-shadow: 0 18px 40px rgba(15,23,42,.14); border-color: rgba(59,130,246,.32);}
         .kpi-card.short {min-height: 145px; height: 145px;}
         .kpi-label {color: #64748b; font-size: 0.76rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.055em; margin-bottom: 8px;}
         .kpi-value {color: #0f172a; font-size: 1.50rem; font-weight: 850; line-height: 1.1; margin-bottom: 9px;}
@@ -475,6 +561,33 @@ st.markdown(
         .service-result {background:#f8fafc; border:1px dashed rgba(124,58,237,.35); border-radius:14px; padding:10px 12px; margin-top:8px;}
         .service-result b {color:#0f172a;}
         .score-badge {display:inline-block; padding:4px 9px; border-radius:999px; font-weight:850; font-size:.76rem; background:#eef2ff; color:#3730a3;}
+        .executive-panel {background:rgba(255,255,255,.78); border:1px solid rgba(148,163,184,.28); border-radius:24px; padding:18px 20px; margin:16px 0 22px 0; box-shadow:0 10px 30px rgba(15,23,42,.07); animation:fadeUp .38s ease-out both;}
+        .direct-accent {border-left:6px solid #2563eb;}
+        .service-accent {border-left:6px solid #7c3aed;}
+        .chart-shell {background:#ffffff; border:1px solid rgba(148,163,184,.24); border-radius:24px; padding:12px 14px; box-shadow:0 12px 30px rgba(15,23,42,.07); animation: fadeUp .42s ease-out both;}
+        div[data-testid="stMetricValue"] {font-weight:900;}
+        div[data-testid="stExpander"] {border-radius:18px !important;}
+
+        /* v36 visual lock: keep executive components aligned and consistently framed */
+        .kpi-card { overflow: hidden; }
+        .kpi-value { min-height: 36px; display: flex; align-items: center; }
+        .kpi-helper { min-height: 40px; overflow: hidden; }
+        .executive-panel { min-height: 128px; overflow: hidden; }
+        .visual-breaker { min-height: 76px; box-sizing: border-box; }
+        .chart-shell { min-height: 480px; overflow: hidden; }
+        .chart-shell h4 { margin: 0 0 8px 0; color: #0f172a; }
+        div[data-testid="stHorizontalBlock"] { align-items: stretch; }
+        div[data-testid="column"] > div { height: 100%; }
+        div[data-testid="stDataFrame"] { border-radius: 18px; overflow: hidden; border: 1px solid rgba(148,163,184,.25); }
+        .ai-copilot-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid rgba(99,102,241,.28); border-left: 7px solid #6366f1; border-radius: 24px;
+            padding: 20px 22px; margin: 12px 0 20px 0; box-shadow: 0 14px 34px rgba(15,23,42,.09);
+        }
+        .ai-copilot-card h4 {margin: 0 0 8px 0; color:#0f172a;}
+        .ai-copilot-card ul {margin-top: 8px; margin-bottom: 0;}
+        .ai-copilot-card li {margin-bottom: 6px; color:#334155; line-height:1.34;}
+        .stack-control-note {font-size:.78rem; color:#94a3b8; line-height:1.25;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -554,6 +667,8 @@ def apply_chart_theme(fig):
         xaxis=dict(title_font=dict(color=GRAPHITE), tickfont=dict(color=GRAPHITE), color=GRAPHITE, gridcolor="rgba(31,41,55,.12)"),
         yaxis=dict(title_font=dict(color=GRAPHITE), tickfont=dict(color=GRAPHITE), color=GRAPHITE, gridcolor="rgba(31,41,55,.12)"),
         legend=dict(font=dict(color=GRAPHITE)),
+        transition=dict(duration=650, easing="cubic-in-out"),
+        hovermode="x unified",
     )
     for tr in fig.data:
         if hasattr(tr, "textfont"):
@@ -624,6 +739,126 @@ def risk_tone(risk: float) -> str:
     if risk <= 3.5:
         return "amber"
     return "bad"
+
+
+def _safe_group_row(group_df: pd.DataFrame, group: str) -> Dict[str, float]:
+    if group_df is None or group_df.empty or "Group" not in group_df.columns:
+        return {}
+    rows = group_df[group_df["Group"] == group]
+    if rows.empty:
+        return {}
+    return rows.iloc[0].to_dict()
+
+
+def build_ai_prompt_payload(
+    *,
+    analysis_mode: str,
+    total: Dict[str, float],
+    group_df: pd.DataFrame,
+    supplier_focus_df: pd.DataFrame,
+    focused_supplier_count: int,
+    currency: str,
+) -> str:
+    """Create a compact copy/paste prompt for an external AI tool.
+
+    The app does not call an external AI API. This payload is the controlled
+    context that would be pasted into an AI assistant or used by a future API integration.
+    """
+    brazil = _safe_group_row(group_df, "Brazil")
+    latam = _safe_group_row(group_df, "LATAM")
+    focus = supplier_focus_df.head(focused_supplier_count) if isinstance(supplier_focus_df, pd.DataFrame) else pd.DataFrame()
+    focus_lines = []
+    if not focus.empty:
+        for _, row in focus.iterrows():
+            extra = ""
+            if analysis_mode == "Indirect / Services" and pd.notna(row.get("Performance Score", None)):
+                extra = f" | Performance score: {row.get('Performance Score', 0):.1f}/100 | Productivity gain: {currency} {row.get('Productivity Gain', 0):,.2f} | Overtime h/mo: {row.get('Overtime Hours / Month', 0):,.1f}"
+            focus_lines.append(
+                f"#{int(row.get('Rank', 0))} {row.get('Supplier','')} | Economic total: {currency} {row.get('Economic Total',0):,.2f} | Risk: {row.get('Risk Score',0):.2f}/5{extra}"
+            )
+    return "\n".join([
+        "Act as a senior executive procurement advisor. Provide a concise, decision-oriented recommendation.",
+        f"Analysis mode: {analysis_mode}",
+        f"Gross total saving/impact: {currency} {total.get('Gross All-In Delta', 0):,.2f}",
+        f"Working capital gain/impact: {currency} {total.get('Treasury Return Offset Delta', 0):,.2f}",
+        f"Inventory carrying delta: {currency} {total.get('Inventory Delta', 0):,.2f}",
+        f"Final economic all-in saving/impact: {currency} {total.get('Economic All-In Delta', 0):,.2f}",
+        f"Weighted risk: {total.get('Weighted Risk', 0):.2f}/5",
+        f"Brazil economic delta: {currency} {brazil.get('Economic All-In Delta', 0):,.2f}; current term {brazil.get('Current Avg Payment Days', 0):.0f} dd; new term {brazil.get('New Avg Payment Days', 0):.0f} dd",
+        f"LATAM economic delta: {currency} {latam.get('Economic All-In Delta', 0):,.2f}; current term {latam.get('Current Avg Payment Days', 0):.0f} dd; new term {latam.get('New Avg Payment Days', 0):.0f} dd",
+        "Top supplier focus:",
+        *focus_lines,
+        "Return: recommendation, best option, risk watchouts, negotiation levers and next actions. Keep it short.",
+    ])
+
+
+def generate_ai_executive_brief(
+    *,
+    analysis_mode: str,
+    total: Dict[str, float],
+    group_df: pd.DataFrame,
+    supplier_focus_df: pd.DataFrame,
+    focused_supplier_count: int,
+    currency: str,
+) -> str:
+    """Local AI-style executive brief.
+
+    This is intentionally concise and deterministic until a real AI API key/integration
+    is connected. It reads the same data that would be sent to an AI assistant.
+    """
+    final_delta = float(total.get("Economic All-In Delta", 0.0))
+    gross_delta = float(total.get("Gross All-In Delta", 0.0))
+    wc_delta = float(total.get("Treasury Return Offset Delta", 0.0))
+    inv_delta = float(total.get("Inventory Delta", 0.0))
+    risk = float(total.get("Weighted Risk", 0.0))
+    brazil = _safe_group_row(group_df, "Brazil")
+    latam = _safe_group_row(group_df, "LATAM")
+    focus = supplier_focus_df.head(max(1, focused_supplier_count)) if isinstance(supplier_focus_df, pd.DataFrame) else pd.DataFrame()
+    best_supplier = "No supplier ranked"
+    best_rationale = "Complete supplier inputs to generate the ranked recommendation."
+    if not focus.empty:
+        top = focus.iloc[0]
+        best_supplier = str(top.get("Supplier", "Top supplier"))
+        if analysis_mode == "Indirect / Services":
+            perf = top.get("Performance Score", None)
+            should_gap = top.get("Should-Cost Gap", None)
+            prod = top.get("Productivity Gain", None)
+            best_rationale = (
+                f"best current executive focus by performance-adjusted cost. "
+                f"Score {perf:.1f}/100, productivity gain {format_money(prod, currency, compact=True) if pd.notna(prod) else 'n/a'}, "
+                f"should-cost gap {format_money(should_gap, currency, compact=True, signed=True) if pd.notna(should_gap) else 'n/a'}."
+            )
+        else:
+            best_rationale = f"best current executive focus by economic all-in cost and risk score {top.get('Risk Score', 0):.2f}/5."
+
+    decision = "Approve / advance to negotiation" if final_delta <= 0 and risk <= 3.5 else "Negotiate before approval"
+    if final_delta > 0:
+        decision = "Do not approve as-is"
+    wc_msg = "helps the case" if wc_delta < 0 else "does not offset the case enough"
+    inv_msg = "inventory is favorable" if inv_delta < 0 else "inventory adds cost" if inv_delta > 0 else "inventory is neutral"
+    service_extra = ""
+    if analysis_mode == "Indirect / Services":
+        service_extra = (
+            "<li><b>Services lens:</b> challenge overtime, headcount productivity, SLA credits, rate-card compliance and supplier productivity commitments before contracting.</li>"
+        )
+    else:
+        service_extra = (
+            "<li><b>Direct materials lens:</b> challenge landed unit price, FX, incoterm cost ownership, MOQ, lead time and inventory ownership before contracting.</li>"
+        )
+
+    return f"""
+    <div class="ai-copilot-card">
+        <h4>🤖 AI Executive Copilot — concise recommendation</h4>
+        <ul>
+            <li><b>Decision:</b> {decision}. Final economic all-in = <b>{format_money(final_delta, currency, compact=True, signed=True)}</b>; weighted risk = <b>{risk:.2f}/5</b>.</li>
+            <li><b>Best current option:</b> {escape(best_supplier)} — {escape(best_rationale)}</li>
+            <li><b>Value bridge:</b> gross saving/impact = <b>{format_money(gross_delta, currency, compact=True, signed=True)}</b>; working capital {wc_msg} = <b>{format_money(wc_delta, currency, compact=True, signed=True)}</b>; {inv_msg} = <b>{format_money(inv_delta, currency, compact=True, signed=True)}</b>.</li>
+            <li><b>Regional check:</b> Brazil = <b>{format_money(brazil.get('Economic All-In Delta', 0), currency, compact=True, signed=True)}</b>; LATAM = <b>{format_money(latam.get('Economic All-In Delta', 0), currency, compact=True, signed=True)}</b>.</li>
+            {service_extra}
+            <li><b>Next action:</b> use the top supplier focus list to run a final negotiation round on price, payment term, risk mitigation and implementation commitments.</li>
+        </ul>
+    </div>
+    """
 
 
 
@@ -766,8 +1001,26 @@ def render_service_baseline_builder(
 
     render_service_scope_fields(key_prefix=key_prefix, scope=scope)
 
+    st.markdown("<div class='plain-title'>Current workforce, rate card and overtime KPIs</div>", unsafe_allow_html=True)
+    wh = st.columns(6)
+    with wh[0]:
+        headcount = st.number_input("Current headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
+    with wh[1]:
+        price_per_person_month = st.number_input("Current price per person / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
+    with wh[2]:
+        regular_hours_per_person_month = st.number_input("Regular hours / person / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours_per_person_month")
+    with wh[3]:
+        hourly_rate = st.number_input("Current hourly rate", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate", help="If left as zero, the tool estimates hourly rate from price per person divided by regular hours.")
+    with wh[4]:
+        overtime_hours_month = st.number_input("Overtime hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours_month")
+    with wh[5]:
+        overtime_multiplier = st.number_input("OT multiplier", min_value=1.0, value=1.5, step=0.05, format="%.2f", key=f"{key_prefix}__overtime_multiplier")
+    effective_hourly_rate = float(hourly_rate) if float(hourly_rate) > 0 else safe_divide(float(price_per_person_month), float(regular_hours_per_person_month))
+    overtime_cost = float(overtime_hours_month) * effective_hourly_rate * float(overtime_multiplier) * 12.0
+    people_cost_model = float(headcount) * float(price_per_person_month) * 12.0
+
     st.markdown("<div class='plain-title'>Current service lifecycle costs and leakage</div>", unsafe_allow_html=True)
-    r2 = st.columns(5)
+    r2 = st.columns(6)
     with r2[0]:
         change_orders = st.number_input("Change orders / add-ons", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_orders")
     with r2[1]:
@@ -778,8 +1031,10 @@ def render_service_baseline_builder(
         downtime_compliance_cost = st.number_input("Downtime / compliance cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__downtime_compliance_cost")
     with r2[4]:
         sla_credits_rebates = st.number_input("SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
+    with r2[5]:
+        overtime_cost_input = st.number_input("Annual overtime cost", min_value=0.0, value=float(overtime_cost), step=10_000.0, format="%.2f", key=f"{key_prefix}__overtime_cost_input")
 
-    service_tco = contracted_value + change_orders + internal_management + rework_cost + downtime_compliance_cost - sla_credits_rebates
+    service_tco = contracted_value + change_orders + internal_management + rework_cost + downtime_compliance_cost + overtime_cost_input - sla_credits_rebates
     scope_creep_pct = safe_divide(change_orders, contracted_value)
     budget_variance = service_tco - budget_value
     st.markdown(
@@ -787,7 +1042,8 @@ def render_service_baseline_builder(
         <div class="service-result">
             <b>Current Service TCO:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
             <b>Scope creep:</b> {scope_creep_pct*100:,.1f}% &nbsp; | &nbsp;
-            <b>Budget variance:</b> {reporting_currency} {budget_variance:,.2f}
+            <b>Budget variance:</b> {reporting_currency} {budget_variance:,.2f} &nbsp; | &nbsp;
+            <b>Overtime hours/month:</b> {overtime_hours_month:,.1f}
         </div>
         """,
         unsafe_allow_html=True,
@@ -803,6 +1059,13 @@ def render_service_baseline_builder(
         "rework_cost": float(rework_cost),
         "downtime_compliance_cost": float(downtime_compliance_cost),
         "sla_credits_rebates": float(sla_credits_rebates),
+        "headcount": float(headcount),
+        "price_per_person_month": float(price_per_person_month),
+        "regular_hours_per_person_month": float(regular_hours_per_person_month),
+        "hourly_rate": float(effective_hourly_rate),
+        "overtime_hours_month": float(overtime_hours_month),
+        "overtime_cost": float(overtime_cost_input),
+        "people_cost_model": float(people_cost_model),
         "productivity_gain": 0.0,
         "expected_risk_cost": 0.0,
         "service_tco": float(service_tco),
@@ -866,8 +1129,44 @@ def render_service_supplier_builder(
 
     render_service_scope_fields(key_prefix=key_prefix, scope=scope)
 
+    st.markdown("<div class='plain-title'>Workforce, rate card and overtime KPIs</div>", unsafe_allow_html=True)
+    wh = st.columns(6)
+    with wh[0]:
+        headcount = st.number_input(f"{supplier_label} | Headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
+    with wh[1]:
+        price_per_person_month = st.number_input(f"{supplier_label} | Price per person / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
+    with wh[2]:
+        regular_hours_per_person_month = st.number_input(f"{supplier_label} | Regular hours / person / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours_per_person_month")
+    with wh[3]:
+        hourly_rate = st.number_input(f"{supplier_label} | Hourly rate", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate", help="If left as zero, the tool estimates hourly rate from price per person divided by regular hours.")
+    with wh[4]:
+        overtime_hours_month = st.number_input(f"{supplier_label} | Overtime hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours_month")
+    with wh[5]:
+        overtime_multiplier = st.number_input(f"{supplier_label} | OT multiplier", min_value=1.0, value=1.5, step=0.05, format="%.2f", key=f"{key_prefix}__overtime_multiplier")
+    effective_hourly_rate = float(hourly_rate) if float(hourly_rate) > 0 else safe_divide(float(price_per_person_month), float(regular_hours_per_person_month))
+    people_cost_model = float(headcount) * float(price_per_person_month) * 12.0
+    overtime_cost = float(overtime_hours_month) * effective_hourly_rate * float(overtime_multiplier) * 12.0
+
+    st.markdown("<div class='plain-title'>Service should-cost engine</div>", unsafe_allow_html=True)
+    sc = st.columns(6)
+    with sc[0]:
+        should_cost_headcount = st.number_input(f"{supplier_label} | Should-cost HC", min_value=0.0, value=float(headcount), step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_headcount")
+    with sc[1]:
+        benchmark_hourly_rate = st.number_input(f"{supplier_label} | Benchmark hourly rate", min_value=0.0, value=max(float(effective_hourly_rate), 0.0), step=10.0, format="%.2f", key=f"{key_prefix}__benchmark_hourly_rate")
+    with sc[2]:
+        target_hours_month = st.number_input(f"{supplier_label} | Target hours/FTE/month", min_value=0.0, value=float(regular_hours_per_person_month), step=1.0, format="%.2f", key=f"{key_prefix}__target_hours_month")
+    with sc[3]:
+        overhead_tools_pct = st.number_input(f"{supplier_label} | Overhead/tools %", min_value=0.0, max_value=200.0, value=15.0, step=1.0, format="%.2f", key=f"{key_prefix}__overhead_tools_pct")
+    with sc[4]:
+        fair_margin_pct = st.number_input(f"{supplier_label} | Fair margin %", min_value=0.0, max_value=100.0, value=12.0, step=1.0, format="%.2f", key=f"{key_prefix}__fair_margin_pct")
+    with sc[5]:
+        should_cost_productivity_pct = st.number_input(f"{supplier_label} | Productivity target %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_productivity_pct")
+    should_cost_raw = float(should_cost_headcount) * float(target_hours_month) * 12.0 * float(benchmark_hourly_rate)
+    should_cost_target = should_cost_raw * (1.0 + overhead_tools_pct / 100.0) * (1.0 + fair_margin_pct / 100.0) * (1.0 - should_cost_productivity_pct / 100.0)
+    should_cost_gap = float(proposed_contract_value) - float(should_cost_target)
+
     st.markdown("<div class='plain-title'>Service TCO adjustments</div>", unsafe_allow_html=True)
-    r2 = st.columns(5)
+    r2 = st.columns(6)
     with r2[0]:
         transition_cost = st.number_input(f"{supplier_label} | Transition / implementation cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__transition_cost")
     with r2[1]:
@@ -878,6 +1177,8 @@ def render_service_supplier_builder(
         rework_cost = st.number_input(f"{supplier_label} | Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
     with r2[4]:
         sla_credits_rebates = st.number_input(f"{supplier_label} | SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
+    with r2[5]:
+        overtime_cost_input = st.number_input(f"{supplier_label} | Annual overtime cost", min_value=0.0, value=float(overtime_cost), step=10_000.0, format="%.2f", key=f"{key_prefix}__overtime_cost_input")
 
     st.markdown("<div class='plain-title'>Supplier-led productivity and risk-adjusted service cost</div>", unsafe_allow_html=True)
     st.caption(f"Productivity expectation for this scope: {cfg.get('productivity_label', 'supplier-led productivity')}.")
@@ -905,7 +1206,7 @@ def render_service_supplier_builder(
 
     scorecard = render_service_scorecard(key_prefix=key_prefix, supplier_label=supplier_label)
     expected_risk_cost = float(risk_probability) / 100.0 * float(risk_impact)
-    service_tco_before_productivity = proposed_contract_value + transition_cost + change_order_reserve + internal_management + rework_cost + expected_risk_cost - sla_credits_rebates
+    service_tco_before_productivity = proposed_contract_value + transition_cost + change_order_reserve + internal_management + rework_cost + float(overtime_cost_input) + expected_risk_cost - sla_credits_rebates
     service_tco = max(service_tco_before_productivity - productivity_gain, 0.0)
     performance_score = float(scorecard["score"])
     performance_adjusted_cost = safe_divide(service_tco, max(performance_score / 100.0, 1e-9))
@@ -916,7 +1217,9 @@ def render_service_supplier_builder(
             <b>Service TCO used as proposal spend:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
             <b>Productivity gain:</b> {reporting_currency} {productivity_gain:,.2f} &nbsp; | &nbsp;
             <b>Expected risk cost:</b> {reporting_currency} {expected_risk_cost:,.2f} &nbsp; | &nbsp;
-            <b>Performance-adjusted cost:</b> {reporting_currency} {performance_adjusted_cost:,.2f}
+            <b>Performance-adjusted cost:</b> {reporting_currency} {performance_adjusted_cost:,.2f} &nbsp; | &nbsp;
+            <b>Should-cost gap:</b> {reporting_currency} {should_cost_gap:,.2f} &nbsp; | &nbsp;
+            <b>OT hours/month:</b> {overtime_hours_month:,.1f}
         </div>
         """,
         unsafe_allow_html=True,
@@ -932,6 +1235,17 @@ def render_service_supplier_builder(
         "internal_management": float(internal_management),
         "rework_cost": float(rework_cost),
         "sla_credits_rebates": float(sla_credits_rebates),
+        "headcount": float(headcount),
+        "price_per_person_month": float(price_per_person_month),
+        "regular_hours_per_person_month": float(regular_hours_per_person_month),
+        "hourly_rate": float(effective_hourly_rate),
+        "people_cost_model": float(people_cost_model),
+        "overtime_hours_month": float(overtime_hours_month),
+        "overtime_cost": float(overtime_cost_input),
+        "should_cost_headcount": float(should_cost_headcount),
+        "benchmark_hourly_rate": float(benchmark_hourly_rate),
+        "should_cost_target": float(should_cost_target),
+        "should_cost_gap": float(should_cost_gap),
         "productivity_description": productivity_description,
         "productivity_gain": float(productivity_gain),
         "risk_probability": float(risk_probability),
@@ -1439,6 +1753,7 @@ def calc_proposal_by_country(
         service_profile = supplier_data.get("service_profile", {}) or {}
         country_total["supplier_rows"].append({
             "Country": country,
+            "Supplier ID": supplier,
             "Supplier": supplier_display_name(supplier),
             "Item / Scope": supplier_data.get("item_name", ""),
             "Unit / Demand Driver": supplier_data.get("negotiated_unit", ""),
@@ -1457,6 +1772,13 @@ def calc_proposal_by_country(
             "Performance Score": service_profile.get("performance_score", None),
             "Performance Tier": service_profile.get("performance_tier", ""),
             "Performance-Adjusted Cost": service_profile.get("performance_adjusted_cost", None),
+            "Headcount / FTEs": service_profile.get("headcount", None),
+            "Price per Person / Month": service_profile.get("price_per_person_month", None),
+            "Hourly Rate": service_profile.get("hourly_rate", None),
+            "Overtime Hours / Month": service_profile.get("overtime_hours_month", None),
+            "Overtime Cost": service_profile.get("overtime_cost", None),
+            "Should-Cost Target": service_profile.get("should_cost_target", None),
+            "Should-Cost Gap": service_profile.get("should_cost_gap", None),
             "Scope Creep %": service_profile.get("scope_creep_pct", None),
             "Share %": shares[supplier],
             "Allocated Spend": allocated_spend,
@@ -1905,7 +2227,46 @@ with st.sidebar:
     optimization_step = st.select_slider("Fallback optimization share grid", options=[1, 2, 5, 10], value=5, help="Used only if exact LP optimization is unavailable/infeasible. Lower grid = deeper but slower fallback.")
     st.caption("Optimizer: exact LP available" if SCIPY_AVAILABLE else "Optimizer: grid fallback only; SciPy not available")
     risk_threshold = st.slider("Preferred weighted risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
+
+    st.markdown("### Supplier universe")
+    supplier_count_default = int(st.session_state.get("supplier_count_control", min(4, len(SUPPLIER_POOL))))
+    supplier_count_default = max(1, min(len(SUPPLIER_POOL), supplier_count_default))
+    supplier_count = st.slider(
+        "Number of suppliers in the analysis",
+        min_value=1,
+        max_value=len(SUPPLIER_POOL),
+        value=supplier_count_default,
+        step=1,
+        key="supplier_count_control",
+        help="Controls how many supplier cards are displayed and included in inputs, constraints, shares and optimization.",
+    )
+    focused_default = int(st.session_state.get("focused_supplier_count_control", min(4, int(supplier_count))))
+    focused_default = max(1, min(int(supplier_count), focused_default))
+    focused_supplier_count = st.slider(
+        "Top suppliers to focus executive view",
+        min_value=1,
+        max_value=int(supplier_count),
+        value=focused_default,
+        step=1,
+        key="focused_supplier_count_control",
+        help="After proposals are entered, the cockpit ranks suppliers and highlights only the top N best offers for executive focus.",
+    )
+    SUPPLIERS = SUPPLIER_POOL[:int(supplier_count)]
+    st.session_state["focused_supplier_count"] = int(focused_supplier_count)
+
     show_advanced_economic = st.checkbox("Show working capital economic view", value=True)
+
+    st.markdown("### Executive result visibility")
+    selected_result_stacks = st.multiselect(
+        "Stacks shown on the Executive Result screen",
+        options=RESULT_STACK_OPTIONS,
+        default=DEFAULT_RESULT_STACKS,
+        key="selected_result_stacks",
+        help="Choose which result stacks appear on the screen. The calculations still run in the background; this only controls the visual cockpit.",
+    )
+    if not selected_result_stacks:
+        selected_result_stacks = ["Total project saving", "AI Executive Copilot"]
+    st.markdown("<div class='stack-control-note'>Tip: keep only the decision stacks visible for an executive meeting, then open detailed stacks during Q&A.</div>", unsafe_allow_html=True)
 
     with st.expander("Supplier names", expanded=False):
         st.caption("Edit the supplier names once here. The labels are saved in the current app session and reflected across proposal inputs, risk, share sliders, charts and tables.")
@@ -1921,18 +2282,30 @@ with st.sidebar:
                 help="Compact label used in sliders, charts and executive cards.",
             )
 
+def show_stack(stack_name: str) -> bool:
+    try:
+        return stack_name in selected_result_stacks
+    except NameError:
+        return True
+
+
 # =============================================================================
 # Header
 # =============================================================================
 
+mode_chip = "Direct Materials Cockpit" if analysis_mode == "Direct Materials" else "Indirect / Services Command Center"
+hero_class = "hero-direct" if analysis_mode == "Direct Materials" else "hero-service"
+hero_copy = (
+    "Landed cost, FX, incoterm, MOQ, volume, inventory carrying, payment terms, treasury return and supplier-risk optimization."
+    if analysis_mode == "Direct Materials"
+    else "Service TCO, headcount/hour economics, overtime KPIs, scorecards, should-cost, contract leakage, productivity gains and supplier-risk optimization."
+)
 st.markdown(
-    """
-    <div class="executive-hero">
+    f"""
+    <div class="executive-hero {hero_class}">
+        <div class="mode-chip">{mode_chip}</div>
         <h1>Executive Procurement TCO & Should-Cost Dashboard</h1>
-        <p>
-            Two-in-one executive decision cockpit for Direct Materials and Indirect / Services: landed cost, service TCO,
-            scorecards, productivity gains, contract leakage, working-capital carry, supplier risk, Kraljic constraints and automatic cost x risk optimization.
-        </p>
+        <p>{hero_copy}</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -2289,10 +2662,10 @@ with input_tabs[3]:
             else:
                 st.caption("Manual mode: sliders are normalized for the calculation if the raw total is not exactly 100%.")
 
-            cols = st.columns(4)
+            cols = st.columns(min(4, max(1, len(SUPPLIERS))))
             raw_shares = {}
             for idx, supplier in enumerate(SUPPLIERS):
-                with cols[idx]:
+                with cols[idx % len(cols)]:
                     min_value = float(mins_now[supplier])
                     max_value = float(maxs_now[supplier])
                     key = share_key(country, supplier)
@@ -2376,6 +2749,42 @@ for country in COUNTRIES:
     final_shares[country] = allocate_with_bounds(raw, get_min_shares(), get_max_shares(), total=100.0)
 
 country_df, group_df, supplier_df, total = calc_scenario(final_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
+
+# Supplier focus lens: ranks all entered suppliers and highlights the top N offers
+# selected in the sidebar. Core scenario calculations still use the modeled shares;
+# this lens is intended to help executives quickly compare the best supplier offers.
+def build_supplier_focus_df(supplier_df: pd.DataFrame, analysis_mode: str) -> pd.DataFrame:
+    if supplier_df.empty:
+        return pd.DataFrame()
+    agg_map = {
+        "Economic Total": "sum",
+        "Allocated Spend": "sum",
+        "Risk Score": "mean",
+    }
+    optional_sum = [
+        "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap",
+        "Overtime Hours / Month", "Overtime Cost", "Service TCO Before Productivity",
+        "Proposed Contract Value",
+    ]
+    for col in optional_sum:
+        if col in supplier_df.columns:
+            agg_map[col] = "sum" if col not in {"Overtime Hours / Month"} else "mean"
+    if "Performance Score" in supplier_df.columns:
+        agg_map["Performance Score"] = "mean"
+    focus = supplier_df.groupby(["Supplier ID", "Supplier"], as_index=False).agg(agg_map)
+    if analysis_mode == "Indirect / Services" and "Performance-Adjusted Cost" in focus.columns:
+        focus["Executive Focus Metric"] = focus["Performance-Adjusted Cost"].fillna(focus["Economic Total"])
+        focus["Focus Rationale"] = "Lower performance-adjusted service cost, then lower risk"
+    else:
+        focus["Executive Focus Metric"] = focus["Economic Total"]
+        focus["Focus Rationale"] = "Lower economic all-in cost, then lower risk"
+    focus = focus.sort_values(["Executive Focus Metric", "Risk Score"], ascending=[True, True]).reset_index(drop=True)
+    focus["Rank"] = range(1, len(focus) + 1)
+    return focus
+
+supplier_focus_df = build_supplier_focus_df(supplier_df, analysis_mode)
+focused_supplier_count = int(st.session_state.get("focused_supplier_count", min(4, len(SUPPLIERS))))
+top_focus_supplier_ids = supplier_focus_df.head(focused_supplier_count)["Supplier ID"].tolist() if not supplier_focus_df.empty else SUPPLIERS[:focused_supplier_count]
 
 # =============================================================================
 # Always-visible Cost Optimization panel
@@ -2502,335 +2911,388 @@ with st.expander("Show gross financial cost and treasury return audit by country
 # Executive output
 # =============================================================================
 
-render_section("Executive Result", "Decision-ready view separating gross payment-term financial cost from treasury return offset. Net financial saving/impact is used for the finance decision view.")
+render_section(
+    "Executive Result",
+    "Decision-ready cockpit. Use the sidebar visibility selector to show only the stacks needed for the meeting."
+)
+
+# Keep commonly used regional rows available even when the stacks are hidden.
+brazil_row = group_df[group_df["Group"] == "Brazil"].iloc[0]
+latam_row = group_df[group_df["Group"] == "LATAM"].iloc[0]
 
 gross_total_saving_impact = total["Gross All-In Delta"]
 working_capital_gain_offset = total["Treasury Return Offset Delta"]
 total_saving_plus_working_capital = gross_total_saving_impact + working_capital_gain_offset
 final_economic_all_in = total["Economic All-In Delta"]
 
-project_result_color = GREEN if final_economic_all_in <= 0 else RED
-render_visual_breaker(
-    'Total project saving',
-    'Final Brazil + LATAM result, explicitly separating gross total saving, working-capital gain and inventory-adjusted economic all-in.',
-    '🏁',
-    project_result_color,
-    'Final project result'
-)
-project_cols = st.columns([1.2, 1.2, 1.55, 1.35])
-with project_cols[0]:
-    render_kpi(
-        "Gross Total Saving / Impact",
-        format_money(gross_total_saving_impact, currency_symbol, compact=True, signed=True),
-        "New total spend - current total spend | before treasury return",
-        delta_tone(gross_total_saving_impact),
-        short=True,
+if show_stack("Top supplier focus lens") and not supplier_focus_df.empty:
+    focus_accent = "#2563eb" if analysis_mode == "Direct Materials" else "#7c3aed"
+    render_visual_breaker(
+        "Top supplier focus lens",
+        f"Executive view focused on the top {focused_supplier_count} supplier offer(s) from the {len(SUPPLIERS)} supplier universe.",
+        "🎛️",
+        focus_accent,
+        "Supplier focus",
     )
-with project_cols[1]:
-    render_kpi(
-        "Working Capital Gain",
-        format_money(working_capital_gain_offset, currency_symbol, compact=True, signed=True),
-        "Current treasury return - new treasury return | favorable when negative",
-        delta_tone(working_capital_gain_offset),
-        short=True,
-    )
-with project_cols[2]:
-    render_kpi(
-        "Total Saving + Working Capital",
-        format_money(total_saving_plus_working_capital, currency_symbol, compact=True, signed=True),
-        "Gross total saving/impact + incremental treasury return offset",
-        delta_tone(total_saving_plus_working_capital),
-    )
-with project_cols[3]:
-    render_kpi(
-        "Final Economic All-In",
-        format_money(final_economic_all_in, currency_symbol, compact=True, signed=True),
-        "Total saving + working capital + inventory carrying delta",
-        delta_tone(final_economic_all_in),
-        short=True,
-    )
+    focus_display = supplier_focus_df.head(focused_supplier_count).copy()
+    focus_cols = ["Rank", "Supplier", "Executive Focus Metric", "Economic Total", "Risk Score"]
+    if analysis_mode != "Direct Materials":
+        for extra in ["Performance Score", "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap", "Overtime Hours / Month"]:
+            if extra in focus_display.columns:
+                focus_cols.append(extra)
+    focus_cols = [c for c in focus_cols if c in focus_display.columns]
+    focus_display = focus_display[focus_cols]
+    for col in ["Executive Focus Metric", "Economic Total", "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap"]:
+        if col in focus_display.columns:
+            focus_display[col] = focus_display[col].map(lambda x: format_money(x, currency_symbol, compact=True, signed=(col == "Should-Cost Gap")))
+    if "Risk Score" in focus_display.columns:
+        focus_display["Risk Score"] = focus_display["Risk Score"].map(lambda x: f"{x:.2f}")
+    if "Performance Score" in focus_display.columns:
+        focus_display["Performance Score"] = focus_display["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+    if "Overtime Hours / Month" in focus_display.columns:
+        focus_display["Overtime Hours / Month"] = focus_display["Overtime Hours / Month"].map(lambda x: "" if pd.isna(x) else f"{x:.1f} h/mo")
+    st.markdown(f"<div class='executive-panel {'direct-accent' if analysis_mode == 'Direct Materials' else 'service-accent'}'>", unsafe_allow_html=True)
+    st.dataframe(focus_display, use_container_width=True, hide_index=True)
+    st.caption("Use the sidebar focus slider to change how many top suppliers are highlighted. Share allocation and optimization still respect the scenario and constraints modeled in the tabs above.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-contribution_cols = st.columns(2)
-with contribution_cols[0]:
-    render_kpi(
-        "Brazil Contribution",
-        format_money(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
-        "Brazil economic all-in delta",
-        delta_tone(group_df[group_df["Group"] == "Brazil"].iloc[0]["Economic All-In Delta"]),
-        short=True,
+if show_stack("Total project saving"):
+    project_result_color = GREEN if final_economic_all_in <= 0 else RED
+    render_visual_breaker(
+        "Total project saving",
+        "Final Brazil + LATAM result, separating gross total saving, working-capital gain and inventory-adjusted economic all-in.",
+        "🏁",
+        project_result_color,
+        "Final project result",
     )
-with contribution_cols[1]:
-    render_kpi(
-        "LATAM Contribution",
-        format_money(group_df[group_df["Group"] == "LATAM"].iloc[0]["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
-        "Mexico + Argentina + Colombia economic all-in delta",
-        delta_tone(group_df[group_df["Group"] == "LATAM"].iloc[0]["Economic All-In Delta"]),
-        short=True,
+    project_cols = st.columns([1.2, 1.2, 1.55, 1.35], gap="medium")
+    with project_cols[0]:
+        render_kpi(
+            "Gross Total Saving / Impact",
+            format_money(gross_total_saving_impact, currency_symbol, compact=True, signed=True),
+            "New total spend - current total spend | before treasury return",
+            delta_tone(gross_total_saving_impact),
+            short=True,
+        )
+    with project_cols[1]:
+        render_kpi(
+            "Working Capital Gain",
+            format_money(working_capital_gain_offset, currency_symbol, compact=True, signed=True),
+            "Current treasury return - new treasury return | favorable when negative",
+            delta_tone(working_capital_gain_offset),
+            short=True,
+        )
+    with project_cols[2]:
+        render_kpi(
+            "Total Saving + Working Capital",
+            format_money(total_saving_plus_working_capital, currency_symbol, compact=True, signed=True),
+            "Gross total saving/impact + incremental treasury return offset",
+            delta_tone(total_saving_plus_working_capital),
+        )
+    with project_cols[3]:
+        render_kpi(
+            "Final Economic All-In",
+            format_money(final_economic_all_in, currency_symbol, compact=True, signed=True),
+            "Total saving + working capital + inventory carrying delta",
+            delta_tone(final_economic_all_in),
+            short=True,
+        )
+
+    contribution_cols = st.columns(2, gap="medium")
+    with contribution_cols[0]:
+        render_kpi(
+            "Brazil Contribution",
+            format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
+            "Brazil economic all-in delta",
+            delta_tone(brazil_row["Economic All-In Delta"]),
+            short=True,
+        )
+    with contribution_cols[1]:
+        render_kpi(
+            "LATAM Contribution",
+            format_money(latam_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
+            "Mexico + Argentina + Colombia economic all-in delta",
+            delta_tone(latam_row["Economic All-In Delta"]),
+            short=True,
+        )
+
+if show_stack("AI Executive Copilot"):
+    render_visual_breaker(
+        "AI Executive Copilot",
+        "One-click concise executive recommendation based on the current scenario. Local preview today; the prompt payload is ready for external AI/API integration.",
+        "🤖",
+        "#6366f1",
+        "AI brief",
     )
+    ai_cols = st.columns([0.30, 0.70], gap="large")
+    with ai_cols[0]:
+        if st.button("Generate AI Executive Brief", type="primary", use_container_width=True, key="generate_ai_exec_brief"):
+            st.session_state["ai_prompt_payload"] = build_ai_prompt_payload(
+                analysis_mode=analysis_mode,
+                total=total,
+                group_df=group_df,
+                supplier_focus_df=supplier_focus_df,
+                focused_supplier_count=focused_supplier_count,
+                currency=currency_symbol,
+            )
+            st.session_state["ai_exec_brief"] = generate_ai_executive_brief(
+                analysis_mode=analysis_mode,
+                total=total,
+                group_df=group_df,
+                supplier_focus_df=supplier_focus_df,
+                focused_supplier_count=focused_supplier_count,
+                currency=currency_symbol,
+            )
+        st.caption("For now this is a controlled in-app executive analysis. A future API key can replace the local logic with a real AI call.")
+    with ai_cols[1]:
+        st.markdown(
+            "<div class='insight-box'><b>How it works</b><br>The app summarizes the current scenario, top suppliers, total saving, working capital, regional deltas, service KPIs and risk. The output is intentionally short for executive use.</div>",
+            unsafe_allow_html=True,
+        )
+    if st.session_state.get("ai_exec_brief"):
+        st.markdown(st.session_state["ai_exec_brief"], unsafe_allow_html=True)
+        with st.expander("Copy/paste payload for external AI tool", expanded=False):
+            st.text_area(
+                "Prompt payload",
+                value=st.session_state.get("ai_prompt_payload", ""),
+                height=220,
+                key="ai_prompt_payload_textarea",
+            )
 
-render_visual_breaker('Total cost stack', 'Commercial spend and gross payment-term cost comparison.', '🧾', '#3b82f6', 'Cost baseline')
-row1 = st.columns(6)
-with row1[0]:
-    render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
-with row1[1]:
-    render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Supplier proposals x shares", "neutral")
-with row1[2]:
-    render_kpi("Current Financial Cost", format_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend x current payment-term rate", "neutral")
-with row1[3]:
-    render_kpi("New Financial Cost", format_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend x proposed payment-term rates", "neutral")
-with row1[4]:
-    render_kpi("Current Total Spend", format_money(total["Current Total Spend"], currency_symbol, compact=True), "Current spend + current financial cost", "neutral")
-with row1[5]:
-    render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
+if show_stack("Total cost stack"):
+    render_visual_breaker("Total cost stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline")
+    row1 = st.columns(6, gap="medium")
+    with row1[0]:
+        render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
+    with row1[1]:
+        render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Supplier proposals x shares", "neutral")
+    with row1[2]:
+        render_kpi("Current Financial Cost", format_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend x current payment-term rate", "neutral")
+    with row1[3]:
+        render_kpi("New Financial Cost", format_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend x proposed payment-term rates", "neutral")
+    with row1[4]:
+        render_kpi("Current Total Spend", format_money(total["Current Total Spend"], currency_symbol, compact=True), "Current spend + current financial cost", "neutral")
+    with row1[5]:
+        render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
 
-primary_reference_supplier = "ChemPrime"
-primary_reference_name = supplier_display_name(primary_reference_supplier)
-primary_reference_short = supplier_short_name(primary_reference_supplier)
-chemprime_reference = calc_full_supplier_reference_stack(
-    supplier=primary_reference_supplier,
-    country_inputs=country_inputs,
-    proposal_inputs=proposal_inputs,
-    method=rate_method,
-    payment_day_overrides={"Brazil": 90, "Mexico": 60, "Argentina": 60, "Colombia": 60},
-)
-
-render_visual_breaker(
-    f'New {primary_reference_short} condition stack',
-    f'Benchmark scenario assuming 100% volume under revised {primary_reference_name} conditions.',
-    '🏭',
-    '#f59e0b',
-    'Reference case'
-)
-row1b = st.columns(6)
-with row1b[0]:
-    render_kpi(
-        f"100% {primary_reference_short} Spend",
-        format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True),
-        f"100% awarded to {primary_reference_short} at proposed spend (+25%)",
-        "neutral",
+if show_stack("Reference supplier condition stack") and SUPPLIERS:
+    primary_reference_supplier = SUPPLIERS[0]
+    primary_reference_name = supplier_display_name(primary_reference_supplier)
+    primary_reference_short = supplier_short_name(primary_reference_supplier)
+    chemprime_reference = calc_full_supplier_reference_stack(
+        supplier=primary_reference_supplier,
+        country_inputs=country_inputs,
+        proposal_inputs=proposal_inputs,
+        method=rate_method,
+        payment_day_overrides={"Brazil": 90, "Mexico": 60, "Argentina": 60, "Colombia": 60},
     )
-with row1b[1]:
-    render_kpi(
-        "New Spend",
-        format_money(total["New Spend"], currency_symbol, compact=True),
-        "Supplier proposals x shares",
-        "neutral",
+    render_visual_breaker(
+        f"New {primary_reference_short} condition stack",
+        f"Benchmark scenario assuming 100% volume under revised {primary_reference_name} conditions.",
+        "🏭",
+        "#f59e0b",
+        "Reference case",
     )
-with row1b[2]:
-    render_kpi(
-        f"100% {primary_reference_short} Fin. Cost",
-        format_money(chemprime_reference["Reference Financial Cost"], currency_symbol, compact=True),
-        f"BR 90 dd | LATAM 60 dd financial terms",
-        "neutral",
-    )
-with row1b[3]:
-    render_kpi(
-        "New Financial Cost",
-        format_money(total["New Financial Cost"], currency_symbol, compact=True),
-        "New spend x proposed payment-term rates",
-        "neutral",
-    )
-with row1b[4]:
-    render_kpi(
-        f"100% {primary_reference_short} Total Spend",
-        format_money(chemprime_reference["Reference Total Spend"], currency_symbol, compact=True),
-        f"100% {primary_reference_short} spend + BR 90 dd / LATAM 60 dd financial cost",
-        "neutral",
-    )
-with row1b[5]:
-    render_kpi(
-        "New Total Spend",
-        format_money(total["New Total Spend"], currency_symbol, compact=True),
-        "New spend + new financial cost",
-        "neutral",
-    )
+    row1b = st.columns(6, gap="medium")
+    with row1b[0]:
+        render_kpi(f"100% {primary_reference_short} Spend", format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True), f"100% awarded to {primary_reference_short} at proposed spend", "neutral")
+    with row1b[1]:
+        render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Supplier proposals x shares", "neutral")
+    with row1b[2]:
+        render_kpi(f"100% {primary_reference_short} Fin. Cost", format_money(chemprime_reference["Reference Financial Cost"], currency_symbol, compact=True), "BR 90 dd | LATAM 60 dd financial terms", "neutral")
+    with row1b[3]:
+        render_kpi("New Financial Cost", format_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend x proposed payment-term rates", "neutral")
+    with row1b[4]:
+        render_kpi(f"100% {primary_reference_short} Total Spend", format_money(chemprime_reference["Reference Total Spend"], currency_symbol, compact=True), f"100% {primary_reference_short} spend + reference financial cost", "neutral")
+    with row1b[5]:
+        render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
 
-render_visual_breaker('Working capital carry view', 'Treasury return and net financial effect from payment-term differences.', '🏦', '#10b981', 'Cash timing')
-wc_row = st.columns(5)
-with wc_row[0]:
-    render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
-with wc_row[1]:
-    render_kpi("New Treasury Return", format_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed payment terms", "good", short=True)
-with wc_row[2]:
-    render_kpi("Current Net Financial Effect", format_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Current financial cost - treasury return", delta_tone(total["Current Net Financial Effect"]), short=True)
-with wc_row[3]:
-    render_kpi("New Net Financial Effect", format_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost - treasury return", delta_tone(total["New Net Financial Effect"]), short=True)
-with wc_row[4]:
-    render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
+if show_stack("Working capital carry view"):
+    render_visual_breaker("Working capital carry view", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing")
+    wc_row = st.columns(5, gap="medium")
+    with wc_row[0]:
+        render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
+    with wc_row[1]:
+        render_kpi("New Treasury Return", format_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed payment terms", "good", short=True)
+    with wc_row[2]:
+        render_kpi("Current Net Financial Effect", format_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Current financial cost - treasury return", delta_tone(total["Current Net Financial Effect"]), short=True)
+    with wc_row[3]:
+        render_kpi("New Net Financial Effect", format_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost - treasury return", delta_tone(total["New Net Financial Effect"]), short=True)
+    with wc_row[4]:
+        render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
 
-render_visual_breaker('Total decomposition', 'Decision-ready breakdown of spend, financial effect, inventory and risk.', '🧩', '#8b5cf6', 'Decision view')
-row2 = st.columns(6)
-with row2[0]:
-    render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
-with row2[1]:
-    render_kpi("Gross Financial Saving / Impact", format_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New gross financial cost - current gross financial cost", delta_tone(total["Financial Delta"]), short=True)
-with row2[2]:
-    render_kpi("Treasury Return Offset", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new treasury return", delta_tone(total["Treasury Return Offset Delta"]), short=True)
-with row2[3]:
-    render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross financial delta + treasury return offset", delta_tone(total["Net Financial Delta"]), short=True)
-with row2[4]:
-    render_kpi("Economic All-In Saving / Impact", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net financial effect + inventory carrying", delta_tone(total["Economic All-In Delta"]), short=True)
-with row2[5]:
-    render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]), short=True)
+if show_stack("Total decomposition"):
+    render_visual_breaker("Total decomposition", "Decision-ready breakdown of spend, financial effect, inventory and risk.", "🧩", "#8b5cf6", "Decision view")
+    row2 = st.columns(6, gap="medium")
+    with row2[0]:
+        render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
+    with row2[1]:
+        render_kpi("Gross Financial Saving / Impact", format_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New gross financial cost - current gross financial cost", delta_tone(total["Financial Delta"]), short=True)
+    with row2[2]:
+        render_kpi("Treasury Return Offset", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new treasury return", delta_tone(total["Treasury Return Offset Delta"]), short=True)
+    with row2[3]:
+        render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross financial delta + treasury return offset", delta_tone(total["Net Financial Delta"]), short=True)
+    with row2[4]:
+        render_kpi("Economic All-In Saving / Impact", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net financial effect + inventory carrying", delta_tone(total["Economic All-In Delta"]), short=True)
+    with row2[5]:
+        render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]), short=True)
 
-brazil_row = group_df[group_df["Group"] == "Brazil"].iloc[0]
-latam_row = group_df[group_df["Group"] == "LATAM"].iloc[0]
+if show_stack("Brazil result"):
+    render_visual_breaker("Brazil result", "Country-level result and impact drivers for Brazil, including payment-term movement.", "🇧🇷", "#06b6d4", "Country view")
+    row3 = st.columns(7, gap="medium")
+    with row3[0]:
+        render_kpi("Current Avg Payment Term", f"{brazil_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
+    with row3[1]:
+        render_kpi("New Proposal Avg Payment Term", f"{brazil_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
+    with row3[2]:
+        render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
+    with row3[3]:
+        render_kpi("Gross Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil gross financial cost delta", delta_tone(brazil_row["Financial Delta"]), short=True)
+    with row3[4]:
+        render_kpi("Treasury Return Offset", format_money(brazil_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Brazil current return - new return", delta_tone(brazil_row["Treasury Return Offset Delta"]), short=True)
+    with row3[5]:
+        render_kpi("Net Financial Saving / Impact", format_money(brazil_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil net financial effect after treasury return", delta_tone(brazil_row["Net Financial Delta"]), short=True)
+    with row3[6]:
+        render_kpi("Economic All-In Saving / Impact", format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil spend + net financial effect + inventory", delta_tone(brazil_row["Economic All-In Delta"]), short=True)
 
-render_visual_breaker('Brazil result', 'Country-level result and impact drivers for Brazil, including payment-term movement.', '🇧🇷', '#06b6d4', 'Country view')
-row3 = st.columns(7)
-with row3[0]:
-    render_kpi("Current Avg Payment Term", f"{brazil_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
-with row3[1]:
-    render_kpi("New Proposal Avg Payment Term", f"{brazil_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
-with row3[2]:
-    render_kpi("Spend Saving / Impact", format_money(brazil_row["Spend Delta"], currency_symbol, compact=True, signed=True), "Brazil new spend - current spend", delta_tone(brazil_row["Spend Delta"]), short=True)
-with row3[3]:
-    render_kpi("Gross Financial Saving / Impact", format_money(brazil_row["Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil gross financial cost delta", delta_tone(brazil_row["Financial Delta"]), short=True)
-with row3[4]:
-    render_kpi("Treasury Return Offset", format_money(brazil_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Brazil current return - new return", delta_tone(brazil_row["Treasury Return Offset Delta"]), short=True)
-with row3[5]:
-    render_kpi("Net Financial Saving / Impact", format_money(brazil_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Brazil net financial effect after treasury return", delta_tone(brazil_row["Net Financial Delta"]), short=True)
-with row3[6]:
-    render_kpi("Economic All-In Saving / Impact", format_money(brazil_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Brazil spend + net financial effect + inventory", delta_tone(brazil_row["Economic All-In Delta"]), short=True)
+if show_stack("LATAM result"):
+    render_visual_breaker("LATAM result", "Consolidated Mexico, Argentina and Colombia impact view, including payment-term movement.", "🌎", "#ec4899", "Regional view")
+    row4 = st.columns(7, gap="medium")
+    with row4[0]:
+        render_kpi("Current Avg Payment Term", f"{latam_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
+    with row4[1]:
+        render_kpi("New Proposal Avg Payment Term", f"{latam_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
+    with row4[2]:
+        render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
+    with row4[3]:
+        render_kpi("Gross Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM gross financial cost delta", delta_tone(latam_row["Financial Delta"]), short=True)
+    with row4[4]:
+        render_kpi("Treasury Return Offset", format_money(latam_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "LATAM current return - new return", delta_tone(latam_row["Treasury Return Offset Delta"]), short=True)
+    with row4[5]:
+        render_kpi("Net Financial Saving / Impact", format_money(latam_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM net financial effect after treasury return", delta_tone(latam_row["Net Financial Delta"]), short=True)
+    with row4[6]:
+        render_kpi("Economic All-In Saving / Impact", format_money(latam_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "LATAM spend + net financial effect + inventory", delta_tone(latam_row["Economic All-In Delta"]), short=True)
 
-render_visual_breaker('LATAM result', 'Consolidated Mexico, Argentina and Colombia impact view, including payment-term movement.', '🌎', '#ec4899', 'Regional view')
-row4 = st.columns(7)
-with row4[0]:
-    render_kpi("Current Avg Payment Term", f"{latam_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
-with row4[1]:
-    render_kpi("New Proposal Avg Payment Term", f"{latam_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
-with row4[2]:
-    render_kpi("Spend Saving / Impact", format_money(latam_row["Spend Delta"], currency_symbol, compact=True, signed=True), "LATAM new spend - current spend", delta_tone(latam_row["Spend Delta"]), short=True)
-with row4[3]:
-    render_kpi("Gross Financial Saving / Impact", format_money(latam_row["Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM gross financial cost delta", delta_tone(latam_row["Financial Delta"]), short=True)
-with row4[4]:
-    render_kpi("Treasury Return Offset", format_money(latam_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "LATAM current return - new return", delta_tone(latam_row["Treasury Return Offset Delta"]), short=True)
-with row4[5]:
-    render_kpi("Net Financial Saving / Impact", format_money(latam_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), "LATAM net financial effect after treasury return", delta_tone(latam_row["Net Financial Delta"]), short=True)
-with row4[6]:
-    render_kpi("Economic All-In Saving / Impact", format_money(latam_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "LATAM spend + net financial effect + inventory", delta_tone(latam_row["Economic All-In Delta"]), short=True)
-
-if total["Economic All-In Delta"] <= 0:
-    st.markdown(
-        f"""
-        <div class="decision-card decision-good">
-            <div class="decision-title">Recommended scenario is economically attractive</div>
-            <div class="decision-body">
-                Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b> after considering supplier financing,
-                treasury carry, inventory carrying cost and weighted risk. Commercial spend delta is <b>{format_money(total['Spend Delta'], currency_symbol, signed=True)}</b>.
+if show_stack("Decision recommendation"):
+    if total["Economic All-In Delta"] <= 0:
+        st.markdown(
+            f"""
+            <div class="decision-card decision-good">
+                <div class="decision-title">Recommended scenario is economically attractive</div>
+                <div class="decision-body">
+                    Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b> after considering supplier financing,
+                    treasury carry, inventory carrying cost and weighted risk. Commercial spend delta is <b>{format_money(total['Spend Delta'], currency_symbol, signed=True)}</b>.
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        f"""
-        <div class="decision-card decision-bad">
-            <div class="decision-title">Scenario still creates economic cost impact</div>
-            <div class="decision-body">
-                Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b>. Use Cost Optimization or adjust supplier mix, payment terms, risk constraints or proposal spend.
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"""
+            <div class="decision-card decision-bad">
+                <div class="decision-title">Scenario still creates economic cost impact</div>
+                <div class="decision-body">
+                    Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b>. Use Cost Optimization or adjust supplier mix, payment terms, risk constraints or proposal spend.
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
 
 # =============================================================================
 # Charts
 # =============================================================================
 
-chart_col1, chart_col2 = st.columns([1.2, 1.0])
-with chart_col1:
-    if PLOTLY_AVAILABLE:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"],
-            y=[total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]],
-            marker_color=["#64748b", "#2563eb", "#f97316", "#f97316", "#0f766e", "#1d4ed8"],
-            text=[format_money(v, currency_symbol, compact=True) for v in [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]],
-            textposition="outside",
-            hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
-        ))
-        fig.update_layout(title="Total Cost Stack", height=430, yaxis_title=f"Value ({currency_symbol})")
-        st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
-    else:
-        st.bar_chart(pd.DataFrame({"Value": [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]}, index=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"]))
+if show_stack("Charts"):
+    render_visual_breaker("Charts", "Visual comparison of cost stack, decomposition and cost-risk trade-offs.", "📈", "#2563eb", "Visual analytics")
+    chart_col1, chart_col2 = st.columns([1.2, 1.0], gap="large")
+    with chart_col1:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"],
+                y=[total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]],
+                marker_color=["#64748b", "#2563eb", "#f97316", "#f97316", "#0f766e", "#1d4ed8"],
+                text=[format_money(v, currency_symbol, compact=True) for v in [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]],
+                textposition="outside",
+                hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
+            ))
+            fig.update_layout(title="Total Cost Stack", height=430, yaxis_title=f"Value ({currency_symbol})")
+            st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
+        else:
+            st.bar_chart(pd.DataFrame({"Value": [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]}, index=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"]))
+        st.markdown("</div>", unsafe_allow_html=True)
 
-with chart_col2:
-    if PLOTLY_AVAILABLE:
-        fig = go.Figure()
-        decomp_names = ["Spend Delta", "Net Financial Delta", "Inventory Delta", "Economic Delta"]
-        decomp_vals = [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]
-        fig.add_trace(go.Bar(
-            x=decomp_names,
-            y=decomp_vals,
-            marker_color=[GREEN if v < 0 else RED if v > 0 else BLUE for v in decomp_vals],
-            text=[format_money(v, currency_symbol, compact=True, signed=True) for v in decomp_vals],
-            textposition="outside",
-            hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
-        ))
-        fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-        fig.update_layout(title="Economic Value Decomposition", height=430, yaxis_title=f"Delta ({currency_symbol})")
-        st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
-    else:
-        st.bar_chart(pd.DataFrame({"Delta": [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]}, index=["Spend", "Net Financial", "Inventory", "Economic"]))
+    with chart_col2:
+        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE:
+            fig = go.Figure()
+            decomp_names = ["Spend Delta", "Net Financial Delta", "Inventory Delta", "Economic Delta"]
+            decomp_vals = [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]
+            fig.add_trace(go.Bar(
+                x=decomp_names,
+                y=decomp_vals,
+                marker_color=[GREEN if v < 0 else RED if v > 0 else BLUE for v in decomp_vals],
+                text=[format_money(v, currency_symbol, compact=True, signed=True) for v in decomp_vals],
+                textposition="outside",
+                hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
+            ))
+            fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+            fig.update_layout(title="Economic Delta Decomposition", height=430, yaxis_title=f"Delta ({currency_symbol})")
+            st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
+        else:
+            st.bar_chart(pd.DataFrame({"Value": [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]}, index=["Spend Delta", "Net Financial Delta", "Inventory Delta", "Economic Delta"]))
+        st.markdown("</div>", unsafe_allow_html=True)
 
-chart_col3, chart_col4 = st.columns([1.0, 1.0])
-with chart_col3:
-    allocation_rows = []
-    for country in COUNTRIES:
-        for supplier in SUPPLIERS:
-            allocation_rows.append({"Country": country, "Supplier": supplier_short_name(supplier), "Share %": final_shares[country][supplier]})
-    allocation_df = pd.DataFrame(allocation_rows)
-    if PLOTLY_AVAILABLE:
-        fig = go.Figure()
-        for supplier in [supplier_short_name(s) for s in SUPPLIERS]:
-            subset = allocation_df[allocation_df["Supplier"] == supplier]
-            fig.add_trace(go.Bar(x=subset["Country"], y=subset["Share %"], name=supplier, text=[f"{v:.0f}%" for v in subset["Share %"]], textposition="inside"))
-        fig.update_layout(title="Supplier Share Projection by Country", barmode="stack", height=430, yaxis_title="Share %")
-        st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
-    else:
-        st.bar_chart(allocation_df.pivot(index="Country", columns="Supplier", values="Share %"))
-
-with chart_col4:
-    # Efficient frontier approximation with named scenarios.
-    frontier_rows = []
-    frontier_rows.append({"Scenario": "Current projection", "Risk": total["Weighted Risk"], "Economic Delta": total["Economic All-In Delta"]})
+    frontier_rows = [
+        {"Scenario": "Current scenario", "Risk": total["Weighted Risk"], "Economic Delta": total["Economic All-In Delta"]},
+    ]
     try:
-        opt_shares, opt_rationale, _ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(optimization_step))
+        opt_shares, _, _ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(optimization_step))
         _, _, _, opt_total = calc_scenario(opt_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
         frontier_rows.append({"Scenario": "Optimized", "Risk": opt_total["Weighted Risk"], "Economic Delta": opt_total["Economic All-In Delta"]})
     except Exception:
         pass
-    # Lowest risk feasible: allocate as much as possible to lowest risk suppliers.
-    low_risk_preferences = {s: max(0.0, 6.0 - supplier_risk[s]) for s in SUPPLIERS}
-    low_risk_shares = {country: allocate_with_bounds(low_risk_preferences, get_min_shares(), get_max_shares(), 100.0) for country in COUNTRIES}
-    _, _, _, low_risk_total = calc_scenario(low_risk_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
-    frontier_rows.append({"Scenario": "Lowest risk", "Risk": low_risk_total["Weighted Risk"], "Economic Delta": low_risk_total["Economic All-In Delta"]})
+    try:
+        low_risk_preferences = {s: max(0.0, 6.0 - supplier_risk[s]) for s in SUPPLIERS}
+        low_risk_shares = {country: allocate_with_bounds(low_risk_preferences, get_min_shares(), get_max_shares(), 100.0) for country in COUNTRIES}
+        _, _, _, low_risk_total = calc_scenario(low_risk_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
+        frontier_rows.append({"Scenario": "Lowest risk", "Risk": low_risk_total["Weighted Risk"], "Economic Delta": low_risk_total["Economic All-In Delta"]})
+    except Exception:
+        pass
     frontier_df = pd.DataFrame(frontier_rows)
+    st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
     if PLOTLY_AVAILABLE:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=frontier_df["Risk"], y=frontier_df["Economic Delta"], mode="markers+text",
-            text=frontier_df["Scenario"], textposition="top center", marker=dict(size=15, color=[BLUE, GREEN, AMBER][:len(frontier_df)]),
+            x=frontier_df["Risk"],
+            y=frontier_df["Economic Delta"],
+            mode="markers+text",
+            text=frontier_df["Scenario"],
+            textposition="top center",
+            marker=dict(size=15, color=[BLUE, GREEN, AMBER, "#7c3aed"][:len(frontier_df)]),
             hovertemplate="%{text}<br>Risk: %{x:.2f}/5<br>Economic delta: " + currency_symbol + " %{y:,.2f}<extra></extra>",
         ))
         fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
         fig.update_layout(title="Cost x Risk Decision Map", height=430, xaxis_title="Weighted risk score", yaxis_title=f"Economic delta ({currency_symbol})")
         st.plotly_chart(apply_chart_theme(fig), use_container_width=True)
     else:
-        st.dataframe(frontier_df)
+        st.dataframe(frontier_df, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # =============================================================================
 # Working capital economic view and rationale
 # =============================================================================
 
-if show_advanced_economic:
+if show_stack("Working capital economic view") and show_advanced_economic:
     render_section("Working Capital Economic View", "This view separates P&L spend, payment-term financing, capital carry benefit and inventory carrying cost.")
-    econ_cols = st.columns(5)
+    econ_cols = st.columns(5, gap="medium")
     with econ_cols[0]:
         render_kpi("Current Capital Gain", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Uses current payment terms by country", "good", short=True)
     with econ_cols[1]:
-        render_kpi("New Capital Gain", format_money(total["New Capital Gain"], currency_symbol, compact=True), f"Uses supplier payment terms | avg {total.get("New Avg Return Days", 0):.0f}dd", "good", short=True)
+        render_kpi("New Capital Gain", format_money(total["New Capital Gain"], currency_symbol, compact=True), f"Uses supplier payment terms | avg {total.get('New Avg Return Days', 0):.0f}dd", "good", short=True)
     with econ_cols[2]:
         render_kpi("Inventory Delta", format_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New inventory cost - current inventory cost", delta_tone(total["Inventory Delta"]), short=True)
     with econ_cols[3]:
@@ -2843,7 +3305,8 @@ if show_advanced_economic:
     if isinstance(rationale_df, pd.DataFrame) and not rationale_df.empty:
         display_rat = rationale_df.copy()
         for col in ["Economic Delta", "Gross All-In Delta", "Spend Delta"]:
-            display_rat[col] = display_rat[col].map(lambda x: format_money(x, currency_symbol, signed=True))
+            if col in display_rat.columns:
+                display_rat[col] = display_rat[col].map(lambda x: format_money(x, currency_symbol, signed=True))
         st.dataframe(display_rat, use_container_width=True)
     else:
         st.info("Run Cost Optimization to generate a country-by-country allocation rationale.")
@@ -2852,86 +3315,90 @@ if show_advanced_economic:
 # Detailed tables
 # =============================================================================
 
-render_section("Detailed Data", "Audit trail for Finance, Procurement and category strategy discussions.")
-
-detail_tab_names = ["Country summary", "Region summary", "Supplier allocation", "Risk scores"]
-if analysis_mode != "Direct Materials":
-    detail_tab_names.append("Service scorecards")
-detail_tabs = st.tabs(detail_tab_names)
-with detail_tabs[0]:
-    display_country = country_df.copy()
-    money_cols = [c for c in display_country.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
-    for col in money_cols:
-        display_country[col] = display_country[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
-    for col in ["Weighted Risk", "Current Effective Financial Rate", "New Avg Financial Rate", "Current Effective Treasury Rate", "New Avg Treasury Rate"]:
-        if col in display_country:
-            if "Rate" in col:
-                display_country[col] = display_country[col].map(format_pct)
-            else:
-                display_country[col] = display_country[col].map(lambda x: f"{x:.2f}")
-    st.dataframe(display_country, use_container_width=True)
-with detail_tabs[1]:
-    display_group = group_df.copy()
-    money_cols = [c for c in display_group.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
-    for col in money_cols:
-        display_group[col] = display_group[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
-    st.dataframe(display_group, use_container_width=True)
-with detail_tabs[2]:
-    display_supplier = supplier_df.copy()
-    supplier_money_cols = [
-        "Allocated Spend", "Supplier Financial Cost", "Capital Gain Offset", "Inventory Carrying Cost", "Economic Total",
-        "Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost"
-    ]
-    for col in supplier_money_cols:
-        if col in display_supplier.columns:
-            display_supplier[col] = display_supplier[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol))
-    if "Share %" in display_supplier.columns:
-        display_supplier["Share %"] = display_supplier["Share %"].map(lambda x: f"{x:.1f}%")
-    if "Risk Score" in display_supplier.columns:
-        display_supplier["Risk Score"] = display_supplier["Risk Score"].map(lambda x: f"{x:.2f}")
-    if "Performance Score" in display_supplier.columns:
-        display_supplier["Performance Score"] = display_supplier["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-    if "Scope Creep %" in display_supplier.columns:
-        display_supplier["Scope Creep %"] = display_supplier["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-    st.dataframe(display_supplier, use_container_width=True)
-with detail_tabs[3]:
-    risk_df = pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS])
-    st.dataframe(risk_df, use_container_width=True)
-if analysis_mode != "Direct Materials":
-    with detail_tabs[4]:
-        service_cols = [
-            "Country", "Supplier", "Service Scope", "Pricing Model", "Proposed Contract Value",
-            "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost",
-            "Performance Score", "Performance Tier", "Performance-Adjusted Cost", "Scope Creep %",
-            "Share %", "Allocated Spend"
+if show_stack("Detailed data"):
+    render_section("Detailed Data", "Audit trail for Finance, Procurement and category strategy discussions.")
+    detail_tab_names = ["Country summary", "Region summary", "Supplier allocation", "Risk scores"]
+    if analysis_mode != "Direct Materials":
+        detail_tab_names.append("Service scorecards")
+    detail_tabs = st.tabs(detail_tab_names)
+    with detail_tabs[0]:
+        display_country = country_df.copy()
+        money_cols = [c for c in display_country.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
+        for col in money_cols:
+            display_country[col] = display_country[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
+        for col in ["Weighted Risk", "Current Effective Financial Rate", "New Avg Financial Rate", "Current Effective Treasury Rate", "New Avg Treasury Rate"]:
+            if col in display_country:
+                if "Rate" in col:
+                    display_country[col] = display_country[col].map(format_pct)
+                else:
+                    display_country[col] = display_country[col].map(lambda x: f"{x:.2f}")
+        st.dataframe(display_country, use_container_width=True)
+    with detail_tabs[1]:
+        display_group = group_df.copy()
+        money_cols = [c for c in display_group.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
+        for col in money_cols:
+            display_group[col] = display_group[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
+        st.dataframe(display_group, use_container_width=True)
+    with detail_tabs[2]:
+        display_supplier = supplier_df.copy()
+        if top_focus_supplier_ids:
+            display_supplier["Executive Focus"] = display_supplier["Supplier ID"].isin(top_focus_supplier_ids).map({True: "Top focus", False: "Other"})
+        supplier_money_cols = [
+            "Allocated Spend", "Supplier Financial Cost", "Capital Gain Offset", "Inventory Carrying Cost", "Economic Total",
+            "Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost",
+            "Price per Person / Month", "Hourly Rate", "Overtime Cost", "Should-Cost Target", "Should-Cost Gap",
         ]
-        available_cols = [c for c in service_cols if c in supplier_df.columns]
-        service_df = supplier_df[available_cols].copy()
-        for col in ["Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost", "Allocated Spend"]:
-            if col in service_df.columns:
-                service_df[col] = service_df[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol))
-        if "Performance Score" in service_df.columns:
-            service_df["Performance Score"] = service_df["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-        if "Scope Creep %" in service_df.columns:
-            service_df["Scope Creep %"] = service_df["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-        if "Share %" in service_df.columns:
-            service_df["Share %"] = service_df["Share %"].map(lambda x: f"{x:.1f}%")
-        st.dataframe(service_df, use_container_width=True)
+        for col in supplier_money_cols:
+            if col in display_supplier.columns:
+                display_supplier[col] = display_supplier[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol, signed=(col == "Should-Cost Gap")))
+        if "Share %" in display_supplier.columns:
+            display_supplier["Share %"] = display_supplier["Share %"].map(lambda x: f"{x:.1f}%")
+        if "Risk Score" in display_supplier.columns:
+            display_supplier["Risk Score"] = display_supplier["Risk Score"].map(lambda x: f"{x:.2f}")
+        if "Performance Score" in display_supplier.columns:
+            display_supplier["Performance Score"] = display_supplier["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+        if "Scope Creep %" in display_supplier.columns:
+            display_supplier["Scope Creep %"] = display_supplier["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
+        st.dataframe(display_supplier, use_container_width=True)
+    with detail_tabs[3]:
+        risk_df = pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS])
+        st.dataframe(risk_df, use_container_width=True)
+    if analysis_mode != "Direct Materials":
+        with detail_tabs[4]:
+            service_cols = [
+                "Country", "Supplier", "Service Scope", "Pricing Model", "Proposed Contract Value",
+                "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost",
+                "Performance Score", "Performance Tier", "Performance-Adjusted Cost", "Headcount / FTEs",
+                "Price per Person / Month", "Hourly Rate", "Overtime Hours / Month", "Overtime Cost",
+                "Should-Cost Target", "Should-Cost Gap", "Scope Creep %",
+                "Share %", "Allocated Spend",
+            ]
+            available_cols = [c for c in service_cols if c in supplier_df.columns]
+            service_df = supplier_df[available_cols].copy()
+            for col in ["Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost", "Allocated Spend", "Price per Person / Month", "Hourly Rate", "Overtime Cost", "Should-Cost Target", "Should-Cost Gap"]:
+                if col in service_df.columns:
+                    service_df[col] = service_df[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol, signed=(col == "Should-Cost Gap")))
+            if "Performance Score" in service_df.columns:
+                service_df["Performance Score"] = service_df["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+            if "Scope Creep %" in service_df.columns:
+                service_df["Scope Creep %"] = service_df["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
+            if "Share %" in service_df.columns:
+                service_df["Share %"] = service_df["Share %"].map(lambda x: f"{x:.1f}%")
+            st.dataframe(service_df, use_container_width=True)
 
 # =============================================================================
 # Download
 # =============================================================================
 
-export_country = country_df.copy()
-export_group = group_df.copy()
-export_supplier = supplier_df.copy()
-combined_csv = export_country.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="Download country summary CSV",
-    data=combined_csv,
-    file_name="executive_procurement_tco_country_summary.csv",
-    mime="text/csv",
-)
+if show_stack("Download export"):
+    export_country = country_df.copy()
+    combined_csv = export_country.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Download country summary CSV",
+        data=combined_csv,
+        file_name="executive_procurement_tco_country_summary.csv",
+        mime="text/csv",
+    )
 
 st.markdown(
     """
