@@ -1,20 +1,21 @@
-# Executive Procurement TCO & Should-Cost Dashboard — v36
+# Executive Procurement TCO & Should-Cost Dashboard — v39
 
-Two-in-one Streamlit cockpit for procurement decision making:
+Two-in-one Streamlit cockpit for procurement decision making.
+
+## Modes
 
 - **Direct Materials**: landed cost, FX, incoterm, MOQ, unit price × volume, inventory carrying, working capital and supplier optimization.
-- **Indirect / Services**: executive services cockpit with service scope, pricing model, headcount/FTE economics, hourly rates, overtime KPIs, supplier scorecards, contract leakage, service should-cost, productivity gains and risk-adjusted service TCO.
+- **Indirect / Services**: service scope, pricing model, headcount/FTE economics, hourly rates, overtime KPIs, supplier scorecards, contract leakage, open-cost / should-cost, productivity gains and risk-adjusted service TCO.
 
-## What changed in v36
+## What changed in v39
 
-- Visual lock improvements for KPI cards, executive panels, tables and chart shells to keep dimensions and alignment more consistent.
-- Sidebar **Executive result visibility** selector to choose which result stacks appear on screen.
-- Added **AI Executive Copilot** stack:
-  - button to generate a concise executive recommendation from the current scenario;
-  - local deterministic analysis for now, ready to be replaced by a real AI/API call later;
-  - copy/paste prompt payload for an external AI tool.
-- Direct Materials and Indirect / Services continue to use different visual identities.
-- Existing supplier count and top supplier focus sliders are preserved.
+- Added a visual **Dynamic Market Scope** selector in the sidebar.
+- The user can select which countries are included in the analysis instead of being locked to Brazil, Mexico, Argentina and Colombia.
+- Added an **Anchor / Primary Country** selector. This country receives its own executive result stack.
+- All other selected countries are consolidated into **Other selected markets**.
+- Country cards, supplier proposals, supplier performance, custom analysis items, risk constraints, share sliders, optimization and executive results now follow the selected market scope.
+- New countries receive practical auto-seeded defaults so the tool remains simple and fast to use, while still allowing the buyer to edit the country assumptions.
+- Maintained the two visual identities: Direct Materials and Indirect / Services.
 
 ## Run
 
@@ -27,4 +28,4 @@ streamlit run app.py
 
 - Negative deltas mean savings. Positive deltas mean cost impact.
 - Financial assumptions should be validated by Finance/Treasury before official saving recognition.
-- Services mode treats proposal spend as risk-adjusted Service TCO after productivity gains.
+- Services mode treats proposal spend as risk-adjusted Service TCO after productivity gains and custom adjustments.
