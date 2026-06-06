@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v41 - Local/Global View + Executive Dash View
+Version v43 - Executive Dash Tab + Session State Fix
 
 Run:
     pip install -r requirements.txt
@@ -2900,6 +2900,7 @@ input_tabs = st.tabs([
     "4. Custom Analysis Items",
     "5. Supplier Risk & Constraints",
     "6. Share Projection & Optimization",
+    "7. Executive Dash View",
 ])
 
 with input_tabs[0]:
@@ -3497,12 +3498,14 @@ with input_tabs[5]:
             if share_mode == "Manual":
                 effective = allocate_with_bounds(raw_shares, mins_now, maxs_now, total=100.0)
             else:
-                total_raw = sum(float(st.session_state[share_key(country, s)]) for s in SUPPLIERS)
+                total_raw = sum(float(st.session_state.get(share_key(country, s), raw_shares.get(s, 0.0))) for s in SUPPLIERS)
                 if abs(total_raw - 100.0) > 1e-6:
+                    # Do not write back to st.session_state after the sliders have been instantiated.
+                    # Streamlit forbids changing a widget-backed session key in the same run.
+                    # The model still receives a normalized/effective allocation for calculations.
                     effective = allocate_with_bounds(raw_shares, mins_now, maxs_now, total=100.0)
-                    for s, v in effective.items():
-                        st.session_state[share_key(country, s)] = v
-                effective = {s: float(st.session_state[share_key(country, s)]) for s in SUPPLIERS}
+                else:
+                    effective = {s: float(st.session_state.get(share_key(country, s), raw_shares.get(s, 0.0))) for s in SUPPLIERS}
 
             all_shares[country] = effective
             share_df = pd.DataFrame([{"Supplier": supplier_short_name(s), "Effective Model Share %": effective[s]} for s in SUPPLIERS])
@@ -3920,13 +3923,11 @@ with st.expander("Show gross financial cost and treasury return audit by country
     st.dataframe(audit_df, use_container_width=True)
 
 # =============================================================================
-# Executive View and Executive Dash View
+# Executive Dash View tab
 # =============================================================================
 
-executive_view_tab, executive_dash_tab = st.tabs(["Executive View", "Executive Dash View"])
-with executive_view_tab:
+with input_tabs[6]:
     render_executive_view_summary()
-with executive_dash_tab:
     render_executive_dash_view()
 
 # =============================================================================
