@@ -1,6 +1,6 @@
 """
 Executive Procurement TCO & Should-Cost Dashboard
-Version v25 FINAL - Treasury Return Offset Logic
+Version v34 - Two-in-One Direct Materials + Indirect Services Executive Cockpit
 
 Run:
     pip install -r requirements.txt
@@ -16,6 +16,8 @@ This dashboard compares current spend vs. supplier proposals using:
 - exact linear-programming cost optimization when SciPy is available, with grid fallback
 - proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
 - gross financial impact is explicitly offset by incremental treasury return to produce net financial saving/impact
+- Direct Materials mode calculates spend from landed unit price x volume before TCO analysis
+- Indirect / Services mode calculates service TCO with scope, pricing model, scorecards, productivity gains and contract leakage
 
 Key modeling guardrails
 -----------------------
@@ -28,6 +30,7 @@ Key modeling guardrails
 from __future__ import annotations
 
 import math
+from html import escape
 from itertools import product
 from typing import Dict, Iterable, List, Tuple
 
@@ -67,6 +70,11 @@ SHORT_SUPPLIER = {
     "Comercio de Oleos Nacional Distribuicao": "Distribuicao",
 }
 
+# Supplier IDs remain fixed internally so calculations, widget keys and saved scenarios
+# do not break. These editable display labels are what users see throughout the app.
+DEFAULT_SUPPLIER_DISPLAY_NAME = {supplier: supplier for supplier in SUPPLIERS}
+DEFAULT_SUPPLIER_SHORT_NAME = SHORT_SUPPLIER.copy()
+
 DEFAULT_CURRENT_SPEND = {
     "Brazil": 13_000_000.0,
     "Mexico": 3_000_000.0,
@@ -102,6 +110,134 @@ DEFAULT_INVENTORY_CARRY_RATE = {
     "Colombia": 22.0,
 }
 DEFAULT_CURRENT_INVENTORY_DAYS = {country: 30 for country in COUNTRIES}
+
+# Direct materials landed-cost defaults. Spend is calculated as landed unit price x volume.
+DEFAULT_ITEM_NAME = "Isopropyl Palmitate"
+DEFAULT_NEGOTIATED_UNIT = "kg"
+CURRENCY_OPTIONS = ["BRL", "USD", "EUR", "MXN", "ARS", "COP", "CNY"]
+INCOTERM_OPTIONS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP", "DDP"]
+DEFAULT_DIRECT_VOLUME = {
+    "Brazil": 1_000_000.0,
+    "Mexico": 250_000.0,
+    "Argentina": 200_000.0,
+    "Colombia": 125_000.0,
+}
+DEFAULT_DIRECT_CURRENCY = {
+    "Brazil": "BRL",
+    "Mexico": "USD",
+    "Argentina": "USD",
+    "Colombia": "USD",
+}
+DEFAULT_FX_TO_REPORTING = {
+    "BRL": 1.0,
+    "USD": 5.30,
+    "EUR": 5.75,
+    "MXN": 0.30,
+    "ARS": 0.0045,
+    "COP": 0.00135,
+    "CNY": 0.73,
+}
+LANDED_COST_COMPONENTS = [
+    ("base_unit_price", "Base / quoted unit price"),
+    ("conversion_cost", "Conversion cost"),
+    ("fixed_margin", "Fixed margin"),
+    ("international_freight", "International freight"),
+    ("insurance", "Insurance"),
+    ("customs_fees", "Customs / brokerage fees"),
+    ("import_duties_taxes", "Import duties / taxes"),
+    ("domestic_freight", "Domestic freight"),
+    ("local_taxes", "Local taxes"),
+]
+
+
+# Indirect / Services executive cockpit defaults. Services are modeled by scope,
+# pricing model, contract leakage, performance scorecard, risk and productivity gain.
+SERVICE_SCOPES = [
+    "IT Services / Digital & Outsourcing",
+    "Facilities / Cleaning & Workplace",
+    "Industrial MRO / VMI / Fastenal-style outsourcing",
+    "Professional Services / Consulting",
+    "Marketing / Agency Services",
+    "Logistics / Transport Services",
+    "BPO / Call Center",
+    "Generic Indirect Service",
+]
+SERVICE_SCOPE_CONFIG = {
+    "IT Services / Digital & Outsourcing": {
+        "icon": "💻",
+        "pricing_models": ["T&M rate card", "FTE-based outsourcing", "Fixed fee project", "Managed service SLA"],
+        "driver_label": "tickets, sprints, users or FTE-months",
+        "productivity_label": "automation, ticket deflection, cycle-time reduction or engineering velocity gain",
+        "field_labels": ["FTEs / squad members", "Tickets or story points / month", "Critical systems covered"],
+    },
+    "Facilities / Cleaning & Workplace": {
+        "icon": "🏢",
+        "pricing_models": ["Rate per m²", "Fixed monthly fee", "FTE-based service", "Unit visit rate"],
+        "driver_label": "m², sites, visits or headcount served",
+        "productivity_label": "frequency optimization, route density, material consumption reduction or supervision productivity",
+        "field_labels": ["Area serviced (m²)", "Sites / buildings", "Service frequency / month"],
+    },
+    "Industrial MRO / VMI / Fastenal-style outsourcing": {
+        "icon": "🧰",
+        "pricing_models": ["VMI managed service fee", "Cost plus fee", "Unit transaction fee", "FTE-based onsite service"],
+        "driver_label": "SKUs, transactions, sites, vending machines or tool-crib workload",
+        "productivity_label": "inventory reduction, stockout avoidance, technician productivity, tool-crib automation or consumption control",
+        "field_labels": ["Managed SKUs", "Transactions / month", "Sites / vending points"],
+    },
+    "Professional Services / Consulting": {
+        "icon": "🧠",
+        "pricing_models": ["Fixed fee project", "T&M rate card", "Retainer", "Success fee"],
+        "driver_label": "milestones, consultant days, workstreams or deliverables",
+        "productivity_label": "faster implementation, capability transfer, reduced internal effort or measurable business impact",
+        "field_labels": ["Senior consultant days", "Analyst / consultant days", "Milestones / deliverables"],
+    },
+    "Marketing / Agency Services": {
+        "icon": "🎯",
+        "pricing_models": ["Monthly retainer", "Project fee", "Pass-through + agency fee", "Rate card"],
+        "driver_label": "campaigns, assets, production jobs, media pass-through or usage rights",
+        "productivity_label": "asset reuse, lower rework, campaign cycle-time reduction or media efficiency",
+        "field_labels": ["Campaigns / month", "Assets / deliverables", "Media pass-through budget"],
+    },
+    "Logistics / Transport Services": {
+        "icon": "🚚",
+        "pricing_models": ["Rate per shipment", "Dedicated route / vehicle", "Cost plus fee", "SLA-based logistics service"],
+        "driver_label": "shipments, km, routes, pallets or dedicated vehicles",
+        "productivity_label": "load factor improvement, route optimization, fewer expedites or warehouse throughput gain",
+        "field_labels": ["Shipments / month", "Average km or routes", "Dedicated vehicles / lanes"],
+    },
+    "BPO / Call Center": {
+        "icon": "🎧",
+        "pricing_models": ["FTE-based", "Cost per contact", "SLA-based managed service", "Outcome-based"],
+        "driver_label": "contacts, calls, cases, FTEs or resolved transactions",
+        "productivity_label": "AHT reduction, containment, automation, first-contact resolution or lower escalation rate",
+        "field_labels": ["Contacts / month", "FTEs", "Target AHT / productivity index"],
+    },
+    "Generic Indirect Service": {
+        "icon": "🧾",
+        "pricing_models": ["Fixed fee", "T&M rate card", "Unit rate", "Retainer", "Pass-through + fee"],
+        "driver_label": "service units, hours, FTEs, projects or sites",
+        "productivity_label": "supplier-led productivity, demand reduction, process improvement or service efficiency",
+        "field_labels": ["Service units", "Hours / month", "Sites / users covered"],
+    },
+}
+SERVICE_SCORECARD_WEIGHTS = {
+    "Cost competitiveness": 20.0,
+    "SLA / Delivery": 20.0,
+    "Quality of service": 15.0,
+    "Stakeholder satisfaction": 15.0,
+    "Contract compliance": 10.0,
+    "Productivity / Innovation": 10.0,
+    "Risk & compliance": 5.0,
+    "ESG / diversity": 5.0,
+}
+DEFAULT_SERVICE_SCOPE = "IT Services / Digital & Outsourcing"
+DEFAULT_SERVICE_PRICING_MODEL = "FTE-based outsourcing"
+DEFAULT_SERVICE_CONTRACT_VALUE = {
+    "Brazil": 13_000_000.0,
+    "Mexico": 3_000_000.0,
+    "Argentina": 2_500_000.0,
+    "Colombia": 1_500_000.0,
+}
 
 # Validation example shared by the user.
 DEFAULT_PROPOSAL_SPEND = {
@@ -331,6 +467,14 @@ st.markdown(
         .small-note {font-size: 0.82rem; color: #64748b; margin-top: 8px;}
         .pill {display:inline-block; padding: 5px 10px; border-radius: 999px; background:#eff6ff; color:#1d4ed8; font-weight:700; font-size:0.78rem;}
         .supplier-box {border:1px solid rgba(148,163,184,.28); border-radius:18px; padding:14px; background:#ffffff; margin-bottom:12px;}
+        .mode-card {background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); border: 1px solid rgba(96,165,250,.35); border-radius: 18px; padding: 14px 15px; margin: 8px 0 14px 0; color: white; box-shadow: 0 10px 28px rgba(15,23,42,.20);}
+        .mode-card-title {font-weight: 900; font-size: .95rem; color: #ffffff; margin-bottom: 2px;}
+        .mode-card-subtitle {font-size: .78rem; color: #dbeafe; line-height: 1.25;}
+        .landed-result {background:#f8fafc; border:1px dashed rgba(37,99,235,.35); border-radius:14px; padding:10px 12px; margin-top:8px;}
+        .landed-result b {color:#0f172a;}
+        .service-result {background:#f8fafc; border:1px dashed rgba(124,58,237,.35); border-radius:14px; padding:10px 12px; margin-top:8px;}
+        .service-result b {color:#0f172a;}
+        .score-badge {display:inline-block; padding:4px 9px; border-radius:999px; font-weight:850; font-size:.76rem; background:#eef2ff; color:#3730a3;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -364,6 +508,29 @@ def format_money(value: float, currency: str = "USD", compact: bool = False, sig
 
 def format_pct(value: float) -> str:
     return f"{value * 100:.2f}%"
+
+
+def format_quantity(value: float, unit: str = "") -> str:
+    unit_suffix = f" {unit}" if unit else ""
+    return f"{float(value):,.0f}{unit_suffix}"
+
+
+def landed_unit_price(components: Dict[str, float], fx_rate: float = 1.0) -> float:
+    """Convert a direct-material unit cost build-up to reporting currency.
+
+    All component inputs are assumed to be per negotiated unit in the quote currency.
+    The FX rate converts 1 quote-currency unit into the dashboard reporting currency.
+    """
+    return sum(float(components.get(key, 0.0)) for key, _ in LANDED_COST_COMPONENTS) * float(fx_rate)
+
+
+def default_unit_price_from_spend(spend: float, volume: float) -> float:
+    return safe_divide(float(spend), max(float(volume), 1e-9))
+
+
+def collect_component_values(prefix: str, defaults: Dict[str, float] | None = None) -> Dict[str, float]:
+    defaults = defaults or {}
+    return {key: float(defaults.get(key, 0.0)) for key, _ in LANDED_COST_COMPONENTS}
 
 
 def equivalent_rate(rate_pct: float, reference_days: int, target_days: int, method: str = "Compound") -> float:
@@ -458,6 +625,459 @@ def risk_tone(risk: float) -> str:
         return "amber"
     return "bad"
 
+
+
+def service_scope_config(scope: str) -> Dict[str, object]:
+    return SERVICE_SCOPE_CONFIG.get(scope, SERVICE_SCOPE_CONFIG["Generic Indirect Service"])
+
+
+def service_tier(score: float) -> str:
+    if score >= 90:
+        return "Strategic / preferred"
+    if score >= 75:
+        return "Approved / good"
+    if score >= 60:
+        return "Watchlist"
+    return "Corrective action / exit plan"
+
+
+def service_score_tone(score: float) -> str:
+    if score >= 75:
+        return "#047857"
+    if score >= 60:
+        return "#b45309"
+    return "#b91c1c"
+
+
+def weighted_service_score(scores: Dict[str, float], weights: Dict[str, float] | None = None) -> float:
+    weights = weights or SERVICE_SCORECARD_WEIGHTS
+    total_w = sum(float(v) for v in weights.values()) or 1.0
+    return sum(float(scores.get(dim, 0.0)) * float(weight) for dim, weight in weights.items()) / total_w
+
+
+def render_service_scope_fields(*, key_prefix: str, scope: str) -> Dict[str, float]:
+    """Render scope-specific commercial/service drivers.
+
+    These fields are intentionally descriptive and category-specific. They help the
+    buyer validate scope and demand before comparing suppliers. Not every service
+    should be analyzed with the same units.
+    """
+    cfg = service_scope_config(scope)
+    labels = list(cfg.get("field_labels", ["Service units", "Hours / month", "Sites / users covered"]))
+    c = st.columns(3)
+    values = {}
+    defaults = [0.0, 0.0, 0.0]
+    for idx, label in enumerate(labels[:3]):
+        with c[idx]:
+            values[f"driver_{idx+1}"] = st.number_input(
+                label,
+                min_value=0.0,
+                value=defaults[idx],
+                step=1.0,
+                format="%.2f",
+                key=f"{key_prefix}__scope_driver_{idx+1}",
+            )
+    st.caption(f"Recommended demand driver for this scope: {cfg.get('driver_label', 'service units')}.")
+    return values
+
+
+def render_service_scorecard(*, key_prefix: str, supplier_label: str, default_score: float = 82.0) -> Dict[str, float | str]:
+    st.markdown("<div class='plain-title'>Supplier performance scorecard</div>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    scores: Dict[str, float] = {}
+    dims = list(SERVICE_SCORECARD_WEIGHTS.keys())
+    cols = [c1, c2, c3, c4]
+    for idx, dim in enumerate(dims):
+        with cols[idx % 4]:
+            scores[dim] = st.slider(
+                f"{supplier_label} | {dim}",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(default_score),
+                step=1.0,
+                key=f"{key_prefix}__score__{dim}",
+            )
+    score = weighted_service_score(scores)
+    tier = service_tier(score)
+    color = service_score_tone(score)
+    st.markdown(
+        f"""
+        <div class="service-result">
+            <b>Weighted service score:</b> <span class="score-badge" style="color:{color};">{score:,.1f}/100</span>
+            &nbsp; | &nbsp; <b>Supplier tier:</b> {escape(tier)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return {"score": float(score), "tier": tier, **scores}
+
+
+def render_service_baseline_builder(
+    *,
+    key_prefix: str,
+    country: str,
+    scope: str,
+    reporting_currency: str,
+) -> Dict[str, float | str]:
+    """Render the current baseline for Indirect / Services mode.
+
+    Current service spend is built as a service lifecycle cost, not a unit x volume material spend.
+    """
+    cfg = service_scope_config(scope)
+    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
+    default_model = pricing_models[0]
+    st.markdown(f"**{cfg.get('icon', '🧾')} {scope} — current baseline ({country})**")
+    r1 = st.columns([1.15, 0.85, 0.85, 0.85])
+    with r1[0]:
+        pricing_model = st.selectbox(
+            "Pricing model",
+            options=pricing_models,
+            index=pricing_models.index(default_model),
+            key=f"{key_prefix}__pricing_model",
+        )
+    with r1[1]:
+        contracted_value = st.number_input(
+            "Current contracted / baseline value",
+            min_value=0.0,
+            value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
+            step=100_000.0,
+            format="%.2f",
+            key=f"{key_prefix}__contracted_value",
+        )
+    with r1[2]:
+        budget_value = st.number_input(
+            "Current budget",
+            min_value=0.0,
+            value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
+            step=100_000.0,
+            format="%.2f",
+            key=f"{key_prefix}__budget_value",
+        )
+    with r1[3]:
+        actual_demand_index = st.number_input(
+            "Actual demand index",
+            min_value=0.0,
+            value=100.0,
+            step=5.0,
+            format="%.2f",
+            key=f"{key_prefix}__actual_demand_index",
+            help="100 = baseline demand. Above 100 indicates demand growth/scope consumption beyond baseline.",
+        )
+
+    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
+
+    st.markdown("<div class='plain-title'>Current service lifecycle costs and leakage</div>", unsafe_allow_html=True)
+    r2 = st.columns(5)
+    with r2[0]:
+        change_orders = st.number_input("Change orders / add-ons", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_orders")
+    with r2[1]:
+        internal_management = st.number_input("Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
+    with r2[2]:
+        rework_cost = st.number_input("Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
+    with r2[3]:
+        downtime_compliance_cost = st.number_input("Downtime / compliance cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__downtime_compliance_cost")
+    with r2[4]:
+        sla_credits_rebates = st.number_input("SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
+
+    service_tco = contracted_value + change_orders + internal_management + rework_cost + downtime_compliance_cost - sla_credits_rebates
+    scope_creep_pct = safe_divide(change_orders, contracted_value)
+    budget_variance = service_tco - budget_value
+    st.markdown(
+        f"""
+        <div class="service-result">
+            <b>Current Service TCO:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
+            <b>Scope creep:</b> {scope_creep_pct*100:,.1f}% &nbsp; | &nbsp;
+            <b>Budget variance:</b> {reporting_currency} {budget_variance:,.2f}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return {
+        "scope": scope,
+        "pricing_model": pricing_model,
+        "contracted_value": float(contracted_value),
+        "budget_value": float(budget_value),
+        "actual_demand_index": float(actual_demand_index),
+        "change_orders": float(change_orders),
+        "internal_management": float(internal_management),
+        "rework_cost": float(rework_cost),
+        "downtime_compliance_cost": float(downtime_compliance_cost),
+        "sla_credits_rebates": float(sla_credits_rebates),
+        "productivity_gain": 0.0,
+        "expected_risk_cost": 0.0,
+        "service_tco": float(service_tco),
+        "scope_creep_pct": float(scope_creep_pct),
+        "budget_variance": float(budget_variance),
+    }
+
+
+def render_service_supplier_builder(
+    *,
+    key_prefix: str,
+    country: str,
+    scope: str,
+    supplier_label: str,
+    default_spend: float,
+    reporting_currency: str,
+) -> Dict[str, float | str]:
+    """Render supplier proposal build-up for Indirect / Services mode.
+
+    The returned service_tco is used as the proposal spend in the TCO engine.
+    It already includes supplier-led productivity gains, leakage assumptions and risk-adjusted cost.
+    """
+    cfg = service_scope_config(scope)
+    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
+    st.markdown(f"<div class='plain-title'>{cfg.get('icon','🧾')} Service pricing, scope and productivity</div>", unsafe_allow_html=True)
+    r1 = st.columns([1.05, .85, .85, .85])
+    with r1[0]:
+        pricing_model = st.selectbox(
+            f"{supplier_label} | Pricing model",
+            options=pricing_models,
+            index=0,
+            key=f"{key_prefix}__pricing_model",
+        )
+    with r1[1]:
+        proposed_contract_value = st.number_input(
+            f"{supplier_label} | Proposed contract / service value",
+            min_value=0.0,
+            value=float(default_spend),
+            step=50_000.0,
+            format="%.2f",
+            key=f"{key_prefix}__proposed_contract_value",
+        )
+    with r1[2]:
+        baseline_demand_index = st.number_input(
+            f"{supplier_label} | Demand / scope index",
+            min_value=0.0,
+            value=100.0,
+            step=5.0,
+            format="%.2f",
+            key=f"{key_prefix}__baseline_demand_index",
+            help="100 = same demand/scope. Use this to normalize proposals with different scope coverage.",
+        )
+    with r1[3]:
+        transition_days = st.number_input(
+            f"{supplier_label} | Transition / implementation days",
+            min_value=0,
+            value=30,
+            step=1,
+            key=f"{key_prefix}__transition_days",
+        )
+
+    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
+
+    st.markdown("<div class='plain-title'>Service TCO adjustments</div>", unsafe_allow_html=True)
+    r2 = st.columns(5)
+    with r2[0]:
+        transition_cost = st.number_input(f"{supplier_label} | Transition / implementation cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__transition_cost")
+    with r2[1]:
+        change_order_reserve = st.number_input(f"{supplier_label} | Change order reserve", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_order_reserve")
+    with r2[2]:
+        internal_management = st.number_input(f"{supplier_label} | Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
+    with r2[3]:
+        rework_cost = st.number_input(f"{supplier_label} | Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
+    with r2[4]:
+        sla_credits_rebates = st.number_input(f"{supplier_label} | SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
+
+    st.markdown("<div class='plain-title'>Supplier-led productivity and risk-adjusted service cost</div>", unsafe_allow_html=True)
+    st.caption(f"Productivity expectation for this scope: {cfg.get('productivity_label', 'supplier-led productivity')}.")
+    r3 = st.columns([1.0, .78, .78, .78])
+    with r3[0]:
+        productivity_description = st.text_input(
+            f"{supplier_label} | Productivity lever",
+            value=str(cfg.get("productivity_label", "supplier-led productivity")),
+            key=f"{key_prefix}__productivity_description",
+        )
+    with r3[1]:
+        productivity_gain = st.number_input(
+            f"{supplier_label} | Productivity gain value",
+            min_value=0.0,
+            value=0.0,
+            step=10_000.0,
+            format="%.2f",
+            key=f"{key_prefix}__productivity_gain",
+            help="Hard-value productivity that the supplier commits to deliver in the chain. This reduces service TCO.",
+        )
+    with r3[2]:
+        risk_probability = st.number_input(f"{supplier_label} | Risk probability %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__risk_probability")
+    with r3[3]:
+        risk_impact = st.number_input(f"{supplier_label} | Risk financial impact", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__risk_impact")
+
+    scorecard = render_service_scorecard(key_prefix=key_prefix, supplier_label=supplier_label)
+    expected_risk_cost = float(risk_probability) / 100.0 * float(risk_impact)
+    service_tco_before_productivity = proposed_contract_value + transition_cost + change_order_reserve + internal_management + rework_cost + expected_risk_cost - sla_credits_rebates
+    service_tco = max(service_tco_before_productivity - productivity_gain, 0.0)
+    performance_score = float(scorecard["score"])
+    performance_adjusted_cost = safe_divide(service_tco, max(performance_score / 100.0, 1e-9))
+    scope_creep_pct = safe_divide(change_order_reserve, proposed_contract_value)
+    st.markdown(
+        f"""
+        <div class="service-result">
+            <b>Service TCO used as proposal spend:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
+            <b>Productivity gain:</b> {reporting_currency} {productivity_gain:,.2f} &nbsp; | &nbsp;
+            <b>Expected risk cost:</b> {reporting_currency} {expected_risk_cost:,.2f} &nbsp; | &nbsp;
+            <b>Performance-adjusted cost:</b> {reporting_currency} {performance_adjusted_cost:,.2f}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return {
+        "scope": scope,
+        "pricing_model": pricing_model,
+        "proposed_contract_value": float(proposed_contract_value),
+        "baseline_demand_index": float(baseline_demand_index),
+        "transition_days": int(transition_days),
+        "transition_cost": float(transition_cost),
+        "change_order_reserve": float(change_order_reserve),
+        "internal_management": float(internal_management),
+        "rework_cost": float(rework_cost),
+        "sla_credits_rebates": float(sla_credits_rebates),
+        "productivity_description": productivity_description,
+        "productivity_gain": float(productivity_gain),
+        "risk_probability": float(risk_probability),
+        "risk_impact": float(risk_impact),
+        "expected_risk_cost": float(expected_risk_cost),
+        "service_tco_before_productivity": float(service_tco_before_productivity),
+        "service_tco": float(service_tco),
+        "performance_score": float(performance_score),
+        "performance_tier": str(scorecard["tier"]),
+        "performance_adjusted_cost": float(performance_adjusted_cost),
+        "scope_creep_pct": float(scope_creep_pct),
+        **{f"score_{dim}": float(scorecard[dim]) for dim in SERVICE_SCORECARD_WEIGHTS},
+    }
+
+
+def render_landed_cost_builder(
+    *,
+    key_prefix: str,
+    default_spend: float,
+    default_volume: float,
+    unit: str,
+    reporting_currency: str,
+    currency_default: str = "BRL",
+    supplier_label: str = "Supplier",
+) -> Dict[str, float | str]:
+    """Render Direct Materials landed-cost inputs and return calculated spend.
+
+    The build-up is intentionally unit-based because direct materials are normally
+    negotiated as price x volume. The rest of the dashboard still consumes spend,
+    so this function converts landed unit economics back into 100% equivalent spend.
+    """
+    if currency_default not in CURRENCY_OPTIONS:
+        currency_default = "BRL"
+    default_fx = float(DEFAULT_FX_TO_REPORTING.get(currency_default, 1.0))
+    # Defaults are stored as reporting-currency spend. Convert them back to quote-currency
+    # unit price so the initial landed spend remains aligned with the previous dashboard.
+    base_default = default_unit_price_from_spend(default_spend, max(default_volume * default_fx, 1e-9))
+
+    r1 = st.columns([1.0, 0.82, 0.78, 0.78, 0.72])
+    with r1[0]:
+        base_unit_price = st.number_input(
+            f"{supplier_label} | Base / quoted unit price",
+            min_value=0.0,
+            value=float(base_default),
+            step=0.01,
+            format="%.6f",
+            key=f"{key_prefix}__base_unit_price",
+            help="Quoted price per negotiated unit before additional landed-cost components.",
+        )
+    with r1[1]:
+        currency = st.selectbox(
+            f"{supplier_label} | Quote currency",
+            options=CURRENCY_OPTIONS,
+            index=CURRENCY_OPTIONS.index(currency_default),
+            key=f"{key_prefix}__currency",
+        )
+    with r1[2]:
+        fx_rate = st.number_input(
+            f"{supplier_label} | FX to {reporting_currency}",
+            min_value=0.000001,
+            value=default_fx,
+            step=0.01,
+            format="%.6f",
+            key=f"{key_prefix}__fx_rate",
+            help=f"How many {reporting_currency} one unit of quote currency represents.",
+        )
+    with r1[3]:
+        volume = st.number_input(
+            f"{supplier_label} | 100% equivalent volume ({unit})",
+            min_value=0.0,
+            value=float(default_volume),
+            step=max(float(default_volume) * 0.05, 1.0),
+            format="%.4f",
+            key=f"{key_prefix}__volume",
+            help="Country demand volume used to calculate 100% equivalent spend. Share allocation is applied later.",
+        )
+    with r1[4]:
+        moq = st.number_input(
+            f"{supplier_label} | MOQ ({unit})",
+            min_value=0.0,
+            value=0.0,
+            step=max(float(default_volume) * 0.05, 1.0),
+            format="%.4f",
+            key=f"{key_prefix}__moq",
+        )
+
+    r2 = st.columns(5)
+    with r2[0]:
+        conversion_cost = st.number_input(f"{supplier_label} | Conversion cost / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__conversion_cost")
+    with r2[1]:
+        fixed_margin = st.number_input(f"{supplier_label} | Fixed margin / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__fixed_margin")
+    with r2[2]:
+        international_freight = st.number_input(f"{supplier_label} | International freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__international_freight")
+    with r2[3]:
+        insurance = st.number_input(f"{supplier_label} | Insurance / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__insurance")
+    with r2[4]:
+        incoterm = st.selectbox(f"{supplier_label} | Incoterm", options=INCOTERM_OPTIONS, index=INCOTERM_OPTIONS.index("FOB"), key=f"{key_prefix}__incoterm")
+
+    r3 = st.columns(4)
+    with r3[0]:
+        customs_fees = st.number_input(f"{supplier_label} | Customs / brokerage fees / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__customs_fees")
+    with r3[1]:
+        import_duties_taxes = st.number_input(f"{supplier_label} | Import duties / taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__import_duties_taxes")
+    with r3[2]:
+        domestic_freight = st.number_input(f"{supplier_label} | Domestic freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__domestic_freight")
+    with r3[3]:
+        local_taxes = st.number_input(f"{supplier_label} | Local taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__local_taxes")
+
+    components = {
+        "base_unit_price": float(base_unit_price),
+        "conversion_cost": float(conversion_cost),
+        "fixed_margin": float(fixed_margin),
+        "international_freight": float(international_freight),
+        "insurance": float(insurance),
+        "customs_fees": float(customs_fees),
+        "import_duties_taxes": float(import_duties_taxes),
+        "domestic_freight": float(domestic_freight),
+        "local_taxes": float(local_taxes),
+    }
+    unit_price_quote = sum(components.values())
+    unit_price_reporting = landed_unit_price(components, float(fx_rate))
+    spend = unit_price_reporting * float(volume)
+    moq_note = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ"
+    moq_tone = "#047857" if moq_note == "OK" else "#b91c1c"
+    st.markdown(
+        f"""
+        <div class="landed-result">
+            <b>Landed unit price:</b> {reporting_currency} {unit_price_reporting:,.6f} / {escape(unit)} &nbsp; | &nbsp;
+            <b>100% equivalent spend:</b> {reporting_currency} {spend:,.2f} &nbsp; | &nbsp;
+            <b>MOQ status:</b> <span style="color:{moq_tone}; font-weight:800;">{moq_note}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return {
+        "spend": float(spend),
+        "unit_price_quote": float(unit_price_quote),
+        "unit_price_reporting": float(unit_price_reporting),
+        "volume": float(volume),
+        "moq": float(moq),
+        "currency": currency,
+        "fx_rate": float(fx_rate),
+        "incoterm": incoterm,
+        **components,
+    }
+
 # =============================================================================
 # Share allocation helpers
 # =============================================================================
@@ -480,6 +1100,32 @@ def kraljic_key(supplier: str) -> str:
 
 def approved_key(supplier: str) -> str:
     return f"approved__{supplier}"
+
+
+def supplier_name_key(supplier: str) -> str:
+    return f"supplier_display_name__{supplier}"
+
+
+def supplier_short_name_key(supplier: str) -> str:
+    return f"supplier_short_name__{supplier}"
+
+
+def supplier_display_name(supplier: str) -> str:
+    value = str(st.session_state.get(supplier_name_key(supplier), DEFAULT_SUPPLIER_DISPLAY_NAME.get(supplier, supplier))).strip()
+    return value or DEFAULT_SUPPLIER_DISPLAY_NAME.get(supplier, supplier)
+
+
+def supplier_short_name(supplier: str) -> str:
+    value = str(st.session_state.get(supplier_short_name_key(supplier), DEFAULT_SUPPLIER_SHORT_NAME.get(supplier, supplier))).strip()
+    return value or DEFAULT_SUPPLIER_SHORT_NAME.get(supplier, supplier)
+
+
+def supplier_display_html(supplier: str) -> str:
+    return escape(supplier_display_name(supplier), quote=True)
+
+
+def supplier_short_html(supplier: str) -> str:
+    return escape(supplier_short_name(supplier), quote=True)
 
 
 def get_min_shares() -> Dict[str, float]:
@@ -510,7 +1156,7 @@ def constraint_issues(mins: Dict[str, float], maxs: Dict[str, float]) -> List[st
     for supplier in SUPPLIERS:
         if mins[supplier] > maxs[supplier] + 1e-9:
             issues.append(
-                f"{SHORT_SUPPLIER[supplier]} has Kraljic minimum {mins[supplier]:.0f}% "
+                f"{supplier_short_name(supplier)} has Kraljic minimum {mins[supplier]:.0f}% "
                 f"above max/capacity {maxs[supplier]:.0f}%."
             )
     if sum(mins.values()) > 100.0 + 1e-9:
@@ -665,6 +1311,8 @@ apply_pending_optimized_shares()
 
 def init_defaults() -> None:
     for supplier in SUPPLIERS:
+        st.session_state.setdefault(supplier_name_key(supplier), DEFAULT_SUPPLIER_DISPLAY_NAME[supplier])
+        st.session_state.setdefault(supplier_short_name_key(supplier), DEFAULT_SUPPLIER_SHORT_NAME[supplier])
         st.session_state.setdefault(kraljic_key(supplier), DEFAULT_KRALJIC_REQUIRED[supplier])
         st.session_state.setdefault(min_key(supplier), DEFAULT_MIN_SHARE[supplier])
         st.session_state.setdefault(max_key(supplier), DEFAULT_MAX_SHARE[supplier])
@@ -787,9 +1435,29 @@ def calc_proposal_by_country(
         country_total["weighted_financial_rate_numerator"] += allocated_spend * fin_rate
         country_total["weighted_treasury_rate_numerator"] += allocated_spend * treasury_rate
         country_total["weighted_return_days_numerator"] += share * supplier_data["payment_days"]
+        direct_profile = supplier_data.get("direct_profile", {}) or {}
+        service_profile = supplier_data.get("service_profile", {}) or {}
         country_total["supplier_rows"].append({
             "Country": country,
-            "Supplier": supplier,
+            "Supplier": supplier_display_name(supplier),
+            "Item / Scope": supplier_data.get("item_name", ""),
+            "Unit / Demand Driver": supplier_data.get("negotiated_unit", ""),
+            "Quote Currency": direct_profile.get("currency", ""),
+            "FX Rate": direct_profile.get("fx_rate", None),
+            "Incoterm": direct_profile.get("incoterm", ""),
+            "Landed Unit Price": direct_profile.get("unit_price_reporting", None),
+            "100% Equivalent Volume": direct_profile.get("volume", None),
+            "MOQ": direct_profile.get("moq", None),
+            "Service Scope": service_profile.get("scope", ""),
+            "Pricing Model": service_profile.get("pricing_model", ""),
+            "Proposed Contract Value": service_profile.get("proposed_contract_value", None),
+            "Service TCO Before Productivity": service_profile.get("service_tco_before_productivity", None),
+            "Productivity Gain": service_profile.get("productivity_gain", None),
+            "Expected Risk Cost": service_profile.get("expected_risk_cost", None),
+            "Performance Score": service_profile.get("performance_score", None),
+            "Performance Tier": service_profile.get("performance_tier", ""),
+            "Performance-Adjusted Cost": service_profile.get("performance_adjusted_cost", None),
+            "Scope Creep %": service_profile.get("scope_creep_pct", None),
             "Share %": shares[supplier],
             "Allocated Spend": allocated_spend,
             "Payment Days": supplier_data["payment_days"],
@@ -1171,7 +1839,7 @@ def optimize_allocations(
             "Economic Delta": row["Economic All-In Delta"],
             "Gross All-In Delta": row["Gross All-In Delta"],
             "Spend Delta": row["Spend Delta"],
-            **{SHORT_SUPPLIER[s]: optimized[country][s] for s in SUPPLIERS},
+            **{supplier_short_name(s): optimized[country][s] for s in SUPPLIERS},
             "Risk Gate Met": row["Weighted Risk"] <= risk_threshold,
         })
     rationale_df = pd.DataFrame(rationale_rows)
@@ -1188,12 +1856,70 @@ def optimize_allocations(
 
 with st.sidebar:
     st.markdown("## Executive Settings")
-    currency_symbol = st.text_input("Currency", value="USD")
+    currency_symbol = st.text_input("Reporting currency", value="BRL", help="Currency used in executive cards and total spend calculations.")
+
+    st.markdown("### Sourcing analysis mode")
+    analysis_mode = st.radio(
+        "Tool mode",
+        options=["Direct Materials", "Indirect / Services"],
+        index=0,
+        horizontal=False,
+        help="Direct Materials calculates spend from landed unit price × volume. Indirect / Services keeps the legacy manual spend input.",
+    )
+    if analysis_mode == "Direct Materials":
+        st.markdown(
+            """
+            <div class="mode-card">
+                <div class="mode-card-title">🧪 Direct Materials Landed Cost Engine</div>
+                <div class="mode-card-subtitle">Price build-up → landed unit price → spend → TCO, working capital, inventory and risk.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        analysed_item_name = st.text_input("Analysed item", value=DEFAULT_ITEM_NAME, key="direct_item_name")
+        negotiated_unit = st.text_input("Negotiated unit", value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
+        service_scope = None
+    else:
+        st.markdown(
+            """
+            <div class="mode-card">
+                <div class="mode-card-title">🧾 Indirect / Services Executive Cockpit</div>
+                <div class="mode-card-subtitle">Scope → pricing model → service TCO → scorecard → productivity gain → contract leakage → executive decision.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        service_scope = st.selectbox(
+            "Service / buying scope",
+            options=SERVICE_SCOPES,
+            index=SERVICE_SCOPES.index(DEFAULT_SERVICE_SCOPE),
+            key="service_scope",
+            help="The tool changes its required fields and analysis logic according to the service scope selected.",
+        )
+        cfg = service_scope_config(service_scope)
+        analysed_item_name = st.text_input("Negotiated service / scope name", value=service_scope, key="service_item_name")
+        negotiated_unit = st.text_input("Main service unit / demand driver", value=str(cfg.get("driver_label", "service unit")), key="service_negotiated_unit")
+        st.caption(f"Suggested productivity lens: {cfg.get('productivity_label', 'supplier-led productivity')}.")
+
     rate_method = st.radio("Rate conversion method", options=["Compound", "Linear"], index=0)
     optimization_step = st.select_slider("Fallback optimization share grid", options=[1, 2, 5, 10], value=5, help="Used only if exact LP optimization is unavailable/infeasible. Lower grid = deeper but slower fallback.")
     st.caption("Optimizer: exact LP available" if SCIPY_AVAILABLE else "Optimizer: grid fallback only; SciPy not available")
     risk_threshold = st.slider("Preferred weighted risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
     show_advanced_economic = st.checkbox("Show working capital economic view", value=True)
+
+    with st.expander("Supplier names", expanded=False):
+        st.caption("Edit the supplier names once here. The labels are saved in the current app session and reflected across proposal inputs, risk, share sliders, charts and tables.")
+        for idx, supplier in enumerate(SUPPLIERS, start=1):
+            st.text_input(
+                f"Supplier {idx} full name",
+                key=supplier_name_key(supplier),
+                help=f"Display name for internal supplier ID: {supplier}",
+            )
+            st.text_input(
+                f"Supplier {idx} short label",
+                key=supplier_short_name_key(supplier),
+                help="Compact label used in sliders, charts and executive cards.",
+            )
 
 # =============================================================================
 # Header
@@ -1204,8 +1930,8 @@ st.markdown(
     <div class="executive-hero">
         <h1>Executive Procurement TCO & Should-Cost Dashboard</h1>
         <p>
-            Senior decision view for strategic raw-material sourcing: commercial spend, payment-term financial cost,
-            working-capital carry, inventory carrying cost, supplier risk, Kraljic constraints and automatic cost x risk optimization.
+            Two-in-one executive decision cockpit for Direct Materials and Indirect / Services: landed cost, service TCO,
+            scorecards, productivity gains, contract leakage, working-capital carry, supplier risk, Kraljic constraints and automatic cost x risk optimization.
         </p>
     </div>
     """,
@@ -1224,21 +1950,62 @@ input_tabs = st.tabs([
 ])
 
 with input_tabs[0]:
-    render_section("Current Spend & Financial Assumptions", "Set the current baseline and country-specific financial assumptions. Current financial and return rates use the current payment term only; proposal rates are recalculated later using each supplier proposed payment term.")
-    st.info("Rate-period rule: the Financial Reference Period is the CURRENT baseline period. Current Financial Cost = Current Spend × the rate for that current period. Supplier proposals are recalculated supplier-by-supplier using each supplier proposed payment term as the NEW financial-rate and treasury-return period.")
+    if analysis_mode == "Direct Materials":
+        render_section(
+            "Current Direct Material Baseline & Financial Assumptions",
+            "Build the current baseline from landed unit price × volume, then apply country-specific payment-term, treasury return and inventory assumptions.",
+        )
+        st.info(
+            "Direct Materials rule: Current Spend = landed unit price × 100% equivalent volume. "
+            "All unit-cost components are entered per negotiated unit in the quote currency and converted to the reporting currency using FX."
+        )
+    else:
+        render_section(
+            "Current Indirect / Services Baseline & Financial Assumptions",
+            "Build the current service baseline from contract value, demand/scope drivers, leakage, service lifecycle costs and payment-term economics.",
+        )
+        st.info(
+            "Indirect / Services rule: Current Spend = Service TCO baseline. Service TCO includes contracted value, change orders, internal management, rework, downtime/compliance costs and SLA credits/rebates. "
+            "Inventory carrying is set to zero for services unless you later model a service with owned stock."
+        )
+
     country_inputs: Dict[str, Dict] = {}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                current_spend = st.number_input(
-                    f"{country} current spend",
-                    min_value=0.0,
-                    value=DEFAULT_CURRENT_SPEND[country],
-                    step=100_000.0,
-                    format="%.2f",
-                    key=f"v24_current_spend__{country}",
+            direct_profile: Dict[str, float | str] = {}
+            service_profile: Dict[str, float | str] = {}
+            if analysis_mode == "Direct Materials":
+                st.markdown(f"**{analysed_item_name} — Current baseline build-up ({country})**")
+                current_default_volume = DEFAULT_DIRECT_VOLUME[country]
+                direct_profile = render_landed_cost_builder(
+                    key_prefix=f"current_direct__{country}",
+                    default_spend=DEFAULT_CURRENT_SPEND[country],
+                    default_volume=current_default_volume,
+                    unit=negotiated_unit,
+                    reporting_currency=currency_symbol,
+                    currency_default=DEFAULT_DIRECT_CURRENCY[country],
+                    supplier_label=f"{country} current",
                 )
+                current_spend = float(direct_profile["spend"])
+                st.caption(
+                    f"{country} current baseline spend is calculated from {format_quantity(direct_profile['volume'], negotiated_unit)} × "
+                    f"{currency_symbol} {direct_profile['unit_price_reporting']:,.6f}/{negotiated_unit}."
+                )
+            else:
+                service_profile = render_service_baseline_builder(
+                    key_prefix=f"current_service__{country}",
+                    country=country,
+                    scope=service_scope or DEFAULT_SERVICE_SCOPE,
+                    reporting_currency=currency_symbol,
+                )
+                current_spend = float(service_profile["service_tco"])
+                st.caption(
+                    f"{country} current baseline spend is calculated as Service TCO for {service_profile['pricing_model']} under the selected service scope."
+                )
+
+            st.markdown("<div class='plain-title'>Financial, treasury and inventory assumptions</div>", unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
                 current_payment_days = st.number_input(
                     f"{country} current payment term days",
                     min_value=1,
@@ -1246,6 +2013,15 @@ with input_tabs[0]:
                     step=1,
                     key=f"v24_current_payment_days__{country}",
                     help="This is the CURRENT baseline payment term. It does not change when supplier proposal terms change.",
+                )
+                current_inventory_days = st.number_input(
+                    f"{country} current stock-on-hand days",
+                    min_value=0,
+                    value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode == "Direct Materials" else 0,
+                    step=1,
+                    key=f"v24_current_inventory_days__{country}",
+                    help="Inventory carrying cost uses this number as stock-on-hand / inventory ownership days for the current baseline. Services default to zero.",
+                    disabled=(analysis_mode != "Direct Materials"),
                 )
             with c2:
                 financial_rate_pct = st.number_input(
@@ -1286,20 +2062,14 @@ with input_tabs[0]:
                 inventory_carry_rate_pct = st.number_input(
                     f"{country} inventory carrying rate (% p.a.)",
                     min_value=0.0,
-                    value=DEFAULT_INVENTORY_CARRY_RATE[country],
+                    value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode == "Direct Materials" else 0.0,
                     step=0.05,
                     format="%.4f",
                     key=f"v24_inventory_rate__{country}",
+                    disabled=(analysis_mode != "Direct Materials"),
                 )
-                current_inventory_days = st.number_input(
-                    f"{country} current inventory days",
-                    min_value=0,
-                    value=DEFAULT_CURRENT_INVENTORY_DAYS[country],
-                    step=1,
-                    key=f"v24_current_inventory_days__{country}",
-                )
-            with c5:
-                st.markdown("<div class='small-note'><b>Baseline logic</b><br>Current financial/treasury effects use the current payment term. Supplier proposals use each supplier payment term as the new financial and treasury return period.</div>", unsafe_allow_html=True)
+                st.markdown("<div class='small-note'><b>Baseline logic</b><br>Financial/treasury effects use the current payment term. Direct-material spend is calculated from landed unit price × volume.</div>", unsafe_allow_html=True)
+
             country_inputs[country] = {
                 "current_spend": float(current_spend),
                 "current_payment_days": int(current_payment_days),
@@ -1309,32 +2079,72 @@ with input_tabs[0]:
                 "treasury_reference_days": int(treasury_reference_days),
                 "inventory_carry_rate_pct": float(inventory_carry_rate_pct),
                 "current_inventory_days": int(current_inventory_days),
+                "analysis_mode": analysis_mode,
+                "item_name": analysed_item_name,
+                "negotiated_unit": negotiated_unit,
+                "direct_profile": direct_profile,
+                "service_profile": service_profile,
+                "service_scope": service_scope,
             }
             st.caption(
                 f"{country}: financial rate is referenced to {financial_reference_days} days; current baseline uses {current_payment_days} payment days; supplier proposals use each supplier payment term."
             )
 
 with input_tabs[1]:
-    render_section("Supplier Proposals", "Input supplier proposal spend without financial cost, proposed payment terms, lead time and safety stock assumptions. Each supplier payment term is used to calculate the NEW supplier financial cost and NEW treasury return period for that proposal only.")
+    if analysis_mode == "Direct Materials":
+        render_section(
+            "Supplier Direct Material Proposals",
+            "Build each supplier proposal from landed unit economics. The calculated 100% equivalent spend is then used by the share allocation and TCO engine.",
+        )
+        st.info(
+            "Each supplier proposal is entered as price build-up per negotiated unit. The app calculates: landed unit price × 100% equivalent volume = proposal spend. "
+            "MOQ is flagged as a commercial constraint for now; in the next module it can drive order quantity and average inventory."
+        )
+    else:
+        render_section(
+            "Supplier Service Proposals, Scorecards & Productivity Commitments",
+            "Build each service proposal from pricing model, scope, contract leakage, service scorecard, expected risk cost and supplier-led productivity gains. The calculated Service TCO is used as proposal spend.",
+        )
+        st.info(
+            "For Indirect / Services, every supplier proposal includes a performance scorecard and a mandatory productivity-gain field. "
+            "This is designed for outsourced service providers such as Accenture, Fastenal-style VMI/MRO partners, BPOs, agencies and facilities providers."
+        )
+
     proposal_inputs: Dict[str, Dict[str, Dict]] = {country: {} for country in COUNTRIES}
     for country in COUNTRIES:
         with st.expander(country, expanded=(country == "Brazil")):
+            country_volume_default = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode == "Direct Materials" else DEFAULT_DIRECT_VOLUME[country]
             for supplier in SUPPLIERS:
-                st.markdown(f"<div class='supplier-box'><span class='pill'>{SHORT_SUPPLIER[supplier]}</span>", unsafe_allow_html=True)
-                c1, c2, c3, c4, c5 = st.columns([1.35, 0.9, 0.9, 0.9, 1.25])
-                with c1:
-                    spend = st.number_input(
-                        f"{country} | {supplier} | 100% volume-equivalent spend",
-                        min_value=0.0,
-                        value=DEFAULT_PROPOSAL_SPEND[country][supplier],
-                        step=50_000.0,
-                        format="%.2f",
-                        key=f"proposal_spend__{country}__{supplier}",
-                        help="Enter the spend this supplier would represent if it supplied 100% of the country volume. The Share Projection applies the allocation percentage later.",
+                display_supplier = supplier_display_name(supplier)
+                st.markdown(f"<div class='supplier-box'><span class='pill'>{supplier_short_html(supplier)}</span>", unsafe_allow_html=True)
+                direct_supplier_profile: Dict[str, float | str] = {}
+                service_supplier_profile: Dict[str, float | str] = {}
+                if analysis_mode == "Direct Materials":
+                    direct_supplier_profile = render_landed_cost_builder(
+                        key_prefix=f"proposal_direct__{country}__{supplier}",
+                        default_spend=DEFAULT_PROPOSAL_SPEND[country][supplier],
+                        default_volume=country_volume_default,
+                        unit=negotiated_unit,
+                        reporting_currency=currency_symbol,
+                        currency_default=DEFAULT_DIRECT_CURRENCY[country],
+                        supplier_label=f"{country} | {display_supplier}",
                     )
+                    spend = float(direct_supplier_profile["spend"])
+                else:
+                    service_supplier_profile = render_service_supplier_builder(
+                        key_prefix=f"proposal_service__{country}__{supplier}",
+                        country=country,
+                        scope=service_scope or DEFAULT_SERVICE_SCOPE,
+                        supplier_label=f"{country} | {display_supplier}",
+                        default_spend=DEFAULT_PROPOSAL_SPEND[country][supplier],
+                        reporting_currency=currency_symbol,
+                    )
+                    spend = float(service_supplier_profile["service_tco"])
+
+                c2, c3, c4, c5 = st.columns([0.75, 0.75, 0.75, 1.20])
                 with c2:
                     payment_days = st.number_input(
-                        f"{country} | {supplier} | Payment term days",
+                        f"{country} | {display_supplier} | Payment term days",
                         min_value=0,
                         value=DEFAULT_PAYMENT_TERM[country][supplier],
                         step=1,
@@ -1342,27 +2152,30 @@ with input_tabs[1]:
                     )
                 with c3:
                     lead_time_days = st.number_input(
-                        f"{country} | {supplier} | Lead time days",
+                        f"{country} | {display_supplier} | Lead time / transition days",
                         min_value=0,
-                        value=DEFAULT_LEAD_TIME_DAYS[country][supplier],
+                        value=(DEFAULT_LEAD_TIME_DAYS[country][supplier] if analysis_mode == "Direct Materials" else int(service_supplier_profile.get("transition_days", 30))),
                         step=1,
                         key=f"lead_time__{country}__{supplier}",
+                        help="For services this represents implementation / transition days; for direct materials it represents physical lead time.",
                     )
                 with c4:
                     safety_stock_days = st.number_input(
-                        f"{country} | {supplier} | Safety stock days",
+                        f"{country} | {display_supplier} | Safety stock days",
                         min_value=0,
-                        value=DEFAULT_SAFETY_STOCK_DAYS[country][supplier],
+                        value=DEFAULT_SAFETY_STOCK_DAYS[country][supplier] if analysis_mode == "Direct Materials" else 0,
                         step=1,
                         key=f"safety_stock__{country}__{supplier}",
+                        disabled=(analysis_mode != "Direct Materials"),
                     )
                 with c5:
                     inventory_ownership = st.selectbox(
-                        f"{country} | {supplier} | Inventory ownership",
+                        f"{country} | {display_supplier} | Inventory ownership",
                         options=INVENTORY_OWNERSHIP_OPTIONS,
-                        index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][supplier]),
+                        index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][supplier] if analysis_mode == "Direct Materials" else "Supplier/trader owns until delivery"),
                         key=f"inventory_ownership__{country}__{supplier}",
-                        help="Defines how many days are charged with inventory carrying cost.",
+                        help="Defines how many days are charged with inventory carrying cost. Services default to zero inventory days.",
+                        disabled=(analysis_mode != "Direct Materials"),
                     )
                 st.markdown("</div>", unsafe_allow_html=True)
                 proposal_inputs[country][supplier] = {
@@ -1371,6 +2184,12 @@ with input_tabs[1]:
                     "lead_time_days": int(lead_time_days),
                     "safety_stock_days": int(safety_stock_days),
                     "inventory_ownership": inventory_ownership,
+                    "analysis_mode": analysis_mode,
+                    "item_name": analysed_item_name,
+                    "negotiated_unit": negotiated_unit,
+                    "direct_profile": direct_supplier_profile,
+                    "service_profile": service_supplier_profile,
+                    "service_scope": service_scope,
                 }
 
 with input_tabs[2]:
@@ -1383,7 +2202,7 @@ with input_tabs[2]:
 
     risk_inputs: Dict[str, Dict[str, float]] = {supplier: {} for supplier in SUPPLIERS}
     for supplier in SUPPLIERS:
-        with st.expander(supplier, expanded=(supplier == "ChemPrime")):
+        with st.expander(supplier_display_name(supplier), expanded=(supplier == "ChemPrime")):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 st.checkbox("Approved supplier", value=DEFAULT_APPROVED[supplier], key=approved_key(supplier))
@@ -1483,10 +2302,10 @@ with input_tabs[3]:
                         # Infeasible constraint: do not render a broken slider.
                         raw = min_value
                         st.warning(
-                            f"{SHORT_SUPPLIER[supplier]} infeasible: floor {min_value:.0f}% > capacity {max_value:.0f}%."
+                            f"{supplier_short_name(supplier)} infeasible: floor {min_value:.0f}% > capacity {max_value:.0f}%."
                         )
                         st.slider(
-                            SHORT_SUPPLIER[supplier],
+                            supplier_short_name(supplier),
                             min_value=0.0,
                             max_value=100.0,
                             value=min(raw, 100.0),
@@ -1498,7 +2317,7 @@ with input_tabs[3]:
                         raw = float(min_value)
                         st.session_state[key] = raw
                         st.slider(
-                            SHORT_SUPPLIER[supplier],
+                            supplier_short_name(supplier),
                             min_value=0.0,
                             max_value=100.0,
                             value=raw,
@@ -1514,7 +2333,7 @@ with input_tabs[3]:
                         if share_mode == "Automatic" and not invalid_constraints:
                             kwargs = {"on_change": rebalance_after_slider_change, "args": (country, supplier)}
                         raw = st.slider(
-                            SHORT_SUPPLIER[supplier],
+                            supplier_short_name(supplier),
                             min_value=min_value,
                             max_value=max_value,
                             value=current_value,
@@ -1538,7 +2357,7 @@ with input_tabs[3]:
                 effective = {s: float(st.session_state[share_key(country, s)]) for s in SUPPLIERS}
 
             all_shares[country] = effective
-            share_df = pd.DataFrame([{"Supplier": SHORT_SUPPLIER[s], "Effective Model Share %": effective[s]} for s in SUPPLIERS])
+            share_df = pd.DataFrame([{"Supplier": supplier_short_name(s), "Effective Model Share %": effective[s]} for s in SUPPLIERS])
             st.dataframe(share_df, use_container_width=True)
 
     country_df_preview, group_df_preview, supplier_df_preview, total_preview = calc_scenario(
@@ -1564,7 +2383,7 @@ country_df, group_df, supplier_df, total = calc_scenario(final_shares, country_i
 
 render_section(
     "Cost Optimization",
-    "Run the optimizer from here at any time. It will respect Kraljic minimum shares, supplier capacity, approved-supplier flags, payment terms, financial rates, treasury return and inventory carrying cost."
+    "Run the optimizer from here at any time. It will respect Kraljic minimum shares, supplier capacity, approved-supplier flags, payment terms, financial rates, treasury return, inventory carrying cost and service TCO/productivity economics."
 )
 
 current_mins_for_optimization = get_min_shares()
@@ -1590,7 +2409,7 @@ with opt_note_col:
         """
         <div class="insight-box" style="min-height: 92px; padding: 14px 16px;">
             <b>Optimization logic</b><br>
-            Searches the best allocation by minimizing economic all-in cost first and weighted risk second.
+            Searches the best allocation by minimizing economic all-in cost first and weighted risk second. In Services mode, proposal spend already includes service TCO, productivity gains, leakage and expected risk cost.
             If a better allocation is found, the Share Projection sliders are updated automatically after the page refreshes.
         </div>
         """,
@@ -1764,21 +2583,30 @@ with row1[4]:
 with row1[5]:
     render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
 
+primary_reference_supplier = "ChemPrime"
+primary_reference_name = supplier_display_name(primary_reference_supplier)
+primary_reference_short = supplier_short_name(primary_reference_supplier)
 chemprime_reference = calc_full_supplier_reference_stack(
-    supplier="ChemPrime",
+    supplier=primary_reference_supplier,
     country_inputs=country_inputs,
     proposal_inputs=proposal_inputs,
     method=rate_method,
     payment_day_overrides={"Brazil": 90, "Mexico": 60, "Argentina": 60, "Colombia": 60},
 )
 
-render_visual_breaker('New ChemPrime condition stack', 'Benchmark scenario assuming 100% volume under revised ChemPrime conditions.', '🏭', '#f59e0b', 'Reference case')
+render_visual_breaker(
+    f'New {primary_reference_short} condition stack',
+    f'Benchmark scenario assuming 100% volume under revised {primary_reference_name} conditions.',
+    '🏭',
+    '#f59e0b',
+    'Reference case'
+)
 row1b = st.columns(6)
 with row1b[0]:
     render_kpi(
-        "100% ChemPrime Spend",
+        f"100% {primary_reference_short} Spend",
         format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True),
-        "100% awarded to ChemPrime at proposed spend (+25%)",
+        f"100% awarded to {primary_reference_short} at proposed spend (+25%)",
         "neutral",
     )
 with row1b[1]:
@@ -1790,7 +2618,7 @@ with row1b[1]:
     )
 with row1b[2]:
     render_kpi(
-        "100% ChemPrime Fin. Cost",
+        f"100% {primary_reference_short} Fin. Cost",
         format_money(chemprime_reference["Reference Financial Cost"], currency_symbol, compact=True),
         f"BR 90 dd | LATAM 60 dd financial terms",
         "neutral",
@@ -1804,9 +2632,9 @@ with row1b[3]:
     )
 with row1b[4]:
     render_kpi(
-        "100% ChemPrime Total Spend",
+        f"100% {primary_reference_short} Total Spend",
         format_money(chemprime_reference["Reference Total Spend"], currency_symbol, compact=True),
-        "100% ChemPrime spend + BR 90 dd / LATAM 60 dd financial cost",
+        f"100% {primary_reference_short} spend + BR 90 dd / LATAM 60 dd financial cost",
         "neutral",
     )
 with row1b[5]:
@@ -1951,11 +2779,11 @@ with chart_col3:
     allocation_rows = []
     for country in COUNTRIES:
         for supplier in SUPPLIERS:
-            allocation_rows.append({"Country": country, "Supplier": SHORT_SUPPLIER[supplier], "Share %": final_shares[country][supplier]})
+            allocation_rows.append({"Country": country, "Supplier": supplier_short_name(supplier), "Share %": final_shares[country][supplier]})
     allocation_df = pd.DataFrame(allocation_rows)
     if PLOTLY_AVAILABLE:
         fig = go.Figure()
-        for supplier in [SHORT_SUPPLIER[s] for s in SUPPLIERS]:
+        for supplier in [supplier_short_name(s) for s in SUPPLIERS]:
             subset = allocation_df[allocation_df["Supplier"] == supplier]
             fig.add_trace(go.Bar(x=subset["Country"], y=subset["Share %"], name=supplier, text=[f"{v:.0f}%" for v in subset["Share %"]], textposition="inside"))
         fig.update_layout(title="Supplier Share Projection by Country", barmode="stack", height=430, yaxis_title="Share %")
@@ -2026,7 +2854,10 @@ if show_advanced_economic:
 
 render_section("Detailed Data", "Audit trail for Finance, Procurement and category strategy discussions.")
 
-detail_tabs = st.tabs(["Country summary", "Region summary", "Supplier allocation", "Risk scores"])
+detail_tab_names = ["Country summary", "Region summary", "Supplier allocation", "Risk scores"]
+if analysis_mode != "Direct Materials":
+    detail_tab_names.append("Service scorecards")
+detail_tabs = st.tabs(detail_tab_names)
 with detail_tabs[0]:
     display_country = country_df.copy()
     money_cols = [c for c in display_country.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
@@ -2047,14 +2878,45 @@ with detail_tabs[1]:
     st.dataframe(display_group, use_container_width=True)
 with detail_tabs[2]:
     display_supplier = supplier_df.copy()
-    for col in ["Allocated Spend", "Supplier Financial Cost", "Capital Gain Offset", "Inventory Carrying Cost", "Economic Total"]:
-        display_supplier[col] = display_supplier[col].map(lambda x: format_money(x, currency_symbol))
-    display_supplier["Share %"] = display_supplier["Share %"].map(lambda x: f"{x:.1f}%")
-    display_supplier["Risk Score"] = display_supplier["Risk Score"].map(lambda x: f"{x:.2f}")
+    supplier_money_cols = [
+        "Allocated Spend", "Supplier Financial Cost", "Capital Gain Offset", "Inventory Carrying Cost", "Economic Total",
+        "Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost"
+    ]
+    for col in supplier_money_cols:
+        if col in display_supplier.columns:
+            display_supplier[col] = display_supplier[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol))
+    if "Share %" in display_supplier.columns:
+        display_supplier["Share %"] = display_supplier["Share %"].map(lambda x: f"{x:.1f}%")
+    if "Risk Score" in display_supplier.columns:
+        display_supplier["Risk Score"] = display_supplier["Risk Score"].map(lambda x: f"{x:.2f}")
+    if "Performance Score" in display_supplier.columns:
+        display_supplier["Performance Score"] = display_supplier["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+    if "Scope Creep %" in display_supplier.columns:
+        display_supplier["Scope Creep %"] = display_supplier["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
     st.dataframe(display_supplier, use_container_width=True)
 with detail_tabs[3]:
-    risk_df = pd.DataFrame([{"Supplier": s, "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS])
+    risk_df = pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS])
     st.dataframe(risk_df, use_container_width=True)
+if analysis_mode != "Direct Materials":
+    with detail_tabs[4]:
+        service_cols = [
+            "Country", "Supplier", "Service Scope", "Pricing Model", "Proposed Contract Value",
+            "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost",
+            "Performance Score", "Performance Tier", "Performance-Adjusted Cost", "Scope Creep %",
+            "Share %", "Allocated Spend"
+        ]
+        available_cols = [c for c in service_cols if c in supplier_df.columns]
+        service_df = supplier_df[available_cols].copy()
+        for col in ["Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost", "Allocated Spend"]:
+            if col in service_df.columns:
+                service_df[col] = service_df[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol))
+        if "Performance Score" in service_df.columns:
+            service_df["Performance Score"] = service_df["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+        if "Scope Creep %" in service_df.columns:
+            service_df["Scope Creep %"] = service_df["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
+        if "Share %" in service_df.columns:
+            service_df["Share %"] = service_df["Share %"].map(lambda x: f"{x:.1f}%")
+        st.dataframe(service_df, use_container_width=True)
 
 # =============================================================================
 # Download
