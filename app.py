@@ -1,35 +1,34 @@
 """
-Executive Procurement TCO & Should-Cost Dashboard
-Version v43 - Executive Dash Tab + Session State Fix
+Executive Procurement TCO & Should-Cost Intelligence Platform
+Version v46 — Enterprise Premium Redesign
 
 Run:
     pip install -r requirements.txt
     streamlit run app.py
 
-This dashboard compares current spend vs. supplier proposals using:
-- commercial spend
-- payment-term supplier financial cost
-- treasury/working-capital carry benefit
-- inventory carrying cost with explicit ownership assumptions
-- supplier risk and Kraljic minimum shares
-- supplier capacity / max-share constraints with infeasibility warnings
-- exact linear-programming cost optimization when SciPy is available, with grid fallback
-- proposal financial and treasury return periods dynamically follow each supplier payment term; current financial period uses the current/reference period only
-- gross financial impact is explicitly offset by incremental treasury return to produce net financial saving/impact
-- Direct Materials mode calculates spend from landed unit price x volume before TCO analysis
-- Indirect / Services mode calculates service TCO with scope, pricing model, headcount/hour economics, scorecards, overtime KPIs, should-cost, productivity gains and contract leakage
-
-Key modeling guardrails
------------------------
-1. Supplier proposal spend is a 100% volume-equivalent spend, before financial cost.
-2. Current baseline is never recalculated using proposal terms.
-3. Proposal financial cost and treasury return use each supplier proposed payment term.
-4. Negative deltas mean savings; positive deltas mean cost impact.
+WHAT'S NEW IN v46
+-----------------
+• Complete visual overhaul: premium enterprise dark UI with glass morphism cards,
+  gradient accents, smooth animations and a design system worthy of a $500K SaaS product.
+• Indirect / Services cockpit redesigned to Amazon procurement standards:
+  – FTE demand decomposition (regular vs overtime vs productivity-adjusted headcount)
+  – Contract leakage waterfall (contracted → scope creep → actual billed → TCO)
+  – SLA penalty / credit modeling with financial impact quantification
+  – Productivity ROI tracker: investment vs hard-dollar return timeline
+  – Supplier tiering heat map: cost × performance × risk quadrant view
+  – Rate card compliance check: quoted vs benchmark × hours consumed
+  – Demand volatility buffer: buffer cost for variable demand scopes
+  – Multi-year contract value: baseline → escalation → total contract value (TCV)
+• AI Executive Copilot now connects to Anthropic claude-sonnet-4-20250514 via the
+  artifact API for a real streaming analysis (requires API key in session).
+• Enhanced charts: waterfall with sub-components, scatter frontier with quadrant lines,
+  service performance radar, contract leakage Sankey-style waterfall.
 """
 
 from __future__ import annotations
 
 import math
+import json
 from contextlib import contextmanager
 from html import escape
 from itertools import product
@@ -47,14 +46,16 @@ except Exception:
 
 try:
     import plotly.graph_objects as go
+    import plotly.express as px
     PLOTLY_AVAILABLE = True
 except Exception:
     go = None
+    px = None
     PLOTLY_AVAILABLE = False
 
-# =============================================================================
-# Constants and defaults
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSTANTS & DEFAULTS
+# ─────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_ACTIVE_COUNTRIES = ["Brazil", "Mexico", "Argentina", "Colombia"]
 COUNTRY_OPTIONS = [
@@ -94,7 +95,6 @@ COUNTRY_GEO_POINTS = {
     "Indonesia": {"lat": -0.7893, "lon": 113.9213},
     "Malaysia": {"lat": 4.2105, "lon": 101.9758},
 }
-
 LOCALITY_PRESETS = {
     "Brazil": [
         {"name": "São Paulo", "lat": -23.5505, "lon": -46.6333},
@@ -126,7 +126,6 @@ LOCALITY_PRESETS = {
         {"name": "Barranquilla", "lat": 10.9685, "lon": -74.7813},
     ],
 }
-
 LOCALITY_FALLBACKS = [
     {"name": "North region", "lat_offset": 4.0, "lon_offset": 0.0},
     {"name": "Central region", "lat_offset": 0.0, "lon_offset": 0.0},
@@ -134,30 +133,19 @@ LOCALITY_FALLBACKS = [
     {"name": "East region", "lat_offset": 0.0, "lon_offset": 4.0},
     {"name": "West region", "lat_offset": 0.0, "lon_offset": -4.0},
 ]
-
 COUNTRIES = DEFAULT_ACTIVE_COUNTRIES.copy()
 VIEW_SCOPE = "Global View"
 ANCHOR_COUNTRY = "Brazil"
-LOCALITY_COORDS = {}
+LOCALITY_COORDS: Dict = {}
 PRIMARY_COUNTRY = "Brazil"
 SECONDARY_GROUP = "LATAM"
 LATAM_COUNTRIES = ["Mexico", "Argentina", "Colombia"]
 SUPPLIERS = [
-    "ChemPrime",
-    "OleoGlobal",
-    "Oleo Overseas Trading Co.",
+    "ChemPrime", "OleoGlobal", "Oleo Overseas Trading Co.",
     "Comercio de Oleos Nacional Distribuicao",
-    "Supplier 05",
-    "Supplier 06",
-    "Supplier 07",
-    "Supplier 08",
-    "Supplier 09",
-    "Supplier 10",
-    "Supplier 11",
-    "Supplier 12",
-    "Supplier 13",
-    "Supplier 14",
-    "Supplier 15",
+    "Supplier 05", "Supplier 06", "Supplier 07", "Supplier 08",
+    "Supplier 09", "Supplier 10", "Supplier 11", "Supplier 12",
+    "Supplier 13", "Supplier 14", "Supplier 15",
 ]
 SUPPLIER_POOL = SUPPLIERS.copy()
 SHORT_SUPPLIER = {
@@ -165,86 +153,27 @@ SHORT_SUPPLIER = {
     "OleoGlobal": "OleoGlobal",
     "Oleo Overseas Trading Co.": "Overseas",
     "Comercio de Oleos Nacional Distribuicao": "Distribuicao",
-    "Supplier 05": "Supplier 05",
-    "Supplier 06": "Supplier 06",
-    "Supplier 07": "Supplier 07",
-    "Supplier 08": "Supplier 08",
-    "Supplier 09": "Supplier 09",
-    "Supplier 10": "Supplier 10",
-    "Supplier 11": "Supplier 11",
-    "Supplier 12": "Supplier 12",
-    "Supplier 13": "Supplier 13",
-    "Supplier 14": "Supplier 14",
-    "Supplier 15": "Supplier 15",
+    **{f"Supplier {i:02d}": f"Supplier {i:02d}" for i in range(5, 16)},
 }
-
-# Supplier IDs remain fixed internally so calculations, widget keys and saved scenarios
-# do not break. These editable display labels are what users see throughout the app.
-DEFAULT_SUPPLIER_DISPLAY_NAME = {supplier: supplier for supplier in SUPPLIERS}
+DEFAULT_SUPPLIER_DISPLAY_NAME = {s: s for s in SUPPLIERS}
 DEFAULT_SUPPLIER_SHORT_NAME = SHORT_SUPPLIER.copy()
 
-DEFAULT_CURRENT_SPEND = {
-    "Brazil": 13_000_000.0,
-    "Mexico": 3_000_000.0,
-    "Argentina": 2_500_000.0,
-    "Colombia": 1_500_000.0,
-}
-DEFAULT_FINANCIAL_RATE = {
-    "Brazil": 4.84,
-    "Mexico": 2.32,
-    "Argentina": 10.52,
-    "Colombia": 3.07,
-}
-DEFAULT_REFERENCE_DAYS = {country: 120 for country in COUNTRIES}
-# Default aligned with the executive test table: the current payment term defaults
-# to the country financial-rate reference period. Users can still override it.
-DEFAULT_CURRENT_TERM = {
-    "Brazil": 120,
-    "Mexico": 60,
-    "Argentina": 60,
-    "Colombia": 60,
-}
-DEFAULT_TREASURY_RETURN = {
-    "Brazil": 5.07,
-    "Mexico": 2.50,
-    "Argentina": 10.90,
-    "Colombia": 3.40,
-}
-DEFAULT_TREASURY_REF_DAYS = {country: 120 for country in COUNTRIES}
-DEFAULT_INVENTORY_CARRY_RATE = {
-    "Brazil": 23.0,
-    "Mexico": 15.0,
-    "Argentina": 35.0,
-    "Colombia": 22.0,
-}
-DEFAULT_CURRENT_INVENTORY_DAYS = {country: 30 for country in COUNTRIES}
+DEFAULT_CURRENT_SPEND = {"Brazil": 13_000_000.0, "Mexico": 3_000_000.0, "Argentina": 2_500_000.0, "Colombia": 1_500_000.0}
+DEFAULT_FINANCIAL_RATE = {"Brazil": 4.84, "Mexico": 2.32, "Argentina": 10.52, "Colombia": 3.07}
+DEFAULT_REFERENCE_DAYS = {c: 120 for c in COUNTRIES}
+DEFAULT_CURRENT_TERM = {"Brazil": 120, "Mexico": 60, "Argentina": 60, "Colombia": 60}
+DEFAULT_TREASURY_RETURN = {"Brazil": 5.07, "Mexico": 2.50, "Argentina": 10.90, "Colombia": 3.40}
+DEFAULT_TREASURY_REF_DAYS = {c: 120 for c in COUNTRIES}
+DEFAULT_INVENTORY_CARRY_RATE = {"Brazil": 23.0, "Mexico": 15.0, "Argentina": 35.0, "Colombia": 22.0}
+DEFAULT_CURRENT_INVENTORY_DAYS = {c: 30 for c in COUNTRIES}
 
-# Direct materials landed-cost defaults. Spend is calculated as landed unit price x volume.
 DEFAULT_ITEM_NAME = "Isopropyl Palmitate"
 DEFAULT_NEGOTIATED_UNIT = "kg"
 CURRENCY_OPTIONS = ["BRL", "USD", "EUR", "MXN", "ARS", "COP", "CNY"]
 INCOTERM_OPTIONS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP", "DDP"]
-DEFAULT_DIRECT_VOLUME = {
-    "Brazil": 1_000_000.0,
-    "Mexico": 250_000.0,
-    "Argentina": 200_000.0,
-    "Colombia": 125_000.0,
-}
-DEFAULT_DIRECT_CURRENCY = {
-    "Brazil": "BRL",
-    "Mexico": "USD",
-    "Argentina": "USD",
-    "Colombia": "USD",
-}
-DEFAULT_FX_TO_REPORTING = {
-    "BRL": 1.0,
-    "USD": 5.30,
-    "EUR": 5.75,
-    "MXN": 0.30,
-    "ARS": 0.0045,
-    "COP": 0.00135,
-    "CNY": 0.73,
-}
+DEFAULT_DIRECT_VOLUME = {"Brazil": 1_000_000.0, "Mexico": 250_000.0, "Argentina": 200_000.0, "Colombia": 125_000.0}
+DEFAULT_DIRECT_CURRENCY = {"Brazil": "BRL", "Mexico": "USD", "Argentina": "USD", "Colombia": "USD"}
+DEFAULT_FX_TO_REPORTING = {"BRL": 1.0, "USD": 5.30, "EUR": 5.75, "MXN": 0.30, "ARS": 0.0045, "COP": 0.00135, "CNY": 0.73}
 LANDED_COST_COMPONENTS = [
     ("base_unit_price", "Base / quoted unit price"),
     ("conversion_cost", "Conversion cost"),
@@ -257,9 +186,7 @@ LANDED_COST_COMPONENTS = [
     ("local_taxes", "Local taxes"),
 ]
 
-
-# Indirect / Services executive cockpit defaults. Services are modeled by scope,
-# pricing model, contract leakage, performance scorecard, risk and productivity gain.
+# ── INDIRECT / SERVICES CONFIGURATION ────────────────────────────────────────
 SERVICE_SCOPES = [
     "IT Services / Digital & Outsourcing",
     "Facilities / Cleaning & Workplace",
@@ -272,93 +199,102 @@ SERVICE_SCOPES = [
 ]
 SERVICE_SCOPE_CONFIG = {
     "IT Services / Digital & Outsourcing": {
-        "icon": "💻",
-        "pricing_models": ["T&M rate card", "FTE-based outsourcing", "Fixed fee project", "Managed service SLA"],
-        "driver_label": "tickets, sprints, users or FTE-months",
-        "productivity_label": "automation, ticket deflection, cycle-time reduction or engineering velocity gain",
+        "icon": "💻", "color": "#6366f1",
+        "pricing_models": ["T&M rate card", "FTE-based outsourcing", "Fixed fee project", "Managed service SLA", "Outcome-based / DevOps"],
+        "driver_label": "FTE-months, tickets, story points or sprints",
+        "productivity_label": "automation rate, ticket deflection %, cycle-time reduction, engineering velocity or toil elimination",
         "field_labels": ["FTEs / squad members", "Tickets or story points / month", "Critical systems covered"],
+        "benchmark_fte_cost": 120_000.0,
+        "sla_kpis": ["Uptime %", "MTTR (hours)", "Ticket SLA %", "Defect escape rate", "Deployment frequency"],
+        "leakage_drivers": ["Scope additions", "Emergency changes", "Tool licensing overruns", "Rework / bug fix cost", "Unplanned incidents"],
     },
     "Facilities / Cleaning & Workplace": {
-        "icon": "🏢",
-        "pricing_models": ["Rate per m²", "Fixed monthly fee", "FTE-based service", "Unit visit rate"],
+        "icon": "🏢", "color": "#0ea5e9",
+        "pricing_models": ["Rate per m²", "Fixed monthly fee", "FTE-based service", "Unit visit rate", "Performance-based"],
         "driver_label": "m², sites, visits or headcount served",
         "productivity_label": "frequency optimization, route density, material consumption reduction or supervision productivity",
         "field_labels": ["Area serviced (m²)", "Sites / buildings", "Service frequency / month"],
+        "benchmark_fte_cost": 35_000.0,
+        "sla_kpis": ["Cleaning score / audit", "Compliance rate %", "Incident response time", "Material consumption vs budget", "Absenteeism rate"],
+        "leakage_drivers": ["Extra cleaning calls", "Consumable overruns", "Emergency call-outs", "Supervisor overhead", "Absenteeism cover cost"],
     },
     "Industrial MRO / VMI / Fastenal-style outsourcing": {
-        "icon": "🧰",
-        "pricing_models": ["VMI managed service fee", "Cost plus fee", "Unit transaction fee", "FTE-based onsite service"],
+        "icon": "🧰", "color": "#f59e0b",
+        "pricing_models": ["VMI managed service fee", "Cost plus fee", "Unit transaction fee", "FTE-based onsite service", "Consumption-based"],
         "driver_label": "SKUs, transactions, sites, vending machines or tool-crib workload",
         "productivity_label": "inventory reduction, stockout avoidance, technician productivity, tool-crib automation or consumption control",
         "field_labels": ["Managed SKUs", "Transactions / month", "Sites / vending points"],
+        "benchmark_fte_cost": 55_000.0,
+        "sla_kpis": ["Fill rate %", "Stockout events / month", "Inventory turnover", "Vending uptime %", "Transaction accuracy %"],
+        "leakage_drivers": ["Emergency procurement", "Stockout downtime cost", "Excess inventory carrying", "Unauthorized purchasing", "Write-offs / obsolescence"],
     },
     "Professional Services / Consulting": {
-        "icon": "🧠",
-        "pricing_models": ["Fixed fee project", "T&M rate card", "Retainer", "Success fee"],
+        "icon": "🧠", "color": "#8b5cf6",
+        "pricing_models": ["Fixed fee project", "T&M rate card", "Retainer", "Success fee", "Blended model"],
         "driver_label": "milestones, consultant days, workstreams or deliverables",
         "productivity_label": "faster implementation, capability transfer, reduced internal effort or measurable business impact",
         "field_labels": ["Senior consultant days", "Analyst / consultant days", "Milestones / deliverables"],
+        "benchmark_fte_cost": 250_000.0,
+        "sla_kpis": ["Milestone on-time %", "Deliverable acceptance rate", "Stakeholder satisfaction (NPS)", "Knowledge transfer score", "Benefit realization %"],
+        "leakage_drivers": ["Scope creep / change orders", "Rework and iterations", "Delayed sign-offs (idle time)", "Unplanned senior escalations", "Post-project fix cost"],
     },
     "Marketing / Agency Services": {
-        "icon": "🎯",
-        "pricing_models": ["Monthly retainer", "Project fee", "Pass-through + agency fee", "Rate card"],
+        "icon": "🎯", "color": "#ec4899",
+        "pricing_models": ["Monthly retainer", "Project fee", "Pass-through + agency fee", "Rate card", "Performance-linked"],
         "driver_label": "campaigns, assets, production jobs, media pass-through or usage rights",
         "productivity_label": "asset reuse, lower rework, campaign cycle-time reduction or media efficiency",
         "field_labels": ["Campaigns / month", "Assets / deliverables", "Media pass-through budget"],
+        "benchmark_fte_cost": 95_000.0,
+        "sla_kpis": ["On-time delivery %", "First-time approval rate %", "Campaign ROI vs target", "Asset reuse rate %", "Revision rounds per asset"],
+        "leakage_drivers": ["Revision / rework cost", "Rush fees and premiums", "Unused assets / over-production", "Untracked pass-through", "IP / rights overruns"],
     },
     "Logistics / Transport Services": {
-        "icon": "🚚",
-        "pricing_models": ["Rate per shipment", "Dedicated route / vehicle", "Cost plus fee", "SLA-based logistics service"],
+        "icon": "🚚", "color": "#10b981",
+        "pricing_models": ["Rate per shipment", "Dedicated route / vehicle", "Cost plus fee", "SLA-based logistics service", "Dynamic/spot pricing"],
         "driver_label": "shipments, km, routes, pallets or dedicated vehicles",
         "productivity_label": "load factor improvement, route optimization, fewer expedites or warehouse throughput gain",
         "field_labels": ["Shipments / month", "Average km or routes", "Dedicated vehicles / lanes"],
+        "benchmark_fte_cost": 42_000.0,
+        "sla_kpis": ["OTIF %", "Damage rate %", "Cost per pallet/km vs budget", "Expedite frequency", "Driver / asset utilization %"],
+        "leakage_drivers": ["Expedite / emergency freight", "Detention and demurrage", "Damage / claims cost", "Fuel surcharge overruns", "Dead mileage / empty runs"],
     },
     "BPO / Call Center": {
-        "icon": "🎧",
-        "pricing_models": ["FTE-based", "Cost per contact", "SLA-based managed service", "Outcome-based"],
+        "icon": "🎧", "color": "#06b6d4",
+        "pricing_models": ["FTE-based", "Cost per contact", "SLA-based managed service", "Outcome-based", "Hybrid FTE + volume"],
         "driver_label": "contacts, calls, cases, FTEs or resolved transactions",
         "productivity_label": "AHT reduction, containment, automation, first-contact resolution or lower escalation rate",
         "field_labels": ["Contacts / month", "FTEs", "Target AHT / productivity index"],
+        "benchmark_fte_cost": 38_000.0,
+        "sla_kpis": ["AHT (seconds)", "First contact resolution %", "CSAT score", "Abandon rate %", "Containment / automation rate %"],
+        "leakage_drivers": ["Overtime / surge staffing", "Escalation handling cost", "Retraining / attrition cost", "QA failures / rework", "Non-compliant transactions"],
     },
     "Generic Indirect Service": {
-        "icon": "🧾",
+        "icon": "🧾", "color": "#64748b",
         "pricing_models": ["Fixed fee", "T&M rate card", "Unit rate", "Retainer", "Pass-through + fee"],
         "driver_label": "service units, hours, FTEs, projects or sites",
         "productivity_label": "supplier-led productivity, demand reduction, process improvement or service efficiency",
         "field_labels": ["Service units", "Hours / month", "Sites / users covered"],
+        "benchmark_fte_cost": 60_000.0,
+        "sla_kpis": ["SLA compliance %", "Quality score", "Stakeholder satisfaction", "Delivery on-time %", "Incident frequency"],
+        "leakage_drivers": ["Scope additions", "Emergency requests", "Rework cost", "Overhead overruns", "Unplanned escalations"],
     },
 }
 SERVICE_SCORECARD_WEIGHTS = {
-    "Cost competitiveness": 18.0,
-    "SLA / Delivery": 18.0,
-    "Quality of service": 14.0,
-    "Stakeholder satisfaction": 12.0,
-    "Contract compliance": 10.0,
-    "Productivity / Innovation": 10.0,
-    "Overtime control": 8.0,
-    "Risk & compliance": 5.0,
-    "ESG / diversity": 5.0,
+    "Cost competitiveness": 18.0, "SLA / Delivery": 18.0, "Quality of service": 14.0,
+    "Stakeholder satisfaction": 12.0, "Contract compliance": 10.0,
+    "Productivity / Innovation": 10.0, "Overtime control": 8.0,
+    "Risk & compliance": 5.0, "ESG / diversity": 5.0,
 }
-
-
 SUPPLIER_GOVERNANCE_WEIGHTS = {
-    "OTIF / SLA delivery": 18.0,
-    "Quality / NCR performance": 15.0,
-    "Financial health": 12.0,
-    "Compliance / due diligence": 15.0,
-    "ESG / ethics": 10.0,
-    "Cyber / data security": 8.0,
-    "Labor / HSE": 10.0,
-    "Stakeholder satisfaction": 12.0,
+    "OTIF / SLA delivery": 18.0, "Quality / NCR performance": 15.0,
+    "Financial health": 12.0, "Compliance / due diligence": 15.0,
+    "ESG / ethics": 10.0, "Cyber / data security": 8.0,
+    "Labor / HSE": 10.0, "Stakeholder satisfaction": 12.0,
 }
 DUE_DILIGENCE_STATUS_OPTIONS = ["Clear", "Minor gaps", "Material gaps", "Not approved"]
 CUSTOM_FACTOR_TYPES = [
-    "Cost add-on",
-    "Cost reduction / saving",
-    "Productivity gain",
-    "Risk increase",
-    "Risk reduction",
-    "Score bonus / penalty",
+    "Cost add-on", "Cost reduction / saving", "Productivity gain",
+    "Risk increase", "Risk reduction", "Score bonus / penalty",
 ]
 CUSTOM_FACTOR_COUNTRIES = ["All countries"] + COUNTRIES
 SERVICE_OPEN_COST_COMPONENTS = [
@@ -376,26 +312,13 @@ SERVICE_OPEN_COST_COMPONENTS = [
 ]
 DEFAULT_SERVICE_SCOPE = "IT Services / Digital & Outsourcing"
 DEFAULT_SERVICE_PRICING_MODEL = "FTE-based outsourcing"
-DEFAULT_SERVICE_CONTRACT_VALUE = {
-    "Brazil": 13_000_000.0,
-    "Mexico": 3_000_000.0,
-    "Argentina": 2_500_000.0,
-    "Colombia": 1_500_000.0,
-}
+DEFAULT_SERVICE_CONTRACT_VALUE = {"Brazil": 13_000_000.0, "Mexico": 3_000_000.0, "Argentina": 2_500_000.0, "Colombia": 1_500_000.0}
 
-# Light country templates keep the experience simple: users select countries visually,
-# while the app auto-seeds practical defaults that can be refined in the country cards.
 COUNTRY_DEFAULT_TEMPLATE = {
-    "current_spend": 1_000_000.0,
-    "financial_rate": 3.0,
-    "reference_days": 60,
-    "current_term": 60,
-    "treasury_return": 2.0,
-    "treasury_ref_days": 60,
-    "inventory_carry_rate": 20.0,
-    "current_inventory_days": 30,
-    "direct_volume": 100_000.0,
-    "direct_currency": "USD",
+    "current_spend": 1_000_000.0, "financial_rate": 3.0, "reference_days": 60,
+    "current_term": 60, "treasury_return": 2.0, "treasury_ref_days": 60,
+    "inventory_carry_rate": 20.0, "current_inventory_days": 30,
+    "direct_volume": 100_000.0, "direct_currency": "USD",
     "service_contract_value": 1_000_000.0,
 }
 COUNTRY_PRESET_OVERRIDES = {
@@ -428,15 +351,13 @@ def seed_country_defaults(country: str) -> None:
     DEFAULT_SERVICE_CONTRACT_VALUE.setdefault(country, float(base["service_contract_value"]))
 
 
-for _country_option in COUNTRY_OPTIONS:
-    seed_country_defaults(_country_option)
+for _c in COUNTRY_OPTIONS:
+    seed_country_defaults(_c)
 
 
 def _stable_offset(text: str, scale: float = 1.6) -> tuple[float, float]:
     seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(text))
-    lat_offset = ((seed % 17) - 8) / 8 * scale
-    lon_offset = (((seed // 17) % 17) - 8) / 8 * scale
-    return lat_offset, lon_offset
+    return ((seed % 17) - 8) / 8 * scale, (((seed // 17) % 17) - 8) / 8 * scale
 
 
 def get_country_geo(country: str) -> dict:
@@ -465,688 +386,1857 @@ def coord_for_analysis_unit(unit: str, anchor_country: str | None = None) -> dic
 
 
 def ensure_analysis_unit_defaults(unit: str, template_country: str | None = None) -> None:
-    """Ensure all runtime dictionaries have sane defaults for either a country or a locality.
-
-    Local View reuses the same economic engine, so each locality is treated as an
-    analysis unit with country-like assumptions inherited from the anchor country.
-    """
     template_country = template_country or unit
     if unit not in DEFAULT_CURRENT_SPEND:
         seed_country_defaults(unit)
         if template_country in DEFAULT_CURRENT_SPEND:
-            DEFAULT_CURRENT_SPEND[unit] = float(DEFAULT_CURRENT_SPEND.get(template_country, DEFAULT_CURRENT_SPEND[unit]))
-            DEFAULT_FINANCIAL_RATE[unit] = float(DEFAULT_FINANCIAL_RATE.get(template_country, DEFAULT_FINANCIAL_RATE[unit]))
-            DEFAULT_REFERENCE_DAYS[unit] = int(DEFAULT_REFERENCE_DAYS.get(template_country, DEFAULT_REFERENCE_DAYS[unit]))
-            DEFAULT_CURRENT_TERM[unit] = int(DEFAULT_CURRENT_TERM.get(template_country, DEFAULT_CURRENT_TERM[unit]))
-            DEFAULT_TREASURY_RETURN[unit] = float(DEFAULT_TREASURY_RETURN.get(template_country, DEFAULT_TREASURY_RETURN[unit]))
-            DEFAULT_TREASURY_REF_DAYS[unit] = int(DEFAULT_TREASURY_REF_DAYS.get(template_country, DEFAULT_TREASURY_REF_DAYS[unit]))
-            DEFAULT_INVENTORY_CARRY_RATE[unit] = float(DEFAULT_INVENTORY_CARRY_RATE.get(template_country, DEFAULT_INVENTORY_CARRY_RATE[unit]))
-            DEFAULT_CURRENT_INVENTORY_DAYS[unit] = int(DEFAULT_CURRENT_INVENTORY_DAYS.get(template_country, DEFAULT_CURRENT_INVENTORY_DAYS[unit]))
-            # Split large-country defaults into a practical location-sized starting point.
-            DEFAULT_CURRENT_SPEND[unit] = max(DEFAULT_CURRENT_SPEND[unit] / 4.0, 100_000.0)
-            DEFAULT_DIRECT_VOLUME[unit] = max(float(DEFAULT_DIRECT_VOLUME.get(template_country, 100_000.0)) / 4.0, 10_000.0)
-            DEFAULT_DIRECT_CURRENCY[unit] = str(DEFAULT_DIRECT_CURRENCY.get(template_country, "USD"))
-            DEFAULT_SERVICE_CONTRACT_VALUE[unit] = max(float(DEFAULT_SERVICE_CONTRACT_VALUE.get(template_country, 1_000_000.0)) / 4.0, 100_000.0)
+            DEFAULT_CURRENT_SPEND[unit] = max(DEFAULT_CURRENT_SPEND.get(template_country, 1_000_000.0) / 4.0, 100_000.0)
+            for k in ["DEFAULT_FINANCIAL_RATE", "DEFAULT_TREASURY_RETURN", "DEFAULT_INVENTORY_CARRY_RATE"]:
+                globals()[k].setdefault(unit, globals()[k].get(template_country, COUNTRY_DEFAULT_TEMPLATE.get(k.replace("DEFAULT_", "").lower(), 3.0)))
+            DEFAULT_DIRECT_VOLUME[unit] = max(DEFAULT_DIRECT_VOLUME.get(template_country, 100_000.0) / 4.0, 10_000.0)
+            DEFAULT_DIRECT_CURRENCY[unit] = DEFAULT_DIRECT_CURRENCY.get(template_country, "USD")
+            DEFAULT_SERVICE_CONTRACT_VALUE[unit] = max(DEFAULT_SERVICE_CONTRACT_VALUE.get(template_country, 1_000_000.0) / 4.0, 100_000.0)
     DEFAULT_PROPOSAL_SPEND.setdefault(unit, {})
     DEFAULT_PAYMENT_TERM.setdefault(unit, {})
     DEFAULT_LEAD_TIME_DAYS.setdefault(unit, {})
     DEFAULT_SAFETY_STOCK_DAYS.setdefault(unit, {})
     DEFAULT_INVENTORY_OWNERSHIP.setdefault(unit, {})
     DEFAULT_SHARES.setdefault(unit, {})
-    base_spend = float(DEFAULT_CURRENT_SPEND.get(unit, COUNTRY_DEFAULT_TEMPLATE["current_spend"]))
-    for idx, supplier in enumerate(SUPPLIER_POOL, start=1):
+    base_spend = float(DEFAULT_CURRENT_SPEND.get(unit, 1_000_000.0))
+    for supplier in SUPPLIER_POOL:
         DEFAULT_PROPOSAL_SPEND[unit].setdefault(supplier, base_spend)
-        DEFAULT_PAYMENT_TERM[unit].setdefault(supplier, int(DEFAULT_CURRENT_TERM.get(unit, COUNTRY_DEFAULT_TEMPLATE["current_term"])))
+        DEFAULT_PAYMENT_TERM[unit].setdefault(supplier, int(DEFAULT_CURRENT_TERM.get(unit, 60)))
         DEFAULT_LEAD_TIME_DAYS[unit].setdefault(supplier, 30)
         DEFAULT_SAFETY_STOCK_DAYS[unit].setdefault(supplier, 0)
         DEFAULT_INVENTORY_OWNERSHIP[unit].setdefault(supplier, "Supplier/trader owns until delivery")
         DEFAULT_SHARES[unit].setdefault(supplier, 0.0)
 
-# Validation example shared by the user.
-DEFAULT_PROPOSAL_SPEND = {
-    "Brazil": {
-        "ChemPrime": 16_250_000.0,
-        "OleoGlobal": 9_750_000.0,
-        "Oleo Overseas Trading Co.": 10_237_500.0,
-        "Comercio de Oleos Nacional Distribuicao": 10_530_000.0,
-    },
-    "Mexico": {
-        "ChemPrime": 3_750_000.0,
-        "OleoGlobal": 2_250_000.0,
-        "Oleo Overseas Trading Co.": 2_362_500.0,
-        "Comercio de Oleos Nacional Distribuicao": 2_430_000.0,
-    },
-    "Argentina": {
-        "ChemPrime": 3_125_000.0,
-        "OleoGlobal": 1_875_000.0,
-        "Oleo Overseas Trading Co.": 1_968_750.0,
-        "Comercio de Oleos Nacional Distribuicao": 2_025_000.0,
-    },
-    "Colombia": {
-        "ChemPrime": 1_875_000.0,
-        "OleoGlobal": 1_125_000.0,
-        "Oleo Overseas Trading Co.": 1_181_250.0,
-        "Comercio de Oleos Nacional Distribuicao": 1_215_000.0,
-    },
-}
-DEFAULT_PAYMENT_TERM = {
-    country: {
-        "ChemPrime": 90,
-        "OleoGlobal": 70,
-        "Oleo Overseas Trading Co.": 150,
-        "Comercio de Oleos Nacional Distribuicao": 120,
-    }
-    for country in COUNTRIES
-}
-DEFAULT_LEAD_TIME_DAYS = {
-    country: {
-        "ChemPrime": 30,
-        "OleoGlobal": 120,
-        "Oleo Overseas Trading Co.": 120,
-        "Comercio de Oleos Nacional Distribuicao": 30,
-    }
-    for country in COUNTRIES
-}
-DEFAULT_SAFETY_STOCK_DAYS = {
-    country: {
-        "ChemPrime": 0,
-        "OleoGlobal": 0,
-        "Oleo Overseas Trading Co.": 0,
-        "Comercio de Oleos Nacional Distribuicao": 0,
-    }
-    for country in COUNTRIES
-}
 
+DEFAULT_PROPOSAL_SPEND = {
+    "Brazil": {"ChemPrime": 16_250_000.0, "OleoGlobal": 9_750_000.0, "Oleo Overseas Trading Co.": 10_237_500.0, "Comercio de Oleos Nacional Distribuicao": 10_530_000.0},
+    "Mexico": {"ChemPrime": 3_750_000.0, "OleoGlobal": 2_250_000.0, "Oleo Overseas Trading Co.": 2_362_500.0, "Comercio de Oleos Nacional Distribuicao": 2_430_000.0},
+    "Argentina": {"ChemPrime": 3_125_000.0, "OleoGlobal": 1_875_000.0, "Oleo Overseas Trading Co.": 1_968_750.0, "Comercio de Oleos Nacional Distribuicao": 2_025_000.0},
+    "Colombia": {"ChemPrime": 1_875_000.0, "OleoGlobal": 1_125_000.0, "Oleo Overseas Trading Co.": 1_181_250.0, "Comercio de Oleos Nacional Distribuicao": 1_215_000.0},
+}
+DEFAULT_PAYMENT_TERM = {c: {"ChemPrime": 90, "OleoGlobal": 70, "Oleo Overseas Trading Co.": 150, "Comercio de Oleos Nacional Distribuicao": 120} for c in COUNTRIES}
+DEFAULT_LEAD_TIME_DAYS = {c: {"ChemPrime": 30, "OleoGlobal": 120, "Oleo Overseas Trading Co.": 120, "Comercio de Oleos Nacional Distribuicao": 30} for c in COUNTRIES}
+DEFAULT_SAFETY_STOCK_DAYS = {c: {s: 0 for s in SUPPLIERS} for c in COUNTRIES}
 INVENTORY_OWNERSHIP_OPTIONS = [
-    "Buyer owns transit + safety stock",
-    "Buyer owns safety stock only",
-    "Supplier/trader owns until delivery",
-    "Distributor holds local stock",
+    "Buyer owns transit + safety stock", "Buyer owns safety stock only",
+    "Supplier/trader owns until delivery", "Distributor holds local stock",
 ]
 DEFAULT_INVENTORY_OWNERSHIP = {
-    country: {
+    c: {
         "ChemPrime": "Buyer owns safety stock only",
         "OleoGlobal": "Buyer owns transit + safety stock",
         "Oleo Overseas Trading Co.": "Supplier/trader owns until delivery",
         "Comercio de Oleos Nacional Distribuicao": "Distributor holds local stock",
     }
-    for country in COUNTRIES
+    for c in COUNTRIES
 }
 DEFAULT_SHARES = {
-    country: {
-        "ChemPrime": 40.0,
-        "OleoGlobal": 0.0,
-        "Oleo Overseas Trading Co.": 40.0,
-        "Comercio de Oleos Nacional Distribuicao": 20.0,
-    }
-    for country in COUNTRIES
+    c: {"ChemPrime": 40.0, "OleoGlobal": 0.0, "Oleo Overseas Trading Co.": 40.0, "Comercio de Oleos Nacional Distribuicao": 20.0}
+    for c in COUNTRIES
 }
-DEFAULT_KRALJIC_REQUIRED = {
-    "ChemPrime": True,
-    "OleoGlobal": False,
-    "Oleo Overseas Trading Co.": False,
-    "Comercio de Oleos Nacional Distribuicao": False,
-}
-DEFAULT_MIN_SHARE = {
-    "ChemPrime": 40.0,
-    "OleoGlobal": 0.0,
-    "Oleo Overseas Trading Co.": 0.0,
-    "Comercio de Oleos Nacional Distribuicao": 0.0,
-}
-DEFAULT_MAX_SHARE = {
-    "ChemPrime": 100.0,
-    "OleoGlobal": 100.0,
-    "Oleo Overseas Trading Co.": 100.0,
-    "Comercio de Oleos Nacional Distribuicao": 100.0,
-}
-DEFAULT_APPROVED = {supplier: True for supplier in SUPPLIERS}
+DEFAULT_KRALJIC_REQUIRED = {"ChemPrime": True, "OleoGlobal": False, "Oleo Overseas Trading Co.": False, "Comercio de Oleos Nacional Distribuicao": False}
+DEFAULT_MIN_SHARE = {"ChemPrime": 40.0, "OleoGlobal": 0.0, "Oleo Overseas Trading Co.": 0.0, "Comercio de Oleos Nacional Distribuicao": 0.0}
+DEFAULT_MAX_SHARE = {s: 100.0 for s in SUPPLIERS}
+DEFAULT_APPROVED = {s: True for s in SUPPLIERS}
 DEFAULT_RISK = {
-    "ChemPrime": {
-        "Supply": 2.0,
-        "Quality": 2.0,
-        "Financial": 2.0,
-        "Compliance": 1.5,
-        "ESG": 2.0,
-        "Logistics": 2.0,
-    },
-    "OleoGlobal": {
-        "Supply": 3.0,
-        "Quality": 2.5,
-        "Financial": 2.5,
-        "Compliance": 2.0,
-        "ESG": 2.5,
-        "Logistics": 2.5,
-    },
-    "Oleo Overseas Trading Co.": {
-        "Supply": 4.0,
-        "Quality": 3.0,
-        "Financial": 3.5,
-        "Compliance": 3.0,
-        "ESG": 3.0,
-        "Logistics": 4.5,
-    },
-    "Comercio de Oleos Nacional Distribuicao": {
-        "Supply": 3.0,
-        "Quality": 2.5,
-        "Financial": 2.5,
-        "Compliance": 2.0,
-        "ESG": 2.5,
-        "Logistics": 2.5,
-    },
+    "ChemPrime": {"Supply": 2.0, "Quality": 2.0, "Financial": 2.0, "Compliance": 1.5, "ESG": 2.0, "Logistics": 2.0},
+    "OleoGlobal": {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5},
+    "Oleo Overseas Trading Co.": {"Supply": 4.0, "Quality": 3.0, "Financial": 3.5, "Compliance": 3.0, "ESG": 3.0, "Logistics": 4.5},
+    "Comercio de Oleos Nacional Distribuicao": {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5},
 }
-DEFAULT_RISK_WEIGHTS = {
-    "Supply": 30.0,
-    "Quality": 20.0,
-    "Financial": 15.0,
-    "Compliance": 15.0,
-    "ESG": 10.0,
-    "Logistics": 10.0,
-}
+DEFAULT_RISK_WEIGHTS = {"Supply": 30.0, "Quality": 20.0, "Financial": 15.0, "Compliance": 15.0, "ESG": 10.0, "Logistics": 10.0}
 
-# Extend all default dictionaries to support a dynamic supplier universe up to 15 suppliers.
-# First four suppliers keep the original business-case defaults; the additional suppliers
-# start as approved, zero-share alternatives with conservative generic assumptions.
-for _supplier in SUPPLIER_POOL:
-    DEFAULT_SUPPLIER_DISPLAY_NAME.setdefault(_supplier, _supplier)
-    DEFAULT_SUPPLIER_SHORT_NAME.setdefault(_supplier, SHORT_SUPPLIER.get(_supplier, _supplier))
-    DEFAULT_KRALJIC_REQUIRED.setdefault(_supplier, False)
-    DEFAULT_MIN_SHARE.setdefault(_supplier, 0.0)
-    DEFAULT_MAX_SHARE.setdefault(_supplier, 100.0)
-    DEFAULT_APPROVED.setdefault(_supplier, True)
-    DEFAULT_RISK.setdefault(_supplier, {dim: 3.0 for dim in DEFAULT_RISK_WEIGHTS})
+for _s in SUPPLIER_POOL:
+    DEFAULT_SUPPLIER_DISPLAY_NAME.setdefault(_s, _s)
+    DEFAULT_SUPPLIER_SHORT_NAME.setdefault(_s, SHORT_SUPPLIER.get(_s, _s))
+    DEFAULT_KRALJIC_REQUIRED.setdefault(_s, False)
+    DEFAULT_MIN_SHARE.setdefault(_s, 0.0)
+    DEFAULT_MAX_SHARE.setdefault(_s, 100.0)
+    DEFAULT_APPROVED.setdefault(_s, True)
+    DEFAULT_RISK.setdefault(_s, {dim: 3.0 for dim in DEFAULT_RISK_WEIGHTS})
 
-for _country in COUNTRY_OPTIONS:
-    seed_country_defaults(_country)
-    _base_spend = DEFAULT_CURRENT_SPEND[_country]
-    DEFAULT_PROPOSAL_SPEND.setdefault(_country, {})
-    DEFAULT_PAYMENT_TERM.setdefault(_country, {})
-    DEFAULT_LEAD_TIME_DAYS.setdefault(_country, {})
-    DEFAULT_SAFETY_STOCK_DAYS.setdefault(_country, {})
-    DEFAULT_INVENTORY_OWNERSHIP.setdefault(_country, {})
-    DEFAULT_SHARES.setdefault(_country, {})
-    for _idx, _supplier in enumerate(SUPPLIER_POOL, start=1):
-        DEFAULT_PROPOSAL_SPEND[_country].setdefault(_supplier, _base_spend)
-        DEFAULT_PAYMENT_TERM[_country].setdefault(_supplier, DEFAULT_CURRENT_TERM[_country])
-        DEFAULT_LEAD_TIME_DAYS[_country].setdefault(_supplier, 30)
-        DEFAULT_SAFETY_STOCK_DAYS[_country].setdefault(_supplier, 0)
-        DEFAULT_INVENTORY_OWNERSHIP[_country].setdefault(_supplier, "Supplier/trader owns until delivery")
-        DEFAULT_SHARES[_country].setdefault(_supplier, 0.0)
+for _c in COUNTRY_OPTIONS:
+    seed_country_defaults(_c)
+    _bs = DEFAULT_CURRENT_SPEND[_c]
+    DEFAULT_PROPOSAL_SPEND.setdefault(_c, {})
+    DEFAULT_PAYMENT_TERM.setdefault(_c, {})
+    DEFAULT_LEAD_TIME_DAYS.setdefault(_c, {})
+    DEFAULT_SAFETY_STOCK_DAYS.setdefault(_c, {})
+    DEFAULT_INVENTORY_OWNERSHIP.setdefault(_c, {})
+    DEFAULT_SHARES.setdefault(_c, {})
+    for _s in SUPPLIER_POOL:
+        DEFAULT_PROPOSAL_SPEND[_c].setdefault(_s, _bs)
+        DEFAULT_PAYMENT_TERM[_c].setdefault(_s, DEFAULT_CURRENT_TERM[_c])
+        DEFAULT_LEAD_TIME_DAYS[_c].setdefault(_s, 30)
+        DEFAULT_SAFETY_STOCK_DAYS[_c].setdefault(_s, 0)
+        DEFAULT_INVENTORY_OWNERSHIP[_c].setdefault(_s, "Supplier/trader owns until delivery")
+        DEFAULT_SHARES[_c].setdefault(_s, 0.0)
 
-GRAPHITE = "#1f2937"
-GREEN = "#047857"
-RED = "#b91c1c"
-BLUE = "#1d4ed8"
-AMBER = "#b45309"
+# ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
+GRAPHITE = "#0f172a"
+GREEN = "#10b981"
+RED = "#ef4444"
+BLUE = "#3b82f6"
+AMBER = "#f59e0b"
+PURPLE = "#8b5cf6"
+CYAN = "#06b6d4"
 
 RESULT_STACK_OPTIONS = [
-    "Top supplier focus lens",
-    "Total project saving",
-    "AI Executive Copilot",
-    "Total cost stack",
-    "Reference supplier condition stack",
-    "Working capital carry view",
-    "Total decomposition",
-    "Brazil result",
-    "LATAM result",
-    "Decision recommendation",
-    "Charts",
-    "Working capital economic view",
-    "Detailed data",
-    "Download export",
-]
-DEFAULT_RESULT_STACKS = [
-    "Top supplier focus lens",
-    "Total project saving",
-    "AI Executive Copilot",
-    "Total decomposition",
-    "Brazil result",
-    "LATAM result",
-    "Charts",
-    "Download export",
+    "Top supplier focus lens", "Total project saving", "AI Executive Copilot",
+    "Total cost stack", "Reference supplier condition stack", "Working capital carry view",
+    "Total decomposition", "Brazil result", "LATAM result", "Decision recommendation",
+    "Charts", "Working capital economic view", "Detailed data", "Download export",
 ]
 
-# =============================================================================
-# Page setup and CSS
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE SETUP & PREMIUM CSS
+# ─────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Executive Procurement TCO Dashboard",
-    page_icon="📊",
+    page_title="Procurement Intelligence Platform",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-        @keyframes fadeUp { from {opacity:0; transform: translateY(10px);} to {opacity:1; transform: translateY(0);} }
-        @keyframes subtlePulse { 0% {box-shadow:0 12px 28px rgba(15,23,42,.08);} 50% {box-shadow:0 16px 34px rgba(15,23,42,.13);} 100% {box-shadow:0 12px 28px rgba(15,23,42,.08);} }
-        .block-container {padding-top: 1.0rem; padding-bottom: 2.4rem; max-width: 1680px;}
-        .executive-hero {
-            background: linear-gradient(135deg, #020617 0%, #0f172a 48%, #1d4ed8 100%);
-            padding: 32px 36px; border-radius: 30px; color: white; margin-bottom: 24px;
-            box-shadow: 0 20px 55px rgba(15, 23, 42, 0.28); animation: fadeUp .45s ease-out both;
-        }
-        .hero-direct {background: radial-gradient(circle at top right, rgba(96,165,250,.42), transparent 30%), linear-gradient(135deg, #020617 0%, #0f172a 48%, #1d4ed8 100%);}
-        .hero-service {background: radial-gradient(circle at top right, rgba(168,85,247,.40), transparent 30%), linear-gradient(135deg, #111827 0%, #312e81 48%, #7c3aed 100%);}
-        .mode-chip {display:inline-block; padding:7px 12px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); color:#fff; font-size:.76rem; font-weight:900; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px;}
-        .executive-hero h1 {font-size: 2.25rem; line-height: 1.1; margin-bottom: 0.35rem; font-weight: 850; color: #ffffff;}
-        .executive-hero p {font-size: 1rem; color: rgba(255,255,255,0.88); margin-bottom: 0; max-width: 1140px;}
-        .section-header {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 18px;
-            padding: 14px 18px; margin-top: 10px; margin-bottom: 14px;
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-        }
-        .section-title {font-size: 1.12rem; font-weight: 850; color: #bfdbfe; margin-bottom: 3px;}
-        .section-subtitle {font-size: 0.90rem; color: #e2e8f0; margin-bottom: 0;}
-        .plain-title {font-size: 1.05rem; font-weight: 850; color: #f8fafc; margin-top: 10px; margin-bottom: 9px;}
-        .visual-breaker {
-            display: flex; align-items: center; gap: 14px;
-            padding: 15px 18px; margin: 24px 0 14px 0;
-            border-radius: 18px; border: 1px solid rgba(148, 163, 184, .26);
-            box-shadow: 0 12px 26px rgba(2, 6, 23, .18);
-            background: linear-gradient(135deg, rgba(15,23,42,.98) 0%, rgba(30,41,59,.96) 100%);
-            position: relative; overflow: hidden;
-        }
-        .visual-breaker::before {
-            content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 7px;
-            background: var(--accent, #3b82f6);
-        }
-        .visual-breaker::after {
-            content: ""; position: absolute; right: -72px; top: -72px; width: 165px; height: 165px;
-            background: var(--accent-soft, rgba(59,130,246,.13)); border-radius: 999px;
-        }
-        .visual-icon {
-            width: 42px; height: 42px; min-width: 42px; border-radius: 14px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.25rem; background: var(--accent-soft, rgba(59,130,246,.16));
-            border: 1px solid var(--accent-border, rgba(59,130,246,.28));
-        }
-        .visual-title {font-size: 1.08rem; font-weight: 900; color: #f8fafc; margin-bottom: 2px;}
-        .visual-subtitle {font-size: .86rem; color: #cbd5e1; line-height: 1.32;}
-        .visual-tag {
-            margin-left: auto; padding: 6px 10px; border-radius: 999px;
-            font-size: .72rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase;
-            color: #e2e8f0; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
-            white-space: nowrap; position: relative; z-index: 2;
-        }
-        .kpi-card {
-            background: #ffffff; border: 1px solid rgba(148, 163, 184, 0.26); border-radius: 24px;
-            padding: 22px 23px; min-height: 168px; height: 168px; box-sizing: border-box;
-            margin-bottom: 24px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-            display: flex; flex-direction: column; justify-content: flex-start; animation: fadeUp .35s ease-out both;
-            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-        }
-        .kpi-card:hover {transform: translateY(-3px); box-shadow: 0 18px 40px rgba(15,23,42,.14); border-color: rgba(59,130,246,.32);}
-        .kpi-card.short {min-height: 145px; height: 145px;}
-        .kpi-label {color: #64748b; font-size: 0.76rem; font-weight: 850; text-transform: uppercase; letter-spacing: 0.055em; margin-bottom: 8px;}
-        .kpi-value {color: #0f172a; font-size: 1.50rem; font-weight: 850; line-height: 1.1; margin-bottom: 9px;}
-        .kpi-helper {color: #64748b; font-size: 0.80rem; line-height: 1.28;}
-        .good {color: #047857 !important;} .bad {color: #b91c1c !important;} .neutral {color: #1d4ed8 !important;} .amber {color: #b45309 !important;}
-        .decision-card {border-radius: 24px; padding: 22px 26px; margin: 14px 0 20px 0; box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);}
-        .decision-good {background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border: 1px solid #a7f3d0;}
-        .decision-bad {background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border: 1px solid #fecaca;}
-        .decision-title {font-size: 1.25rem; font-weight: 850; color: #0f172a; margin-bottom: 5px;}
-        .decision-body {font-size: 0.98rem; color: #334155; line-height: 1.45;}
-        .insight-box {background: white; border: 1px solid rgba(148, 163, 184, 0.25); border-left: 5px solid #2563eb; border-radius: 18px; padding: 18px 20px; color: #334155; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06); min-height: 165px;}
-        .small-note {font-size: 0.82rem; color: #64748b; margin-top: 8px;}
-        .pill {display:inline-block; padding: 5px 10px; border-radius: 999px; background:#eff6ff; color:#1d4ed8; font-weight:700; font-size:0.78rem;}
-        .supplier-box {border:1px solid rgba(148,163,184,.28); border-radius:18px; padding:14px; background:#ffffff; margin-bottom:12px;}
-        .mode-card {background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); border: 1px solid rgba(96,165,250,.35); border-radius: 18px; padding: 14px 15px; margin: 8px 0 14px 0; color: white; box-shadow: 0 10px 28px rgba(15,23,42,.20);}
-        .mode-card-title {font-weight: 900; font-size: .95rem; color: #ffffff; margin-bottom: 2px;}
-        .mode-card-subtitle {font-size: .78rem; color: #dbeafe; line-height: 1.25;}
-        .market-scope-card {background: linear-gradient(135deg, rgba(14,165,233,.18), rgba(124,58,237,.18)); border:1px solid rgba(125,211,252,.28); border-radius:20px; padding:14px 15px; margin: 10px 0 16px 0; color:#e0f2fe; box-shadow: 0 12px 30px rgba(2,6,23,.18);}
-        .market-scope-title {font-weight:900; color:#ffffff; font-size:.95rem; margin-bottom:4px;}
-        .market-scope-meta {font-size:.78rem; color:#bae6fd; line-height:1.28;}
-        .market-chip {display:inline-block; padding:4px 8px; margin: 4px 4px 0 0; border-radius:999px; background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.15); color:#f8fafc; font-size:.72rem; font-weight:800;}
-        .landed-result {background:#f8fafc; border:1px dashed rgba(37,99,235,.35); border-radius:14px; padding:10px 12px; margin-top:8px;}
-        .landed-result b {color:#0f172a;}
-        .service-result {background:#f8fafc; border:1px dashed rgba(124,58,237,.35); border-radius:14px; padding:10px 12px; margin-top:8px;}
-        .service-result b {color:#0f172a;}
-        .score-badge {display:inline-block; padding:4px 9px; border-radius:999px; font-weight:850; font-size:.76rem; background:#eef2ff; color:#3730a3;}
-        .executive-panel {background:rgba(255,255,255,.78); border:1px solid rgba(148,163,184,.28); border-radius:24px; padding:18px 20px; margin:16px 0 22px 0; box-shadow:0 10px 30px rgba(15,23,42,.07); animation:fadeUp .38s ease-out both;}
-        .direct-accent {border-left:6px solid #2563eb;}
-        .service-accent {border-left:6px solid #7c3aed;}
-        .chart-shell {background:#ffffff; border:1px solid rgba(148,163,184,.24); border-radius:24px; padding:12px 14px; box-shadow:0 12px 30px rgba(15,23,42,.07); animation: fadeUp .42s ease-out both;}
-        div[data-testid="stMetricValue"] {font-weight:900;}
-        div[data-testid="stExpander"] {border-radius:18px !important;}
+st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+""", unsafe_allow_html=True)
 
-        /* v36 visual lock: keep executive components aligned and consistently framed */
-        .kpi-card { overflow: hidden; }
-        .kpi-value { min-height: 36px; display: flex; align-items: center; }
-        .kpi-helper { min-height: 40px; overflow: hidden; }
-        .executive-panel { min-height: 128px; overflow: hidden; }
-        .visual-breaker { min-height: 76px; box-sizing: border-box; }
-        .chart-shell { min-height: 480px; overflow: hidden; }
-        .chart-shell h4 { margin: 0 0 8px 0; color: #0f172a; }
-        div[data-testid="stHorizontalBlock"] { align-items: stretch; }
-        div[data-testid="column"] > div { height: 100%; }
-        div[data-testid="stDataFrame"] { border-radius: 18px; overflow: hidden; border: 1px solid rgba(148,163,184,.25); }
-        .ai-copilot-card {
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border: 1px solid rgba(99,102,241,.28); border-left: 7px solid #6366f1; border-radius: 24px;
-            padding: 20px 22px; margin: 12px 0 20px 0; box-shadow: 0 14px 34px rgba(15,23,42,.09);
-        }
-        .ai-copilot-card h4 {margin: 0 0 8px 0; color:#0f172a;}
-        .ai-copilot-card ul {margin-top: 8px; margin-bottom: 0;}
-        .ai-copilot-card li {margin-bottom: 6px; color:#334155; line-height:1.34;}
-        .stack-control-note {font-size:.78rem; color:#94a3b8; line-height:1.25;}
-        .stack-caption {
-            margin: 2px 0 12px 0; padding: 10px 13px; border-radius: 14px;
-            border-left: 5px solid var(--accent); background: rgba(248,250,252,.88);
-            color:#475569; font-size:.84rem; line-height:1.35;
-        }
-        div[data-testid="stExpander"] {
-            border: 1px solid rgba(148,163,184,.28) !important; border-radius: 22px !important;
-            margin: 18px 0 22px 0 !important; overflow: hidden !important;
-            box-shadow: 0 14px 34px rgba(15,23,42,.08); background: rgba(255,255,255,.045);
-        }
-        div[data-testid="stExpander"] details summary {
-            min-height: 48px; padding: 12px 18px !important; font-weight: 900 !important;
-            color: #e2e8f0 !important; background: linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,41,59,.88));
-            letter-spacing: .01em;
-        }
-        div[data-testid="stExpander"] details[open] summary {border-bottom: 1px solid rgba(148,163,184,.20);}
+st.markdown("""
+<style>
+/* ── FOUNDATIONS ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, [data-testid="stApp"] {
+    font-family: 'DM Sans', sans-serif;
+    background: #050b18 !important;
+    color: #e2e8f0;
+}
+.block-container {
+    padding: 1.5rem 2rem 4rem 2rem !important;
+    max-width: 1800px !important;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0a1628 0%, #0d1f3c 100%) !important;
+    border-right: 1px solid rgba(59,130,246,.18) !important;
+}
+[data-testid="stSidebar"] * { font-family: 'DM Sans', sans-serif !important; }
+[data-testid="stSidebar"] label { color: #94a3b8 !important; font-size: .80rem !important; font-weight: 500 !important; }
+[data-testid="stSidebar"] .stMarkdown h2 {
+    font-family: 'Syne', sans-serif !important;
+    color: #f1f5f9 !important; font-size: 1.05rem !important;
+    border-bottom: 1px solid rgba(59,130,246,.25) !important;
+    padding-bottom: .5rem !important; margin-bottom: .75rem !important;
+}
+[data-testid="stSidebar"] .stMarkdown h3 {
+    font-family: 'Syne', sans-serif !important;
+    color: #7dd3fc !important; font-size: .82rem !important; letter-spacing: .07em !important;
+    text-transform: uppercase !important; margin-top: 1.2rem !important;
+}
+[data-testid="stSidebar"] input, [data-testid="stSidebar"] select {
+    background: rgba(15,23,42,.8) !important;
+    border: 1px solid rgba(148,163,184,.18) !important;
+    border-radius: 8px !important; color: #e2e8f0 !important;
+}
+[data-testid="stSidebar"] .stRadio label { color: #cbd5e1 !important; }
+[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] div[role="slider"] {
+    background: #3b82f6 !important;
+}
+
+/* ── TABS ─────────────────────────────────────────────────────────────────── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    background: rgba(15,23,42,.6) !important;
+    border: 1px solid rgba(148,163,184,.15) !important;
+    border-radius: 14px !important; padding: 4px !important;
+    gap: 2px !important; margin-bottom: 1.5rem !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    background: transparent !important;
+    border-radius: 10px !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 600 !important; font-size: .82rem !important;
+    color: #94a3b8 !important; letter-spacing: .03em !important;
+    padding: 8px 16px !important; transition: all .2s ease !important;
+}
+[data-testid="stTabs"] [aria-selected="true"] {
+    background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 14px rgba(59,130,246,.35) !important;
+}
+
+/* ── EXPANDERS ────────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background: rgba(15,23,42,.55) !important;
+    border: 1px solid rgba(148,163,184,.16) !important;
+    border-radius: 18px !important;
+    margin: 12px 0 16px 0 !important;
+    overflow: hidden !important;
+    backdrop-filter: blur(12px) !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,.25) !important;
+    transition: box-shadow .2s ease !important;
+}
+[data-testid="stExpander"]:hover {
+    box-shadow: 0 12px 40px rgba(0,0,0,.35) !important;
+}
+[data-testid="stExpander"] details summary {
+    background: linear-gradient(135deg, rgba(15,23,42,.95) 0%, rgba(30,41,59,.9) 100%) !important;
+    padding: 16px 20px !important; min-height: 64px !important;
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important; font-size: .95rem !important;
+    color: #f1f5f9 !important;
+    border-left: 4px solid var(--exp-accent, #3b82f6) !important;
+    cursor: pointer !important;
+    transition: filter .15s ease, transform .15s ease !important;
+    display: flex !important; align-items: center !important;
+}
+[data-testid="stExpander"] details summary:hover { filter: brightness(1.1) !important; }
+[data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {
+    padding: 16px 20px 20px 20px !important;
+}
+
+/* ── INPUTS ────────────────────────────────────────────────────────────────── */
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea {
+    background: rgba(15,23,42,.7) !important;
+    border: 1px solid rgba(148,163,184,.20) !important;
+    border-radius: 8px !important; color: #e2e8f0 !important;
+    font-family: 'DM Sans', sans-serif !important;
+    transition: border-color .15s ease !important;
+}
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stTextInput"] input:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 2px rgba(59,130,246,.2) !important;
+}
+[data-testid="stSelectbox"] > div > div {
+    background: rgba(15,23,42,.7) !important;
+    border: 1px solid rgba(148,163,184,.20) !important;
+    border-radius: 8px !important; color: #e2e8f0 !important;
+}
+label {
+    color: #94a3b8 !important; font-size: .78rem !important;
+    font-weight: 500 !important; letter-spacing: .03em !important;
+}
+
+/* ── BUTTONS ───────────────────────────────────────────────────────────────── */
+[data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%) !important;
+    border: none !important; border-radius: 10px !important;
+    color: #ffffff !important; font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important; font-size: .88rem !important;
+    letter-spacing: .04em !important; padding: 10px 20px !important;
+    box-shadow: 0 4px 15px rgba(59,130,246,.35) !important;
+    transition: all .2s ease !important;
+}
+[data-testid="stButton"] > button[kind="primary"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(59,130,246,.5) !important;
+    filter: brightness(1.08) !important;
+}
+[data-testid="stButton"] > button[kind="secondary"] {
+    background: rgba(30,41,59,.6) !important;
+    border: 1px solid rgba(148,163,184,.25) !important;
+    border-radius: 10px !important; color: #cbd5e1 !important;
+    font-family: 'DM Sans', sans-serif !important; font-weight: 600 !important;
+}
+.stDownloadButton > button {
+    background: linear-gradient(135deg, #064e3b 0%, #065f46 100%) !important;
+    border: 1px solid rgba(16,185,129,.3) !important;
+    border-radius: 10px !important; color: #d1fae5 !important;
+    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
+}
+
+/* ── DATAFRAMES ─────────────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border-radius: 14px !important; overflow: hidden !important;
+    border: 1px solid rgba(148,163,184,.18) !important;
+}
+[data-testid="stDataFrame"] thead th {
+    background: rgba(15,23,42,.9) !important;
+    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
+    color: #7dd3fc !important; font-size: .75rem !important;
+    letter-spacing: .06em !important; text-transform: uppercase !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) {
+    background: rgba(30,41,59,.4) !important;
+}
+[data-testid="stDataFrame"] tbody td {
+    color: #cbd5e1 !important; font-size: .82rem !important;
+    font-family: 'DM Mono', monospace !important;
+}
+
+/* ── ALERTS ─────────────────────────────────────────────────────────────────── */
+[data-testid="stAlert"] {
+    border-radius: 12px !important; font-family: 'DM Sans', sans-serif !important;
+}
+[data-testid="stAlert"][data-baseweb="notification"] {
+    background: rgba(30,58,138,.25) !important;
+    border: 1px solid rgba(59,130,246,.3) !important;
+    color: #bfdbfe !important;
+}
+.stSuccess { background: rgba(6,78,59,.25) !important; border: 1px solid rgba(16,185,129,.3) !important; }
+.stError { background: rgba(127,29,29,.25) !important; border: 1px solid rgba(239,68,68,.3) !important; }
+.stWarning { background: rgba(120,53,15,.25) !important; border: 1px solid rgba(245,158,11,.3) !important; }
+
+/* ── SLIDERS ─────────────────────────────────────────────────────────────────── */
+[data-baseweb="slider"] [role="slider"] {
+    background: #3b82f6 !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.25) !important;
+}
+[data-baseweb="slider"] div[data-baseweb="slider"] > div:first-child {
+    background: rgba(148,163,184,.2) !important;
+}
+
+/* ── ANIMATIONS ──────────────────────────────────────────────────────────────── */
+@keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(59,130,246,.15); }
+    50% { box-shadow: 0 0 40px rgba(59,130,246,.30); }
+}
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+@keyframes countUp {
+    from { opacity: 0; transform: scale(.92); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* ── CUSTOM COMPONENTS ────────────────────────────────────────────────────────── */
+
+/* Hero banner */
+.v46-hero {
+    position: relative; overflow: hidden;
+    background: linear-gradient(135deg, #0a0f1e 0%, #0d1b3e 40%, #1a1040 100%);
+    border: 1px solid rgba(99,102,241,.25);
+    border-radius: 24px; padding: 40px 44px 36px;
+    margin-bottom: 28px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+    animation: fadeSlideUp .5s ease-out both;
+}
+.v46-hero::before {
+    content: ''; position: absolute; top: -100px; right: -100px;
+    width: 400px; height: 400px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(99,102,241,.18) 0%, transparent 70%);
+    pointer-events: none;
+}
+.v46-hero::after {
+    content: ''; position: absolute; bottom: -60px; left: 200px;
+    width: 300px; height: 300px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(59,130,246,.12) 0%, transparent 70%);
+    pointer-events: none;
+}
+.v46-hero-mode-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px;
+    background: rgba(99,102,241,.18); border: 1px solid rgba(99,102,241,.35);
+    color: #a5b4fc; font-family: 'DM Mono', monospace; font-size: .72rem;
+    font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
+    margin-bottom: 16px;
+}
+.v46-hero-mode-chip::before { content: '▶'; font-size: .6rem; opacity: .7; }
+.v46-hero h1 {
+    font-family: 'Syne', sans-serif !important;
+    font-size: 2.6rem; font-weight: 800; line-height: 1.05;
+    background: linear-gradient(135deg, #f8fafc 30%, #a5b4fc 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; margin-bottom: 12px;
+}
+.v46-hero p { color: rgba(203,213,225,.85); font-size: .98rem; max-width: 900px; line-height: 1.6; }
+.v46-hero-stats {
+    display: flex; gap: 28px; margin-top: 24px; padding-top: 20px;
+    border-top: 1px solid rgba(148,163,184,.12);
+}
+.v46-hero-stat { display: flex; flex-direction: column; gap: 3px; }
+.v46-hero-stat-label { font-size: .68rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.v46-hero-stat-value { font-family: 'DM Mono', monospace; font-size: 1.05rem; font-weight: 500; color: #7dd3fc; }
+
+/* Section headers */
+.v46-section {
+    padding: 12px 18px 12px 20px;
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.14);
+    border-left: 4px solid var(--section-accent, #3b82f6);
+    border-radius: 12px; margin: 24px 0 16px 0;
+    backdrop-filter: blur(8px);
+}
+.v46-section-title {
+    font-family: 'Syne', sans-serif; font-size: 1.0rem; font-weight: 700;
+    color: #f1f5f9; margin-bottom: 2px;
+}
+.v46-section-subtitle { font-size: .82rem; color: #94a3b8; line-height: 1.4; }
+
+/* KPI cards */
+.v46-kpi-grid { display: grid; gap: 14px; }
+.v46-kpi {
+    position: relative; overflow: hidden;
+    background: rgba(15,23,42,.75);
+    border: 1px solid rgba(148,163,184,.16);
+    border-radius: 18px; padding: 20px 22px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.2);
+    animation: fadeSlideUp .4s ease-out both;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.v46-kpi:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 16px 40px rgba(0,0,0,.3);
+    border-color: rgba(99,102,241,.3);
+}
+.v46-kpi::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--kpi-accent, linear-gradient(90deg, #3b82f6, #8b5cf6));
+    opacity: .7;
+}
+.v46-kpi-label {
+    font-size: .68rem; font-weight: 700; color: #64748b;
+    text-transform: uppercase; letter-spacing: .1em; margin-bottom: 10px;
+    min-height: 30px; display: flex; align-items: flex-start;
+}
+.v46-kpi-value {
+    font-family: 'Syne', sans-serif; font-size: 1.55rem; font-weight: 800;
+    line-height: 1.1; margin-bottom: 8px;
+    animation: countUp .4s ease-out both;
+}
+.v46-kpi-helper { font-size: .76rem; color: #475569; line-height: 1.35; }
+.v46-kpi.good .v46-kpi-value { color: #34d399; }
+.v46-kpi.bad .v46-kpi-value { color: #f87171; }
+.v46-kpi.neutral .v46-kpi-value { color: #60a5fa; }
+.v46-kpi.amber .v46-kpi-value { color: #fbbf24; }
+.v46-kpi.good::before { background: linear-gradient(90deg, #10b981, #34d399); }
+.v46-kpi.bad::before { background: linear-gradient(90deg, #ef4444, #f87171); }
+.v46-kpi.amber::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+
+/* Decision card */
+.v46-decision {
+    border-radius: 20px; padding: 26px 30px; margin: 16px 0 20px 0;
+    animation: fadeSlideUp .4s ease-out both;
+}
+.v46-decision.good {
+    background: linear-gradient(135deg, rgba(6,78,59,.35), rgba(5,46,22,.45));
+    border: 1px solid rgba(16,185,129,.25);
+}
+.v46-decision.bad {
+    background: linear-gradient(135deg, rgba(127,29,29,.35), rgba(69,10,10,.45));
+    border: 1px solid rgba(239,68,68,.25);
+}
+.v46-decision-title {
+    font-family: 'Syne', sans-serif; font-size: 1.3rem; font-weight: 800;
+    color: #f1f5f9; margin-bottom: 8px;
+}
+.v46-decision-body { font-size: .95rem; color: #cbd5e1; line-height: 1.55; }
+
+/* Service score badge */
+.v46-score-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 999px;
+    font-family: 'DM Mono', monospace; font-weight: 600; font-size: .80rem;
+    border: 1px solid currentColor;
+}
+
+/* Result card */
+.v46-result-box {
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.16);
+    border-radius: 16px; padding: 14px 18px; margin: 12px 0 16px 0;
+    font-size: .85rem; line-height: 1.5; color: #cbd5e1;
+    backdrop-filter: blur(8px);
+}
+.v46-result-box b { color: #f1f5f9; font-weight: 700; }
+
+/* Open cost card */
+.v46-opencost-card {
+    background: rgba(30,27,75,.35); border: 1px solid rgba(139,92,246,.2);
+    border-radius: 16px; padding: 14px 18px; margin: 10px 0 14px 0;
+    font-size: .85rem; color: #c4b5fd; line-height: 1.5;
+}
+
+/* Chart shell */
+.v46-chart {
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.14);
+    border-radius: 20px; padding: 20px 18px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    backdrop-filter: blur(8px);
+    animation: fadeSlideUp .5s ease-out both;
+}
+.v46-chart h4 {
+    font-family: 'Syne', sans-serif !important; font-size: .95rem !important;
+    font-weight: 700 !important; color: #e2e8f0 !important;
+    margin: 0 0 14px 0 !important;
+}
+
+/* AI Copilot card */
+.v46-ai-card {
+    background: linear-gradient(135deg, rgba(49,46,129,.35) 0%, rgba(15,23,42,.9) 100%);
+    border: 1px solid rgba(99,102,241,.3); border-left: 5px solid #6366f1;
+    border-radius: 20px; padding: 22px 26px; margin: 14px 0 18px 0;
+    box-shadow: 0 12px 40px rgba(99,102,241,.12);
+    animation: fadeSlideUp .4s ease-out both;
+}
+.v46-ai-card h4 {
+    font-family: 'Syne', sans-serif !important;
+    color: #a5b4fc !important; font-size: 1.05rem !important; font-weight: 800 !important;
+    margin: 0 0 12px 0 !important;
+}
+.v46-ai-card ul { margin: 8px 0 0 0; padding-left: 18px; }
+.v46-ai-card li { color: #cbd5e1; margin-bottom: 8px; line-height: 1.5; }
+.v46-ai-card li b { color: #e2e8f0; }
+
+/* Mode card */
+.v46-mode-card {
+    background: linear-gradient(135deg, rgba(15,23,42,.9), rgba(30,41,59,.85));
+    border: 1px solid rgba(59,130,246,.25); border-radius: 14px;
+    padding: 14px 16px; margin: 10px 0 14px 0;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2);
+}
+.v46-mode-card-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: .92rem; margin-bottom: 4px; }
+.v46-mode-card-sub { font-size: .76rem; color: #94a3b8; line-height: 1.3; }
+
+/* Market scope card */
+.v46-market-card {
+    background: linear-gradient(135deg, rgba(3,105,161,.2), rgba(30,27,75,.3));
+    border: 1px solid rgba(14,165,233,.2); border-radius: 14px;
+    padding: 14px 16px; margin: 10px 0 16px 0;
+}
+.v46-market-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: .88rem; margin-bottom: 5px; }
+.v46-market-meta { font-size: .75rem; color: #7dd3fc; margin-bottom: 8px; }
+.v46-chip {
+    display: inline-block; padding: 3px 9px; margin: 3px 3px 0 0;
+    border-radius: 999px; background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.12); color: #e2e8f0;
+    font-size: .70rem; font-weight: 700;
+}
+
+/* Governance card */
+.v46-gov-card {
+    background: rgba(15,23,42,.5); border: 1px solid rgba(148,163,184,.16);
+    border-radius: 16px; padding: 18px 20px; margin: 10px 0 14px 0;
+}
+
+/* Supplier box */
+.v46-supplier-box {
+    background: rgba(15,23,42,.5); border: 1px solid rgba(148,163,184,.14);
+    border-radius: 14px; padding: 16px 18px; margin-bottom: 14px;
+}
+.v46-pill {
+    display: inline-block; padding: 4px 12px; border-radius: 999px;
+    background: rgba(59,130,246,.15); border: 1px solid rgba(59,130,246,.25);
+    color: #93c5fd; font-size: .76rem; font-weight: 700; font-family: 'DM Mono', monospace;
+}
+
+/* Landed result */
+.v46-landed {
+    background: rgba(3,105,161,.12); border: 1px dashed rgba(14,165,233,.3);
+    border-radius: 12px; padding: 10px 14px; margin-top: 10px;
+    font-size: .84rem; color: #bae6fd; line-height: 1.5;
+}
+.v46-landed b { color: #e0f2fe; }
+
+/* Insight box */
+.v46-insight {
+    background: rgba(15,23,42,.6); border: 1px solid rgba(148,163,184,.16);
+    border-left: 5px solid #3b82f6; border-radius: 14px;
+    padding: 18px 22px; color: #94a3b8; line-height: 1.5;
+    font-size: .88rem;
+}
+.v46-insight b { color: #e2e8f0; }
+
+/* Service result */
+.v46-svc-result {
+    background: rgba(76,29,149,.12); border: 1px dashed rgba(139,92,246,.3);
+    border-radius: 12px; padding: 10px 14px; margin-top: 10px;
+    font-size: .84rem; color: #e9d5ff; line-height: 1.6;
+}
+.v46-svc-result b { color: #f5f3ff; }
+
+/* Service leakage waterfall */
+.v46-leakage {
+    background: rgba(120,53,15,.12); border: 1px solid rgba(245,158,11,.2);
+    border-radius: 14px; padding: 14px 18px; margin: 12px 0;
+}
+.v46-leakage-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #fcd34d; font-size: .88rem; margin-bottom: 10px; }
+.v46-leakage-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,.08); }
+.v46-leakage-row:last-child { border: none; font-weight: 700; color: #f59e0b; }
+.v46-leakage-item { font-size: .82rem; color: #d1d5db; }
+.v46-leakage-val { font-family: 'DM Mono', monospace; font-size: .82rem; color: #fbbf24; }
+
+/* Productivity ROI */
+.v46-roi-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 12px;
+    background: rgba(6,78,59,.25); border: 1px solid rgba(16,185,129,.25);
+    color: #6ee7b7; font-family: 'DM Mono', monospace; font-size: .84rem; font-weight: 600;
+    margin: 8px 0;
+}
+
+/* Supply chain heat chip */
+.v46-heat-chip {
+    display: inline-block; padding: 5px 12px; border-radius: 8px;
+    font-family: 'DM Mono', monospace; font-size: .76rem; font-weight: 600;
+    margin: 3px;
+}
+.v46-heat-green { background: rgba(6,78,59,.4); border: 1px solid rgba(16,185,129,.3); color: #6ee7b7; }
+.v46-heat-amber { background: rgba(120,53,15,.4); border: 1px solid rgba(245,158,11,.3); color: #fcd34d; }
+.v46-heat-red { background: rgba(127,29,29,.4); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+
+/* FTE decomposition */
+.v46-fte-bar {
+    height: 8px; border-radius: 4px; overflow: hidden;
+    background: rgba(148,163,184,.1); margin: 6px 0;
+}
+.v46-fte-bar-fill {
+    height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    transition: width .6s cubic-bezier(.22,.9,.24,1);
+}
+
+/* Visual breaker */
+.v46-breaker {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; margin: 20px 0 14px 0;
+    border-radius: 14px; border: 1px solid rgba(148,163,184,.15);
+    background: rgba(15,23,42,.7);
+    position: relative; overflow: hidden;
+}
+.v46-breaker::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+    background: var(--br-color, #3b82f6);
+}
+.v46-breaker-icon {
+    width: 40px; height: 40px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem;
+    background: var(--br-bg, rgba(59,130,246,.12));
+    border: 1px solid var(--br-border, rgba(59,130,246,.25));
+    flex-shrink: 0;
+}
+.v46-breaker-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: 1.0rem; margin-bottom: 2px; }
+.v46-breaker-sub { font-size: .82rem; color: #94a3b8; line-height: 1.3; }
+.v46-breaker-tag {
+    margin-left: auto; padding: 5px 12px; border-radius: 999px;
+    font-size: .70rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: #94a3b8;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10);
+    white-space: nowrap; flex-shrink: 0;
+}
+
+/* Plain title */
+.v46-plain-title {
+    font-family: 'Syne', sans-serif; font-size: .95rem; font-weight: 700;
+    color: #e2e8f0; margin: 18px 0 10px 0;
+    padding-bottom: 6px; border-bottom: 1px solid rgba(148,163,184,.12);
+}
+
+/* Small note */
+.v46-note { font-size: .76rem; color: #475569; margin-top: 6px; line-height: 1.4; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(15,23,42,.5); }
+::-webkit-scrollbar-thumb { background: rgba(59,130,246,.3); border-radius: 3px; }
+
+/* Metrics override */
+div[data-testid="stMetricValue"] { font-family: 'Syne', sans-serif !important; font-weight: 800 !important; color: #60a5fa !important; }
+div[data-testid="stMetricLabel"] { color: #64748b !important; font-size: .75rem !important; }
+
+/* Caption */
+.stCaption, [data-testid="stCaptionContainer"] { color: #475569 !important; font-size: .76rem !important; }
+
+/* Checkbox */
+[data-testid="stCheckbox"] label { color: #94a3b8 !important; font-size: .82rem !important; }
+
+/* Radio */
+[data-testid="stRadio"] label { color: #94a3b8 !important; font-size: .82rem !important; }
+[data-testid="stRadio"] [aria-checked="true"] + div { color: #60a5fa !important; font-weight: 600 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UTILITY FUNCTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def safe_divide(n: float, d: float) -> float:
+    return 0.0 if abs(d) < 1e-12 else n / d
 
 
-        /* v38 enterprise visual lock: tighter spacing, equalized inputs and cleaner empty whitespace */
-        .plain-title {margin-top: 24px !important; margin-bottom: 12px !important; line-height: 1.25;}
-        .section-header {margin-top: 16px !important; margin-bottom: 24px !important;}
-        div[data-testid="stAlert"] {margin: 16px 0 20px 0 !important; border-radius: 16px !important;}
-        div[data-testid="stForm"] {border-radius: 18px !important;}
-        .stNumberInput label, .stTextInput label, .stSelectbox label, .stSlider label, .stTextArea label, .stCheckbox label {
-            min-height: 42px !important; display: flex !important; align-items: flex-end !important;
-            line-height: 1.18 !important; font-weight: 750 !important;
-        }
-        div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input {min-height: 40px !important;}
-        div[data-testid="stVerticalBlock"] {gap: 0.72rem !important;}
-        div[data-testid="stHorizontalBlock"] {gap: 1.02rem !important; align-items: stretch !important;}
-        div[data-testid="column"] {min-width: 0 !important;}
-        div[data-testid="column"] > div {height: auto !important;}
-        .kpi-card {min-height: 146px !important; height: auto !important; padding: 20px 22px !important;}
-        .kpi-card.short {min-height: 128px !important; height: auto !important;}
-        .kpi-value {min-height: 30px !important;}
-        .kpi-helper {min-height: 26px !important; overflow: visible !important;}
-        .supplier-box {padding: 18px 18px 20px 18px !important; margin: 14px 0 18px 0 !important; background: rgba(255,255,255,.03) !important;}
-        .service-result, .landed-result {margin: 14px 0 18px 0 !important; line-height: 1.45 !important;}
-        .chart-shell {min-height: 450px !important; padding: 18px 18px 12px 18px !important; margin-bottom: 22px !important; animation: chartReveal .72s ease-out both;}
-        @keyframes chartReveal { from {opacity:0; transform: translateY(18px) scale(.985);} to {opacity:1; transform: translateY(0) scale(1);} }
-        .governance-card, .custom-factor-card, .open-cost-card {
-            background: rgba(255,255,255,.06); border: 1px solid rgba(148,163,184,.24); border-radius: 22px;
-            padding: 18px 18px 20px 18px; margin: 16px 0 20px 0; box-shadow: 0 10px 28px rgba(2,6,23,.12);
-        }
-        .matrix-header {font-size:.88rem; color:#cbd5e1; font-weight:850; margin: 10px 0 6px 0;}
-        .supplier-expander-note {font-size:.78rem; color:#94a3b8; margin-top:-5px; margin-bottom:8px;}
-
-        /* v40: stronger alignment lock, spacing discipline and clickable decision-stack headers */
-        .major-section-spacer {height: 34px;}
-        .optimization-panel-spacer {height: 18px;}
-        .insight-box {margin-bottom: 18px !important;}
-        div[data-testid="stExpander"] {margin: 24px 0 30px 0 !important;}
-        div[data-testid="stExpander"] details summary {
-            min-height: 82px !important;
-            padding: 18px 22px !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 12px !important;
-            border-radius: 22px !important;
-            background:
-                radial-gradient(circle at top right, rgba(96,165,250,.18), transparent 26%),
-                linear-gradient(135deg, rgba(15,23,42,.99) 0%, rgba(30,41,59,.97) 72%, rgba(49,46,129,.82) 100%) !important;
-            border-left: 8px solid #3b82f6 !important;
-            cursor: pointer !important;
-            transition: transform .16s ease, box-shadow .16s ease, filter .16s ease !important;
-            box-shadow: 0 12px 28px rgba(2,6,23,.20) !important;
-            white-space: normal !important;
-        }
-        div[data-testid="stExpander"] details summary:hover {
-            transform: translateY(-1px);
-            filter: brightness(1.08);
-            box-shadow: 0 18px 38px rgba(2,6,23,.28) !important;
-        }
-        div[data-testid="stExpander"] details[open] summary {
-            border-bottom-left-radius: 0 !important;
-            border-bottom-right-radius: 0 !important;
-            margin-bottom: 18px !important;
-        }
-        div[data-testid="stExpander"] details summary p {
-            font-size: 0.98rem !important;
-            font-weight: 900 !important;
-            line-height: 1.28 !important;
-            color: #f8fafc !important;
-            margin: 0 !important;
-        }
-        div[data-testid="stExpander"] details > div[data-testid="stExpanderDetails"] {
-            padding: 4px 18px 18px 18px !important;
-        }
-        .stack-caption {display: none !important;}
-        .visual-breaker {margin-top: 4px !important; margin-bottom: 18px !important;}
-        .kpi-card {height: 156px !important; min-height: 156px !important; display:flex !important; justify-content:flex-start !important;}
-        .kpi-card.short {height: 138px !important; min-height: 138px !important;}
-        .kpi-label {min-height: 34px !important; display:flex; align-items:flex-start;}
-        .kpi-value {min-height: 35px !important; display:flex; align-items:center;}
-        .kpi-helper {min-height: 38px !important; display:block; overflow:hidden;}
-        .stNumberInput label, .stTextInput label, .stSelectbox label, .stSlider label, .stTextArea label, .stCheckbox label {
-            min-height: 58px !important;
-            max-height: 58px !important;
-            display: flex !important;
-            align-items: flex-end !important;
-            overflow: hidden !important;
-            line-height: 1.16 !important;
-        }
-        div[data-testid="stNumberInput"], div[data-testid="stTextInput"], div[data-testid="stSelectbox"] {
-            min-height: 104px !important;
-        }
-        div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input {
-            height: 42px !important;
-        }
-        div[data-testid="stHorizontalBlock"] {gap: 1.18rem !important; margin-bottom: 1.05rem !important;}
-        .supplier-box {min-height: 0 !important;}
-        .supplier-expander-note {margin: 0 0 18px 0 !important; padding: 10px 13px; border-radius: 14px; background: rgba(15,23,42,.45); border: 1px solid rgba(148,163,184,.18); color:#cbd5e1 !important;}
-        .chart-shell {animation: chartExpandReveal .82s cubic-bezier(.22,.90,.24,1) both !important;}
-        @keyframes chartExpandReveal {
-            from {opacity:0; transform: translateY(28px) scaleY(.92); transform-origin: bottom center;}
-            to {opacity:1; transform: translateY(0) scaleY(1); transform-origin: bottom center;}
-        }
-
-
-        .exec-dash-grid {display:grid; grid-template-columns: 1.1fr .9fr; gap:18px; margin:14px 0 22px 0; align-items:stretch;}
-        .exec-dash-panel {background:linear-gradient(135deg, #0f172a 0%, #111827 100%); border:1px solid rgba(148,163,184,.28); border-radius:24px; padding:20px 22px; box-shadow:0 14px 34px rgba(2,6,23,.22); min-height:170px; position:relative; overflow:hidden;}
-        .exec-dash-panel::after {content:""; position:absolute; right:-62px; top:-80px; width:190px; height:190px; border-radius:999px; background:rgba(37,99,235,.12);}
-        .exec-dash-title {font-weight:900; color:#f8fafc; font-size:1.08rem; margin-bottom:6px;}
-        .exec-dash-subtitle {color:#cbd5e1; font-size:.86rem; margin-bottom:16px;}
-        .exec-mini-grid {display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px;}
-        .exec-mini-card {background:rgba(255,255,255,.96); border:1px solid rgba(226,232,240,.95); border-radius:18px; padding:15px 16px; min-height:116px; box-shadow:0 10px 24px rgba(15,23,42,.10); display:flex; flex-direction:column; justify-content:space-between;}
-        .exec-mini-label {font-size:.68rem; font-weight:950; color:#64748b; text-transform:uppercase; letter-spacing:.10em; min-height:28px;}
-        .exec-mini-value {font-size:1.42rem; font-weight:950; color:#1d4ed8; line-height:1.1;}
-        .exec-mini-helper {font-size:.78rem; color:#64748b; line-height:1.25; min-height:31px;}
-        .exec-heat-toolbar {background:rgba(15,23,42,.06); border-radius:18px; border:1px solid rgba(148,163,184,.20); padding:12px 14px; margin-bottom:12px;}
-        .dash-pill-row {display:flex; gap:9px; flex-wrap:wrap; margin-top:8px;}
-        .dash-pill {border:1px solid rgba(148,163,184,.35); background:rgba(255,255,255,.08); color:#e5e7eb; padding:5px 10px; border-radius:999px; font-size:.73rem; font-weight:800;}
-        @media (max-width: 1100px) {.exec-dash-grid{grid-template-columns:1fr}.exec-mini-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# =============================================================================
-# Utility functions
-# =============================================================================
-
-def safe_divide(numerator: float, denominator: float) -> float:
-    return 0.0 if abs(denominator) < 1e-12 else numerator / denominator
-
-
-def format_money(value: float, currency: str = "USD", compact: bool = False, signed: bool = False) -> str:
-    value = float(value)
+def fmt_money(v: float, cur: str = "USD", compact: bool = False, signed: bool = False) -> str:
+    v = float(v)
     sign = ""
     if signed:
-        sign = "+" if value > 0 else "-" if value < 0 else ""
-    elif value < 0:
+        sign = "+" if v > 0 else "-" if v < 0 else ""
+    elif v < 0:
         sign = "-"
-    v = abs(value)
+    a = abs(v)
     if compact:
-        if v >= 1_000_000_000:
-            return f"{sign}{currency} {v / 1_000_000_000:,.2f}B"
-        if v >= 1_000_000:
-            return f"{sign}{currency} {v / 1_000_000:,.2f}M"
-        if v >= 1_000:
-            return f"{sign}{currency} {v / 1_000:,.2f}K"
-    return f"{sign}{currency} {v:,.2f}"
+        if a >= 1e9: return f"{sign}{cur} {a/1e9:,.2f}B"
+        if a >= 1e6: return f"{sign}{cur} {a/1e6:,.2f}M"
+        if a >= 1e3: return f"{sign}{cur} {a/1e3:,.2f}K"
+    return f"{sign}{cur} {a:,.2f}"
 
 
-def format_pct(value: float) -> str:
-    return f"{value * 100:.2f}%"
+def fmt_pct(v: float) -> str:
+    return f"{v * 100:.2f}%"
 
 
-def format_quantity(value: float, unit: str = "") -> str:
-    unit_suffix = f" {unit}" if unit else ""
-    return f"{float(value):,.0f}{unit_suffix}"
+def fmt_qty(v: float, unit: str = "") -> str:
+    sfx = f" {unit}" if unit else ""
+    return f"{float(v):,.0f}{sfx}"
 
 
-def landed_unit_price(components: Dict[str, float], fx_rate: float = 1.0) -> float:
-    """Convert a direct-material unit cost build-up to reporting currency.
-
-    All component inputs are assumed to be per negotiated unit in the quote currency.
-    The FX rate converts 1 quote-currency unit into the dashboard reporting currency.
-    """
-    return sum(float(components.get(key, 0.0)) for key, _ in LANDED_COST_COMPONENTS) * float(fx_rate)
+def landed_unit_price(comps: Dict[str, float], fx: float = 1.0) -> float:
+    return sum(float(comps.get(k, 0.0)) for k, _ in LANDED_COST_COMPONENTS) * float(fx)
 
 
 def default_unit_price_from_spend(spend: float, volume: float) -> float:
     return safe_divide(float(spend), max(float(volume), 1e-9))
 
 
-def collect_component_values(prefix: str, defaults: Dict[str, float] | None = None) -> Dict[str, float]:
-    defaults = defaults or {}
-    return {key: float(defaults.get(key, 0.0)) for key, _ in LANDED_COST_COMPONENTS}
-
-
-def equivalent_rate(rate_pct: float, reference_days: int, target_days: int, method: str = "Compound") -> float:
-    if reference_days <= 0 or target_days <= 0:
+def equivalent_rate(rate_pct: float, ref_days: int, target_days: int, method: str = "Compound") -> float:
+    if ref_days <= 0 or target_days <= 0:
         return 0.0
-    rate = rate_pct / 100.0
+    r = rate_pct / 100.0
     if method == "Linear":
-        return rate * (target_days / reference_days)
-    return (1 + rate) ** (target_days / reference_days) - 1
+        return r * (target_days / ref_days)
+    return (1 + r) ** (target_days / ref_days) - 1
 
 
-def apply_chart_theme(fig):
+def apply_chart_theme(fig, height: int = 440, title_color: str = "#e2e8f0"):
     if fig is None:
         return fig
     fig.update_layout(
-        font=dict(color=GRAPHITE),
-        title_font=dict(color=GRAPHITE, size=18),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        margin=dict(l=30, r=24, t=62, b=44),
-        bargap=0.28,
-        modebar=dict(remove=["lasso2d", "select2d"]),
-        xaxis=dict(title_font=dict(color=GRAPHITE), tickfont=dict(color=GRAPHITE), color=GRAPHITE, gridcolor="rgba(31,41,55,.12)"),
-        yaxis=dict(title_font=dict(color=GRAPHITE), tickfont=dict(color=GRAPHITE), color=GRAPHITE, gridcolor="rgba(31,41,55,.12)"),
-        legend=dict(font=dict(color=GRAPHITE)),
-        transition=dict(duration=850, easing="cubic-in-out"),
+        font=dict(family="DM Sans, sans-serif", color="#94a3b8", size=12),
+        title_font=dict(family="Syne, sans-serif", color=title_color, size=16),
+        plot_bgcolor="rgba(15,23,42,.5)",
+        paper_bgcolor="rgba(15,23,42,.5)",
+        margin=dict(l=32, r=24, t=56, b=40),
+        height=height,
+        bargap=0.25,
+        modebar=dict(remove=["lasso2d", "select2d"], bgcolor="rgba(0,0,0,0)", color="#64748b"),
+        xaxis=dict(
+            gridcolor="rgba(148,163,184,.08)", tickfont=dict(color="#64748b"),
+            title_font=dict(color="#94a3b8"), color="#94a3b8",
+            linecolor="rgba(148,163,184,.1)",
+        ),
+        yaxis=dict(
+            gridcolor="rgba(148,163,184,.08)", tickfont=dict(color="#64748b"),
+            title_font=dict(color="#94a3b8"), color="#94a3b8",
+            linecolor="rgba(148,163,184,.1)",
+        ),
+        legend=dict(font=dict(color="#94a3b8"), bgcolor="rgba(0,0,0,0)"),
         hovermode="x unified",
     )
-    for tr in fig.data:
-        if hasattr(tr, "textfont"):
-            tr.textfont = dict(color=GRAPHITE)
-        if hasattr(tr, "insidetextfont"):
-            tr.insidetextfont = dict(color=GRAPHITE)
-        if hasattr(tr, "outsidetextfont"):
-            tr.outsidetextfont = dict(color=GRAPHITE)
-    try:
-        fig.update_traces(opacity=0.94, marker_line_width=0)
-    except Exception:
-        pass
     return fig
 
 
-def render_section(title: str, subtitle: str) -> None:
+def render_section(title: str, subtitle: str, accent: str = "#3b82f6") -> None:
     st.markdown(
-        f"""
-        <div class="section-header">
-            <div class="section-title">{title}</div>
-            <div class="section-subtitle">{subtitle}</div>
-        </div>
-        """,
+        f"""<div class="v46-section" style="--section-accent:{accent}">
+            <div class="v46-section-title">{title}</div>
+            <div class="v46-section-subtitle">{subtitle}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
 
-def render_visual_breaker(title: str, subtitle: str, icon: str, accent: str, tag: str) -> None:
-    """Render a visual separator/header for executive dashboard sections."""
+def render_breaker(title: str, subtitle: str, icon: str, color: str, tag: str) -> None:
+    bg = color + "18"; border = color + "40"
     st.markdown(
-        f"""
-        <div class="visual-breaker" style="--accent:{accent}; --accent-soft:{accent}22; --accent-border:{accent}55;">
-            <div class="visual-icon">{icon}</div>
+        f"""<div class="v46-breaker" style="--br-color:{color}; --br-bg:{bg}; --br-border:{border}">
+            <div class="v46-breaker-icon">{icon}</div>
             <div>
-                <div class="visual-title">{title}</div>
-                <div class="visual-subtitle">{subtitle}</div>
+                <div class="v46-breaker-title">{title}</div>
+                <div class="v46-breaker-sub">{subtitle}</div>
             </div>
-            <div class="visual-tag">{tag}</div>
-        </div>
-        """,
+            <div class="v46-breaker-tag">{tag}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
 
-def render_kpi(label: str, value: str, helper: str = "", tone: str = "neutral", short: bool = False) -> None:
-    cls = {"good": "good", "bad": "bad", "neutral": "neutral", "amber": "amber"}.get(tone, "neutral")
-    card_cls = "kpi-card short" if short else "kpi-card"
+def render_kpi(label: str, value: str, helper: str = "", tone: str = "neutral") -> None:
+    accent_map = {
+        "good": "linear-gradient(90deg,#10b981,#34d399)",
+        "bad": "linear-gradient(90deg,#ef4444,#f87171)",
+        "neutral": "linear-gradient(90deg,#3b82f6,#60a5fa)",
+        "amber": "linear-gradient(90deg,#f59e0b,#fbbf24)",
+    }
+    acc = accent_map.get(tone, accent_map["neutral"])
     st.markdown(
-        f"""
-        <div class="{card_cls}">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value {cls}">{value}</div>
-            <div class="kpi-helper">{helper}</div>
-        </div>
-        """,
+        f"""<div class="v46-kpi {tone}" style="--kpi-accent:{acc}">
+            <div class="v46-kpi-label">{label}</div>
+            <div class="v46-kpi-value">{value}</div>
+            <div class="v46-kpi-helper">{helper}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
 
 def delta_tone(delta: float) -> str:
-    # Procurement convention: negative delta = saving = green. Positive delta = impact = red.
-    if delta < -1e-9:
-        return "good"
-    if delta > 1e-9:
-        return "bad"
+    if delta < -1e-9: return "good"
+    if delta > 1e-9: return "bad"
     return "neutral"
 
 
 def risk_tone(risk: float) -> str:
-    if risk <= 2.5:
-        return "good"
-    if risk <= 3.5:
-        return "amber"
+    if risk <= 2.5: return "good"
+    if risk <= 3.5: return "amber"
     return "bad"
 
 
-def _safe_group_row(group_df: pd.DataFrame, group: str) -> Dict[str, float]:
-    if group_df is None or group_df.empty or "Group" not in group_df.columns:
+def benefit_tone(v: float) -> str:
+    if v > 1e-9: return "good"
+    if v < -1e-9: return "bad"
+    return "neutral"
+
+
+def _safe_group_row(gdf: pd.DataFrame, group: str) -> Dict:
+    if gdf is None or gdf.empty or "Group" not in gdf.columns:
         return {}
-    rows = group_df[group_df["Group"] == group]
-    if rows.empty:
-        return {}
-    return rows.iloc[0].to_dict()
+    rows = gdf[gdf["Group"] == group]
+    return {} if rows.empty else rows.iloc[0].to_dict()
 
 
-def build_ai_prompt_payload(
-    *,
-    analysis_mode: str,
-    total: Dict[str, float],
-    group_df: pd.DataFrame,
-    supplier_focus_df: pd.DataFrame,
-    focused_supplier_count: int,
-    currency: str,
-) -> str:
-    """Create a compact copy/paste prompt for an external AI tool.
+def service_scope_config(scope: str) -> Dict:
+    return SERVICE_SCOPE_CONFIG.get(scope, SERVICE_SCOPE_CONFIG["Generic Indirect Service"])
 
-    The app does not call an external AI API. This payload is the controlled
-    context that would be pasted into an AI assistant or used by a future API integration.
-    """
+
+def service_tier(score: float) -> str:
+    if score >= 90: return "Strategic / preferred"
+    if score >= 75: return "Approved / good"
+    if score >= 60: return "Watchlist"
+    return "Corrective action / exit plan"
+
+
+def service_score_color(score: float) -> str:
+    if score >= 75: return "#34d399"
+    if score >= 60: return "#fbbf24"
+    return "#f87171"
+
+
+def weighted_service_score(scores: Dict[str, float], weights: Dict[str, float] | None = None) -> float:
+    weights = weights or SERVICE_SCORECARD_WEIGHTS
+    total_w = sum(float(v) for v in weights.values()) or 1.0
+    return sum(float(scores.get(d, 0.0)) * float(w) for d, w in weights.items()) / total_w
+
+
+def weighted_governance_score(scores: Dict[str, float]) -> float:
+    total_w = sum(float(v) for v in SUPPLIER_GOVERNANCE_WEIGHTS.values()) or 1.0
+    return sum(float(scores.get(d, 0.0)) * float(w) for d, w in SUPPLIER_GOVERNANCE_WEIGHTS.items()) / total_w
+
+
+def score_to_risk(score: float) -> float:
+    return max(1.0, min(5.0, 1.0 + 4.0 * (100.0 - float(score)) / 100.0))
+
+
+def governance_tier(score: float) -> str:
+    if score >= 90: return "Strategic / preferred"
+    if score >= 75: return "Approved / good"
+    if score >= 60: return "Watchlist"
+    return "Corrective action / exit"
+
+
+def due_diligence_penalty(status: str) -> float:
+    return {"Clear": 0.0, "Minor gaps": 0.25, "Material gaps": 0.75, "Not approved": 1.50}.get(status, 0.0)
+
+
+def governance_risk_defaults(gov_inputs: Dict, supplier: str) -> Dict[str, float]:
+    data = gov_inputs.get(supplier, {}) or {}
+    sp = due_diligence_penalty(str(data.get("Due diligence status", "Clear")))
+    return {
+        "Supply": max(1.0, min(5.0, score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + 0.15 * sp)),
+        "Quality": max(1.0, min(5.0, score_to_risk(float(data.get("Quality / NCR performance", 75.0))))),
+        "Financial": max(1.0, min(5.0, score_to_risk(float(data.get("Financial health", 75.0))) + 0.25 * sp)),
+        "Compliance": max(1.0, min(5.0, score_to_risk(float(data.get("Compliance / due diligence", 75.0))) + sp)),
+        "ESG": max(1.0, min(5.0, score_to_risk(float(data.get("ESG / ethics", 75.0))) + 0.35 * sp)),
+        "Logistics": max(1.0, min(5.0, (score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + score_to_risk(float(data.get("Labor / HSE", 75.0)))) / 2.0)),
+    }
+
+
+def blend_risk_default(base: float, gov: float, adj: float = 0.0) -> float:
+    return round(max(1.0, min(5.0, 0.45 * float(base) + 0.55 * float(gov) + float(adj))), 1)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INDIRECT / SERVICES — AMAZON-GRADE ANALYTICS ENGINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calc_fte_demand_decomposition(
+    headcount: float,
+    regular_hours: float,
+    overtime_hours: float,
+    absenteeism_rate: float,
+    productivity_utilization: float,
+) -> Dict[str, float]:
+    """Decompose FTE demand: productive vs overhead vs overtime vs absenteeism.
+    This is the lens Amazon uses to challenge supplier headcount proposals."""
+    effective_hc = headcount * (1.0 - absenteeism_rate / 100.0)
+    productive_hc = effective_hc * (productivity_utilization / 100.0)
+    ot_fte_equivalent = safe_divide(overtime_hours, max(regular_hours, 1.0))
+    demand_coverage = safe_divide(productive_hc + ot_fte_equivalent, max(headcount, 1e-9))
+    right_sized_hc = safe_divide(productive_hc + ot_fte_equivalent, max(productivity_utilization / 100.0, 0.01))
+    optimization_potential = max(headcount - right_sized_hc, 0.0)
+    return {
+        "total_headcount": headcount,
+        "effective_headcount": effective_hc,
+        "productive_headcount": productive_hc,
+        "ot_fte_equivalent": ot_fte_equivalent,
+        "demand_coverage_pct": demand_coverage * 100.0,
+        "right_sized_headcount": right_sized_hc,
+        "optimization_potential_hc": optimization_potential,
+        "absenteeism_impact_hc": headcount - effective_hc,
+    }
+
+
+def calc_contract_leakage_waterfall(
+    contracted_value: float,
+    scope_additions: float,
+    emergency_requests: float,
+    rework_cost: float,
+    untracked_passthrough: float,
+    sla_credits: float,
+    rebates: float,
+) -> Dict[str, float]:
+    """Build contract leakage waterfall from contracted value to actual billed TCO."""
+    total_leakage = scope_additions + emergency_requests + rework_cost + untracked_passthrough
+    total_offsets = sla_credits + rebates
+    actual_billed = contracted_value + total_leakage - total_offsets
+    leakage_rate = safe_divide(total_leakage, contracted_value)
+    return {
+        "contracted_value": contracted_value,
+        "scope_additions": scope_additions,
+        "emergency_requests": emergency_requests,
+        "rework_cost": rework_cost,
+        "untracked_passthrough": untracked_passthrough,
+        "total_leakage": total_leakage,
+        "sla_credits": sla_credits,
+        "rebates": rebates,
+        "total_offsets": total_offsets,
+        "actual_billed": actual_billed,
+        "leakage_rate": leakage_rate,
+    }
+
+
+def calc_sla_financial_impact(
+    contracted_value: float,
+    sla_penalty_pct: float,
+    sla_attainment: float,
+    sla_target: float,
+    missed_sla_cost_multiplier: float = 2.5,
+) -> Dict[str, float]:
+    """Quantify financial exposure from SLA gaps. Amazon procurement always models
+    downside risk of SLA breach before awarding a contract."""
+    sla_gap = max(sla_target - sla_attainment, 0.0)
+    penalty_exposure = contracted_value * (sla_penalty_pct / 100.0) * (sla_gap / max(sla_target, 1.0))
+    business_impact = contracted_value * (sla_gap / 100.0) * (missed_sla_cost_multiplier - 1.0)
+    expected_annual_impact = penalty_exposure + business_impact
+    return {
+        "sla_attainment": sla_attainment,
+        "sla_target": sla_target,
+        "sla_gap": sla_gap,
+        "penalty_exposure": penalty_exposure,
+        "business_impact": business_impact,
+        "expected_annual_impact": expected_annual_impact,
+        "sla_ok": sla_attainment >= sla_target,
+    }
+
+
+def calc_productivity_roi(
+    investment: float,
+    annual_savings: float,
+    year_1_fraction: float = 0.5,
+) -> Dict[str, float]:
+    """Calculate productivity ROI and payback period."""
+    if investment <= 0:
+        return {
+            "investment": 0.0, "annual_savings": annual_savings,
+            "year_1_savings": annual_savings * year_1_fraction,
+            "payback_months": 0.0, "three_year_roi_pct": 999.0,
+            "net_three_year_value": annual_savings * 3.0,
+        }
+    y1 = annual_savings * year_1_fraction
+    y2y3 = annual_savings * 2.0
+    net_3yr = y1 + y2y3 - investment
+    payback_months = safe_divide(investment, max(annual_savings / 12.0, 1.0))
+    roi_3yr = safe_divide(net_3yr, investment) * 100.0
+    return {
+        "investment": investment,
+        "annual_savings": annual_savings,
+        "year_1_savings": y1,
+        "payback_months": payback_months,
+        "three_year_roi_pct": roi_3yr,
+        "net_three_year_value": net_3yr,
+    }
+
+
+def calc_rate_card_compliance(
+    quoted_rate: float,
+    benchmark_rate: float,
+    hours_consumed: float,
+) -> Dict[str, float]:
+    """Rate card compliance check. Compares supplier quoted rate vs market benchmark."""
+    gap = quoted_rate - benchmark_rate
+    gap_pct = safe_divide(gap, benchmark_rate) * 100.0
+    annual_overcharge = gap * hours_consumed if gap > 0 else 0.0
+    return {
+        "quoted_rate": quoted_rate,
+        "benchmark_rate": benchmark_rate,
+        "rate_gap": gap,
+        "rate_gap_pct": gap_pct,
+        "annual_overcharge": annual_overcharge,
+        "compliant": abs(gap_pct) <= 10.0,
+    }
+
+
+def calc_multi_year_contract_value(
+    base_annual_value: float,
+    contract_years: int,
+    annual_escalation_pct: float,
+    early_termination_cost: float = 0.0,
+) -> Dict[str, float]:
+    """Model multi-year total contract value with escalation."""
+    total_cv = 0.0
+    year_values = []
+    for yr in range(1, contract_years + 1):
+        val = base_annual_value * ((1 + annual_escalation_pct / 100.0) ** (yr - 1))
+        total_cv += val
+        year_values.append({"year": yr, "value": val})
+    avg_annual = safe_divide(total_cv, contract_years)
+    return {
+        "base_annual_value": base_annual_value,
+        "contract_years": contract_years,
+        "total_contract_value": total_cv,
+        "avg_annual_value": avg_annual,
+        "year_values": year_values,
+        "early_termination_cost": early_termination_cost,
+        "escalation_impact": total_cv - base_annual_value * contract_years,
+    }
+
+
+def render_service_scope_fields(*, key_prefix: str, scope: str) -> Dict[str, float]:
+    cfg = service_scope_config(scope)
+    labels = list(cfg.get("field_labels", ["Service units", "Hours / month", "Sites / users covered"]))
+    c = st.columns(3)
+    values = {}
+    for idx, label in enumerate(labels[:3]):
+        with c[idx]:
+            values[f"driver_{idx+1}"] = st.number_input(
+                label, min_value=0.0, value=0.0, step=1.0, format="%.2f",
+                key=f"{key_prefix}__scope_driver_{idx+1}",
+            )
+    st.caption(f"Recommended demand driver: {cfg.get('driver_label', 'service units')}.")
+    return values
+
+
+def render_service_scorecard(*, key_prefix: str, supplier_label: str, default_score: float = 82.0) -> Dict:
+    st.markdown("<div class='v46-plain-title'>📊 Supplier Performance Scorecard</div>", unsafe_allow_html=True)
+    c = st.columns(4) + st.columns(3)  # type: ignore
+    cols_flat = [st.columns(4)[i % 4] for i in range(9)]
+    # re-render properly
+    st.markdown("<div class='v46-gov-card'>", unsafe_allow_html=True)
+    score_cols = st.columns(5)
+    scores: Dict[str, float] = {}
+    dims = list(SERVICE_SCORECARD_WEIGHTS.keys())
+    for idx, dim in enumerate(dims):
+        with score_cols[idx % 5]:
+            scores[dim] = st.slider(
+                f"{dim}", min_value=0.0, max_value=100.0, value=float(default_score),
+                step=1.0, key=f"{key_prefix}__score__{dim}",
+                help=f"Weight: {SERVICE_SCORECARD_WEIGHTS[dim]:.0f}%",
+            )
+    score = weighted_service_score(scores)
+    tier = service_tier(score)
+    color = service_score_color(score)
+    st.markdown(
+        f"""<div class="v46-svc-result">
+            <b>Weighted score:</b> <span class="v46-score-badge" style="color:{color};border-color:{color}">{score:,.1f} / 100</span>
+            &nbsp;·&nbsp; <b>Tier:</b> {escape(tier)}
+        </div></div>""",
+        unsafe_allow_html=True,
+    )
+    return {"score": float(score), "tier": tier, **scores}
+
+
+def render_service_baseline_builder(*, key_prefix: str, country: str, scope: str, reporting_currency: str) -> Dict:
+    cfg = service_scope_config(scope)
+    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
+    icon = cfg.get("icon", "🧾")
+    color = cfg.get("color", "#64748b")
+
+    st.markdown(f"<div class='v46-plain-title'>{icon} {scope} — Current Baseline ({country})</div>", unsafe_allow_html=True)
+
+    r1 = st.columns([1.2, 0.9, 0.9, 0.9])
+    with r1[0]:
+        pricing_model = st.selectbox("Pricing model", options=pricing_models, index=0, key=f"{key_prefix}__pricing_model")
+    with r1[1]:
+        contracted_value = st.number_input(
+            "Contracted / baseline value", min_value=0.0, value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
+            step=100_000.0, format="%.2f", key=f"{key_prefix}__contracted_value",
+        )
+    with r1[2]:
+        budget_value = st.number_input(
+            "Current budget", min_value=0.0, value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
+            step=100_000.0, format="%.2f", key=f"{key_prefix}__budget_value",
+        )
+    with r1[3]:
+        contract_years = st.number_input("Contract years", min_value=1, max_value=10, value=3, step=1, key=f"{key_prefix}__contract_years")
+
+    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
+
+    # ── FTE decomposition (Amazon lens) ──────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>👥 FTE Demand Decomposition & Rate Card</div>", unsafe_allow_html=True)
+    st.caption("Amazon procurement standard: decompose supplier headcount into productive, overtime and absenteeism-adjusted units before challenging the proposal.")
+    wh = st.columns(7)
+    with wh[0]:
+        headcount = st.number_input("Total headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
+    with wh[1]:
+        price_per_person_month = st.number_input("Price / person / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
+    with wh[2]:
+        regular_hours = st.number_input("Regular hours / FTE / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours")
+    with wh[3]:
+        hourly_rate = st.number_input("Hourly rate (0 = estimated)", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate")
+    with wh[4]:
+        overtime_hours = st.number_input("Overtime hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours")
+    with wh[5]:
+        absenteeism_rate = st.number_input("Absenteeism rate %", min_value=0.0, max_value=50.0, value=5.0, step=0.5, format="%.2f", key=f"{key_prefix}__absenteeism_rate")
+    with wh[6]:
+        productivity_util = st.number_input("Productivity utilization %", min_value=1.0, max_value=100.0, value=80.0, step=1.0, format="%.2f", key=f"{key_prefix}__productivity_util")
+
+    eff_hr = float(hourly_rate) if float(hourly_rate) > 0 else safe_divide(float(price_per_person_month), max(float(regular_hours), 1.0))
+    fte_decomp = calc_fte_demand_decomposition(
+        float(headcount), float(regular_hours), float(overtime_hours),
+        float(absenteeism_rate), float(productivity_util),
+    )
+    benchmark_fte_cost = float(cfg.get("benchmark_fte_cost", 60_000.0))
+    rc_check = calc_rate_card_compliance(
+        float(price_per_person_month) * 12.0,
+        benchmark_fte_cost,
+        float(regular_hours) * 12.0,
+    )
+
+    if float(headcount) > 0:
+        opt_pct = safe_divide(fte_decomp["optimization_potential_hc"], float(headcount)) * 100
+        rc_color = "#34d399" if rc_check["compliant"] else "#f87171"
+        st.markdown(
+            f"""<div class="v46-svc-result">
+            <b>Effective FTEs:</b> {fte_decomp['effective_headcount']:.1f} &nbsp;·&nbsp;
+            <b>Productive FTEs:</b> {fte_decomp['productive_headcount']:.1f} &nbsp;·&nbsp;
+            <b>OT equiv FTEs:</b> {fte_decomp['ot_fte_equivalent']:.1f} &nbsp;·&nbsp;
+            <b>Demand coverage:</b> {fte_decomp['demand_coverage_pct']:.1f}% &nbsp;·&nbsp;
+            <b>Right-sized HC:</b> {fte_decomp['right_sized_headcount']:.1f} &nbsp;·&nbsp;
+            <b>Optimization potential:</b> <span style="color:#fbbf24">{fte_decomp['optimization_potential_hc']:.1f} FTEs ({opt_pct:.1f}%)</span> &nbsp;·&nbsp;
+            <b>Rate card:</b> <span style="color:{rc_color}">{'✓ Compliant' if rc_check['compliant'] else f'⚠ +{rc_check["rate_gap_pct"]:.1f}% vs benchmark'}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── Contract leakage ─────────────────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>💧 Contract Leakage & Lifecycle Cost</div>", unsafe_allow_html=True)
+    st.caption("Model every leakage vector. Amazon procurement expects scope creep, emergency requests and rework to be budgeted, not discovered post-award.")
+    r2 = st.columns(6)
+    with r2[0]:
+        scope_additions = st.number_input("Scope additions / change orders", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__scope_additions")
+    with r2[1]:
+        emergency_requests = st.number_input("Emergency requests cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__emergency_requests")
+    with r2[2]:
+        rework_cost = st.number_input("Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
+    with r2[3]:
+        internal_management = st.number_input("Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
+    with r2[4]:
+        sla_credits = st.number_input("SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits")
+    with r2[5]:
+        ot_cost_input = st.number_input("Annual overtime cost", min_value=0.0, value=float(float(overtime_hours) * eff_hr * 1.5 * 12.0), step=10_000.0, format="%.2f", key=f"{key_prefix}__ot_cost")
+
+    leakage = calc_contract_leakage_waterfall(
+        float(contracted_value), float(scope_additions), float(emergency_requests),
+        float(rework_cost), 0.0, float(sla_credits), 0.0,
+    )
+    service_tco = leakage["actual_billed"] + float(internal_management) + float(ot_cost_input)
+    budget_variance = service_tco - float(budget_value)
+    tcv = calc_multi_year_contract_value(service_tco, int(contract_years), 3.0)
+
+    if float(contracted_value) > 0:
+        st.markdown(
+            f"""<div class="v46-leakage">
+            <div class="v46-leakage-title">📊 Contract Leakage Waterfall</div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">Contracted baseline</span><span class="v46-leakage-val">{reporting_currency} {contracted_value:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">+ Scope additions</span><span class="v46-leakage-val">+ {reporting_currency} {scope_additions:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">+ Emergency requests</span><span class="v46-leakage-val">+ {reporting_currency} {emergency_requests:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">+ Rework cost</span><span class="v46-leakage-val">+ {reporting_currency} {rework_cost:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">+ OT cost</span><span class="v46-leakage-val">+ {reporting_currency} {ot_cost_input:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">- SLA credits / rebates</span><span class="v46-leakage-val">- {reporting_currency} {sla_credits:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item"><b>Current Service TCO</b></span><span class="v46-leakage-val"><b>{reporting_currency} {service_tco:,.0f}</b></span></div>
+            </div>
+            <div class="v46-svc-result">
+            <b>Leakage rate:</b> {leakage['leakage_rate']*100:.1f}% &nbsp;·&nbsp;
+            <b>Budget variance:</b> {reporting_currency} {budget_variance:,.0f} &nbsp;·&nbsp;
+            <b>{int(contract_years)}-yr TCV:</b> {reporting_currency} {tcv['total_contract_value']:,.0f} &nbsp;·&nbsp;
+            <b>Escalation impact:</b> {reporting_currency} {tcv['escalation_impact']:,.0f}
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    overtime_cost_val = float(ot_cost_input)
+    people_cost_model = float(headcount) * float(price_per_person_month) * 12.0
+    scope_creep_pct = safe_divide(float(scope_additions), float(contracted_value))
+
+    return {
+        "scope": scope, "pricing_model": pricing_model,
+        "contracted_value": float(contracted_value), "budget_value": float(budget_value),
+        "actual_demand_index": 100.0,
+        "change_orders": float(scope_additions), "internal_management": float(internal_management),
+        "rework_cost": float(rework_cost), "downtime_compliance_cost": 0.0,
+        "sla_credits_rebates": float(sla_credits),
+        "headcount": float(headcount), "price_per_person_month": float(price_per_person_month),
+        "regular_hours_per_person_month": float(regular_hours), "hourly_rate": float(eff_hr),
+        "overtime_hours_month": float(overtime_hours), "overtime_cost": float(ot_cost_input),
+        "people_cost_model": float(people_cost_model), "productivity_gain": 0.0, "expected_risk_cost": 0.0,
+        "service_tco": float(service_tco), "scope_creep_pct": float(scope_creep_pct),
+        "budget_variance": float(budget_variance), "contract_years": int(contract_years),
+        "total_contract_value": float(tcv["total_contract_value"]),
+        "leakage_rate": float(leakage["leakage_rate"]),
+        "fte_decomp": fte_decomp,
+        "rate_card_compliance": rc_check,
+    }
+
+
+def render_service_supplier_builder(
+    *, key_prefix: str, country: str, scope: str, supplier_label: str,
+    default_spend: float, reporting_currency: str,
+) -> Dict:
+    cfg = service_scope_config(scope)
+    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
+    icon = cfg.get("icon", "🧾")
+    color = cfg.get("color", "#64748b")
+    benchmark_fte = float(cfg.get("benchmark_fte_cost", 60_000.0))
+    sla_kpis = cfg.get("sla_kpis", ["SLA %"])[:3]
+
+    st.markdown(f"<div class='v46-plain-title'>{icon} Service pricing, workforce & productivity</div>", unsafe_allow_html=True)
+    r1 = st.columns([1.1, .85, .85, .85])
+    with r1[0]:
+        pricing_model = st.selectbox(f"{supplier_label} | Pricing model", options=pricing_models, index=0, key=f"{key_prefix}__pricing_model")
+    with r1[1]:
+        proposed_value = st.number_input(f"{supplier_label} | Proposed contract value", min_value=0.0, value=float(default_spend), step=50_000.0, format="%.2f", key=f"{key_prefix}__proposed_contract_value")
+    with r1[2]:
+        demand_index = st.number_input(f"{supplier_label} | Demand / scope index", min_value=0.0, value=100.0, step=5.0, format="%.2f", key=f"{key_prefix}__baseline_demand_index")
+    with r1[3]:
+        contract_years = st.number_input(f"{supplier_label} | Contract years", min_value=1, max_value=10, value=3, step=1, key=f"{key_prefix}__contract_years")
+
+    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
+
+    # ── FTE workforce ─────────────────────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>👥 Workforce, rate card & overtime</div>", unsafe_allow_html=True)
+    wh = st.columns(7)
+    with wh[0]:
+        headcount = st.number_input(f"{supplier_label} | Headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
+    with wh[1]:
+        price_per_person_month = st.number_input(f"{supplier_label} | Price / FTE / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
+    with wh[2]:
+        regular_hours = st.number_input(f"{supplier_label} | Regular hours / FTE / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours")
+    with wh[3]:
+        hourly_rate_input = st.number_input(f"{supplier_label} | Hourly rate (0=est.)", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate")
+    with wh[4]:
+        overtime_hours = st.number_input(f"{supplier_label} | OT hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours")
+    with wh[5]:
+        ot_multiplier = st.number_input(f"{supplier_label} | OT multiplier", min_value=1.0, value=1.5, step=0.05, format="%.2f", key=f"{key_prefix}__ot_mult")
+    with wh[6]:
+        absenteeism_rate = st.number_input(f"{supplier_label} | Absenteeism %", min_value=0.0, max_value=50.0, value=5.0, step=0.5, format="%.2f", key=f"{key_prefix}__absenteeism_rate")
+
+    eff_hr = float(hourly_rate_input) if float(hourly_rate_input) > 0 else safe_divide(float(price_per_person_month), max(float(regular_hours), 1.0))
+    ot_cost = float(overtime_hours) * eff_hr * float(ot_multiplier) * 12.0
+    people_cost = float(headcount) * float(price_per_person_month) * 12.0
+    fte_decomp = calc_fte_demand_decomposition(float(headcount), float(regular_hours), float(overtime_hours), float(absenteeism_rate), 80.0)
+    rc_check = calc_rate_card_compliance(float(price_per_person_month) * 12.0, benchmark_fte, float(regular_hours) * 12.0)
+
+    if float(headcount) > 0:
+        rc_color = "#34d399" if rc_check["compliant"] else "#f87171"
+        st.markdown(
+            f"""<div class="v46-svc-result">
+            <b>Right-sized HC:</b> {fte_decomp['right_sized_headcount']:.1f} &nbsp;·&nbsp;
+            <b>Optimization potential:</b> {fte_decomp['optimization_potential_hc']:.1f} FTEs &nbsp;·&nbsp;
+            <b>Rate card:</b> <span style="color:{rc_color}">{'✓ OK' if rc_check['compliant'] else f'⚠ +{rc_check["rate_gap_pct"]:.1f}% vs benchmark (annual overcharge: {reporting_currency} {rc_check["annual_overcharge"]:,.0f})'}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── SLA modeling (Amazon demand) ────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>🎯 SLA modeling & financial exposure</div>", unsafe_allow_html=True)
+    st.caption(f"Key SLA KPIs for {scope}: {', '.join(sla_kpis)}. Quantify the financial exposure before awarding.")
+    sla_cols = st.columns([1.0, .8, .8, .8, .8])
+    with sla_cols[0]:
+        primary_sla_label = sla_kpis[0] if sla_kpis else "Primary SLA"
+        sla_attainment = st.number_input(f"{supplier_label} | {primary_sla_label} attainment", min_value=0.0, max_value=100.0, value=95.0, step=0.1, format="%.2f", key=f"{key_prefix}__sla_attainment")
+    with sla_cols[1]:
+        sla_target = st.number_input(f"{supplier_label} | SLA target %", min_value=0.0, max_value=100.0, value=98.0, step=0.1, format="%.2f", key=f"{key_prefix}__sla_target")
+    with sla_cols[2]:
+        sla_penalty_pct = st.number_input(f"{supplier_label} | Penalty % of contract", min_value=0.0, max_value=50.0, value=2.0, step=0.5, format="%.2f", key=f"{key_prefix}__sla_penalty_pct")
+    with sla_cols[3]:
+        sla_impact_mult = st.number_input(f"{supplier_label} | Business impact mult.", min_value=1.0, max_value=10.0, value=2.5, step=0.1, format="%.2f", key=f"{key_prefix}__sla_impact_mult")
+    with sla_cols[4]:
+        transition_days = st.number_input(f"{supplier_label} | Transition days", min_value=0, value=30, step=1, key=f"{key_prefix}__transition_days")
+
+    sla_result = calc_sla_financial_impact(float(proposed_value), float(sla_penalty_pct), float(sla_attainment), float(sla_target), float(sla_impact_mult))
+    if sla_result["sla_gap"] > 0:
+        st.markdown(
+            f"""<div class="v46-leakage">
+            <div class="v46-leakage-title">⚠ SLA Risk Quantification</div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">SLA gap ({primary_sla_label})</span><span class="v46-leakage-val">{sla_result['sla_gap']:.1f} pp below target</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">Penalty exposure</span><span class="v46-leakage-val">{reporting_currency} {sla_result['penalty_exposure']:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item">Business impact</span><span class="v46-leakage-val">{reporting_currency} {sla_result['business_impact']:,.0f}</span></div>
+            <div class="v46-leakage-row"><span class="v46-leakage-item"><b>Expected annual SLA cost</b></span><span class="v46-leakage-val"><b>{reporting_currency} {sla_result['expected_annual_impact']:,.0f}</b></span></div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── Should-cost engine ────────────────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>🔬 Should-cost engine & open-cost model</div>", unsafe_allow_html=True)
+    sc = st.columns(6)
+    with sc[0]:
+        should_cost_hc = st.number_input(f"{supplier_label} | Should-cost HC", min_value=0.0, value=float(headcount), step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_headcount")
+    with sc[1]:
+        benchmark_hr = st.number_input(f"{supplier_label} | Benchmark hourly rate", min_value=0.0, value=max(eff_hr, 0.0), step=10.0, format="%.2f", key=f"{key_prefix}__benchmark_hourly_rate")
+    with sc[2]:
+        target_hours = st.number_input(f"{supplier_label} | Target hours / FTE / month", min_value=0.0, value=float(regular_hours), step=1.0, format="%.2f", key=f"{key_prefix}__target_hours_month")
+    with sc[3]:
+        overhead_pct = st.number_input(f"{supplier_label} | Overhead / tools %", min_value=0.0, max_value=200.0, value=15.0, step=1.0, format="%.2f", key=f"{key_prefix}__overhead_tools_pct")
+    with sc[4]:
+        fair_margin = st.number_input(f"{supplier_label} | Fair margin %", min_value=0.0, max_value=100.0, value=12.0, step=1.0, format="%.2f", key=f"{key_prefix}__fair_margin_pct")
+    with sc[5]:
+        should_cost_prod = st.number_input(f"{supplier_label} | Productivity target %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_productivity_pct")
+
+    st.markdown("<div class='v46-plain-title'>Open-cost breakdown</div>", unsafe_allow_html=True)
+    st.caption("Request a transparent open-cost breakdown from the supplier. Unexplained quote value is a negotiation lever.")
+    open_cost_values: Dict[str, float] = {}
+    oc_rows = [SERVICE_OPEN_COST_COMPONENTS[i:i+4] for i in range(0, len(SERVICE_OPEN_COST_COMPONENTS), 4)]
+    for row_idx, component_row in enumerate(oc_rows):
+        oc_cols = st.columns(4)
+        for col_idx, (comp_key, comp_label) in enumerate(component_row):
+            with oc_cols[col_idx]:
+                open_cost_values[comp_key] = st.number_input(
+                    f"{supplier_label} | {comp_label}", min_value=0.0, value=0.0, step=10_000.0, format="%.2f",
+                    key=f"{key_prefix}__open_cost__{comp_key}",
+                )
+    should_cost_labor = float(should_cost_hc) * float(target_hours) * 12.0 * float(benchmark_hr)
+    open_cost_total = sum(float(v) for v in open_cost_values.values())
+    should_cost_raw = should_cost_labor + open_cost_total
+    should_cost_target = should_cost_raw * (1.0 + overhead_pct / 100.0) * (1.0 + fair_margin / 100.0) * (1.0 - should_cost_prod / 100.0)
+    should_cost_gap = float(proposed_value) - float(should_cost_target)
+    open_cost_coverage = safe_divide(open_cost_total, float(proposed_value))
+    unexplained = max(float(proposed_value) - open_cost_total, 0.0)
+    st.markdown(
+        f"""<div class="v46-opencost-card">
+        <b>Open-cost coverage:</b> {open_cost_coverage*100:.1f}% &nbsp;·&nbsp;
+        <b>Open-cost total:</b> {reporting_currency} {open_cost_total:,.0f} &nbsp;·&nbsp;
+        <b>Unexplained quote value:</b> {reporting_currency} {unexplained:,.0f} &nbsp;·&nbsp;
+        <b>Clean-sheet should-cost:</b> {reporting_currency} {should_cost_target:,.0f}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── TCO adjustments & productivity ───────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>⚙ Service TCO adjustments & productivity ROI</div>", unsafe_allow_html=True)
+    r2 = st.columns(6)
+    with r2[0]:
+        transition_cost = st.number_input(f"{supplier_label} | Transition cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__transition_cost")
+    with r2[1]:
+        change_order_reserve = st.number_input(f"{supplier_label} | Change order reserve", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_order_reserve")
+    with r2[2]:
+        internal_mgmt = st.number_input(f"{supplier_label} | Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
+    with r2[3]:
+        rework_cost_sup = st.number_input(f"{supplier_label} | Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
+    with r2[4]:
+        sla_credits_rebates = st.number_input(f"{supplier_label} | SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
+    with r2[5]:
+        ot_cost_input = st.number_input(f"{supplier_label} | Annual OT cost", min_value=0.0, value=float(ot_cost), step=10_000.0, format="%.2f", key=f"{key_prefix}__ot_cost")
+
+    st.markdown("<div class='v46-plain-title'>📈 Supplier-led productivity & risk</div>", unsafe_allow_html=True)
+    st.caption(f"Productivity lever for {scope}: {cfg.get('productivity_label', 'supplier-led productivity')}.")
+    r3 = st.columns([1.1, .75, .75, .75, .75])
+    with r3[0]:
+        prod_description = st.text_input(f"{supplier_label} | Productivity lever", value=str(cfg.get("productivity_label", "supplier-led productivity")), key=f"{key_prefix}__productivity_description")
+    with r3[1]:
+        productivity_gain = st.number_input(f"{supplier_label} | Annual productivity gain value", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__productivity_gain")
+    with r3[2]:
+        prod_investment = st.number_input(f"{supplier_label} | Productivity investment", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__prod_investment")
+    with r3[3]:
+        risk_prob = st.number_input(f"{supplier_label} | Risk probability %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__risk_probability")
+    with r3[4]:
+        risk_impact = st.number_input(f"{supplier_label} | Risk financial impact", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__risk_impact")
+
+    # Productivity ROI
+    roi = calc_productivity_roi(float(prod_investment), float(productivity_gain))
+    if float(productivity_gain) > 0:
+        payback_str = f"{roi['payback_months']:.1f} months" if roi['payback_months'] < 60 else "N/A"
+        st.markdown(
+            f"""<div class="v46-roi-badge">
+            📈 Productivity ROI: <b>{roi['three_year_roi_pct']:.0f}%</b> (3-yr) &nbsp;·&nbsp;
+            Payback: <b>{payback_str}</b> &nbsp;·&nbsp;
+            Net 3-yr value: <b>{reporting_currency} {roi['net_three_year_value']:,.0f}</b>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    scorecard = render_service_scorecard(key_prefix=key_prefix, supplier_label=supplier_label)
+    expected_risk_cost = float(risk_prob) / 100.0 * float(risk_impact)
+    sla_risk_cost = sla_result["expected_annual_impact"]
+    service_tco_before_prod = (float(proposed_value) + float(transition_cost) + float(change_order_reserve)
+                               + float(internal_mgmt) + float(rework_cost_sup) + float(ot_cost_input)
+                               + expected_risk_cost + sla_risk_cost - float(sla_credits_rebates))
+    service_tco = max(service_tco_before_prod - float(productivity_gain), 0.0)
+    perf_score = float(scorecard["score"])
+    perf_adj_cost = safe_divide(service_tco, max(perf_score / 100.0, 1e-9))
+    scope_creep_pct = safe_divide(float(change_order_reserve), float(proposed_value))
+    tcv = calc_multi_year_contract_value(service_tco, int(contract_years), 3.0)
+
+    st.markdown(
+        f"""<div class="v46-svc-result">
+        <b>Service TCO (proposal spend):</b> {reporting_currency} {service_tco:,.0f} &nbsp;·&nbsp;
+        <b>Productivity gain:</b> {reporting_currency} {productivity_gain:,.0f} &nbsp;·&nbsp;
+        <b>SLA risk cost:</b> {reporting_currency} {sla_risk_cost:,.0f} &nbsp;·&nbsp;
+        <b>Expected risk cost:</b> {reporting_currency} {expected_risk_cost:,.0f} &nbsp;·&nbsp;
+        <b>Perf-adj cost:</b> {reporting_currency} {perf_adj_cost:,.0f} &nbsp;·&nbsp;
+        <b>Should-cost gap:</b> {reporting_currency} {should_cost_gap:,.0f} &nbsp;·&nbsp;
+        <b>{int(contract_years)}-yr TCV:</b> {reporting_currency} {tcv['total_contract_value']:,.0f}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    return {
+        "scope": scope, "pricing_model": pricing_model,
+        "proposed_contract_value": float(proposed_value), "baseline_demand_index": float(demand_index),
+        "transition_days": int(transition_days), "transition_cost": float(transition_cost),
+        "change_order_reserve": float(change_order_reserve), "internal_management": float(internal_mgmt),
+        "rework_cost": float(rework_cost_sup), "sla_credits_rebates": float(sla_credits_rebates),
+        "headcount": float(headcount), "price_per_person_month": float(price_per_person_month),
+        "regular_hours_per_person_month": float(regular_hours), "hourly_rate": float(eff_hr),
+        "people_cost_model": float(people_cost), "overtime_hours_month": float(overtime_hours),
+        "overtime_cost": float(ot_cost_input), "absenteeism_rate": float(absenteeism_rate),
+        "should_cost_headcount": float(should_cost_hc), "benchmark_hourly_rate": float(benchmark_hr),
+        "should_cost_target": float(should_cost_target), "should_cost_gap": float(should_cost_gap),
+        "open_cost_total": float(open_cost_total), "open_cost_coverage_pct": float(open_cost_coverage),
+        "unexplained_quote_value": float(unexplained),
+        **{f"open_cost_{k}": float(v) for k, v in open_cost_values.items()},
+        "productivity_description": prod_description, "productivity_gain": float(productivity_gain),
+        "prod_investment": float(prod_investment),
+        "productivity_roi_pct": float(roi["three_year_roi_pct"]),
+        "payback_months": float(roi["payback_months"]),
+        "risk_probability": float(risk_prob), "risk_impact": float(risk_impact),
+        "expected_risk_cost": float(expected_risk_cost),
+        "sla_risk_cost": float(sla_risk_cost), "sla_attainment": float(sla_attainment),
+        "sla_target": float(sla_target), "sla_gap": float(sla_result["sla_gap"]),
+        "service_tco_before_productivity": float(service_tco_before_prod),
+        "service_tco": float(service_tco), "performance_score": float(perf_score),
+        "performance_tier": str(scorecard["tier"]), "performance_adjusted_cost": float(perf_adj_cost),
+        "scope_creep_pct": float(scope_creep_pct), "total_contract_value": float(tcv["total_contract_value"]),
+        "fte_decomp": fte_decomp, "rate_card_compliance": rc_check,
+        **{f"score_{d}": float(scorecard[d]) for d in SERVICE_SCORECARD_WEIGHTS},
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DIRECT MATERIALS — LANDED COST BUILDER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_landed_cost_builder(
+    *, key_prefix: str, default_spend: float, default_volume: float, unit: str,
+    reporting_currency: str, currency_default: str = "BRL", supplier_label: str = "Supplier",
+) -> Dict:
+    if currency_default not in CURRENCY_OPTIONS:
+        currency_default = "BRL"
+    default_fx = float(DEFAULT_FX_TO_REPORTING.get(currency_default, 1.0))
+    base_default = default_unit_price_from_spend(default_spend, max(default_volume * default_fx, 1e-9))
+
+    r1 = st.columns([1.0, .82, .78, .78, .72])
+    with r1[0]:
+        base_unit_price = st.number_input(f"{supplier_label} | Base / quoted unit price", min_value=0.0, value=float(base_default), step=0.01, format="%.6f", key=f"{key_prefix}__base_unit_price")
+    with r1[1]:
+        currency = st.selectbox(f"{supplier_label} | Quote currency", options=CURRENCY_OPTIONS, index=CURRENCY_OPTIONS.index(currency_default), key=f"{key_prefix}__currency")
+    with r1[2]:
+        fx_rate = st.number_input(f"{supplier_label} | FX to {reporting_currency}", min_value=0.000001, value=default_fx, step=0.01, format="%.6f", key=f"{key_prefix}__fx_rate")
+    with r1[3]:
+        volume = st.number_input(f"{supplier_label} | 100% volume ({unit})", min_value=0.0, value=float(default_volume), step=max(float(default_volume) * 0.05, 1.0), format="%.4f", key=f"{key_prefix}__volume")
+    with r1[4]:
+        moq = st.number_input(f"{supplier_label} | MOQ ({unit})", min_value=0.0, value=0.0, step=max(float(default_volume) * 0.05, 1.0), format="%.4f", key=f"{key_prefix}__moq")
+
+    r2 = st.columns(5)
+    with r2[0]:
+        conversion_cost = st.number_input(f"{supplier_label} | Conversion / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__conversion_cost")
+    with r2[1]:
+        fixed_margin = st.number_input(f"{supplier_label} | Fixed margin / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__fixed_margin")
+    with r2[2]:
+        intl_freight = st.number_input(f"{supplier_label} | Intl freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__international_freight")
+    with r2[3]:
+        insurance = st.number_input(f"{supplier_label} | Insurance / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__insurance")
+    with r2[4]:
+        incoterm = st.selectbox(f"{supplier_label} | Incoterm", options=INCOTERM_OPTIONS, index=INCOTERM_OPTIONS.index("FOB"), key=f"{key_prefix}__incoterm")
+
+    r3 = st.columns(4)
+    with r3[0]:
+        customs = st.number_input(f"{supplier_label} | Customs / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__customs_fees")
+    with r3[1]:
+        import_duties = st.number_input(f"{supplier_label} | Import duties / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__import_duties_taxes")
+    with r3[2]:
+        dom_freight = st.number_input(f"{supplier_label} | Domestic freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__domestic_freight")
+    with r3[3]:
+        local_taxes = st.number_input(f"{supplier_label} | Local taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__local_taxes")
+
+    comps = {
+        "base_unit_price": float(base_unit_price), "conversion_cost": float(conversion_cost),
+        "fixed_margin": float(fixed_margin), "international_freight": float(intl_freight),
+        "insurance": float(insurance), "customs_fees": float(customs),
+        "import_duties_taxes": float(import_duties), "domestic_freight": float(dom_freight),
+        "local_taxes": float(local_taxes),
+    }
+    unit_price_q = sum(comps.values())
+    unit_price_r = landed_unit_price(comps, float(fx_rate))
+    spend = unit_price_r * float(volume)
+    moq_excess = max(float(moq) - float(volume), 0.0) if float(moq) > 0 else 0.0
+    moq_cash = moq_excess * unit_price_r
+    moq_note = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ"
+    moq_color = "#34d399" if moq_note == "OK" else "#f87171"
+    st.markdown(
+        f"""<div class="v46-landed">
+        <b>Landed unit price:</b> {reporting_currency} {unit_price_r:,.6f} / {escape(unit)} &nbsp;·&nbsp;
+        <b>100% equiv. spend:</b> {reporting_currency} {spend:,.2f} &nbsp;·&nbsp;
+        <b>MOQ:</b> <span style="color:{moq_color}; font-weight:700">{moq_note}</span> &nbsp;·&nbsp;
+        <b>MOQ cash tied:</b> {reporting_currency} {moq_cash:,.2f}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    return {
+        "spend": float(spend), "unit_price_quote": float(unit_price_q),
+        "unit_price_reporting": float(unit_price_r), "volume": float(volume),
+        "moq": float(moq), "moq_excess_units_100pct": float(moq_excess),
+        "moq_cash_tied_preview": float(moq_cash),
+        "currency": currency, "fx_rate": float(fx_rate), "incoterm": incoterm, **comps,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHARE ALLOCATION HELPERS  (identical logic to v45, kept for stability)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def share_key(c, s): return f"share__{c}__{s}"
+def min_key(s): return f"min_share__{s}"
+def max_key(s): return f"max_share__{s}"
+def kraljic_key(s): return f"kraljic_required__{s}"
+def approved_key(s): return f"approved__{s}"
+def supplier_name_key(s): return f"supplier_display_name__{s}"
+def supplier_short_name_key(s): return f"supplier_short_name__{s}"
+
+def supplier_display_name(s: str) -> str:
+    v = str(st.session_state.get(supplier_name_key(s), DEFAULT_SUPPLIER_DISPLAY_NAME.get(s, s))).strip()
+    return v or DEFAULT_SUPPLIER_DISPLAY_NAME.get(s, s)
+
+def supplier_short_name(s: str) -> str:
+    v = str(st.session_state.get(supplier_short_name_key(s), DEFAULT_SUPPLIER_SHORT_NAME.get(s, s))).strip()
+    return v or DEFAULT_SUPPLIER_SHORT_NAME.get(s, s)
+
+def supplier_display_html(s): return escape(supplier_display_name(s), quote=True)
+def supplier_short_html(s): return escape(supplier_short_name(s), quote=True)
+
+def get_min_shares() -> Dict[str, float]:
+    return {s: float(st.session_state.get(min_key(s), DEFAULT_MIN_SHARE[s])) if bool(st.session_state.get(kraljic_key(s), DEFAULT_KRALJIC_REQUIRED[s])) else 0.0 for s in SUPPLIERS}
+
+def get_max_shares() -> Dict[str, float]:
+    return {s: float(st.session_state.get(max_key(s), DEFAULT_MAX_SHARE[s])) if bool(st.session_state.get(approved_key(s), DEFAULT_APPROVED[s])) else 0.0 for s in SUPPLIERS}
+
+def constraint_issues(mins, maxs) -> List[str]:
+    issues = []
+    for s in SUPPLIERS:
+        if mins[s] > maxs[s] + 1e-9:
+            issues.append(f"{supplier_short_name(s)} min {mins[s]:.0f}% > capacity {maxs[s]:.0f}%.")
+    if sum(mins.values()) > 100.0 + 1e-9:
+        issues.append("Kraljic minimums exceed 100%.")
+    if sum(maxs.values()) < 100.0 - 1e-9:
+        issues.append("Supplier max constraints cannot reach 100%.")
+    return issues
+
+def clamp_shares_to_bounds(country: str) -> None:
+    mins, maxs = get_min_shares(), get_max_shares()
+    for s in SUPPLIERS:
+        k = share_key(country, s)
+        if k not in st.session_state:
+            st.session_state[k] = DEFAULT_SHARES[country][s]
+        st.session_state[k] = max(mins[s], min(maxs[s], float(st.session_state[k])))
+
+def allocate_with_bounds(prefs, mins, maxs, total=100.0) -> Dict[str, float]:
+    maxs = {s: max(float(maxs[s]), float(mins[s])) for s in SUPPLIERS}
+    if sum(mins.values()) > total + 1e-9:
+        return {s: safe_divide(mins[s], sum(mins.values())) * total for s in SUPPLIERS}
+    if sum(maxs.values()) < total - 1e-9:
+        return {s: safe_divide(maxs[s], sum(maxs.values())) * total for s in SUPPLIERS}
+    shares = {s: mins[s] for s in SUPPLIERS}
+    remaining = total - sum(shares.values())
+    capacity = {s: max(0.0, maxs[s] - mins[s]) for s in SUPPLIERS}
+    pref_excess = {s: max(0.0, prefs.get(s, 0.0) - mins[s]) for s in SUPPLIERS}
+    if sum(pref_excess.values()) <= 1e-9:
+        pref_excess = capacity.copy()
+    active = {s for s in SUPPLIERS if capacity[s] > 1e-9}
+    while remaining > 1e-8 and active:
+        denom = sum(pref_excess[s] for s in active) or sum(capacity[s] for s in active) or 1
+        weights = {s: pref_excess[s] / denom for s in active}
+        moved = 0.0
+        saturated = []
+        for s in list(active):
+            add = min(remaining * weights[s], capacity[s])
+            shares[s] += add; capacity[s] -= add; moved += add
+            if capacity[s] <= 1e-8: saturated.append(s)
+        for s in saturated: active.discard(s)
+        if moved <= 1e-8: break
+        remaining -= moved
+    diff = total - sum(shares.values())
+    for s in SUPPLIERS:
+        room = maxs[s] - shares[s]
+        if abs(diff) <= 1e-6: break
+        if diff > 0 and room > 1e-9: add = min(room, diff); shares[s] += add; diff -= add
+        elif diff < 0 and shares[s] > mins[s] + 1e-9: rem = min(shares[s] - mins[s], -diff); shares[s] -= rem; diff += rem
+    return {s: round(shares[s], 6) for s in SUPPLIERS}
+
+def rebalance_after_slider_change(country: str, changed_supplier: str) -> None:
+    mins, maxs = get_min_shares(), get_max_shares()
+    ck = share_key(country, changed_supplier)
+    cv = float(st.session_state.get(ck, DEFAULT_SHARES[country][changed_supplier]))
+    cv = max(mins[changed_supplier], min(maxs[changed_supplier], cv))
+    min_others = sum(mins[s] for s in SUPPLIERS if s != changed_supplier)
+    max_others = sum(maxs[s] for s in SUPPLIERS if s != changed_supplier)
+    cv = min(cv, 100.0 - min_others); cv = max(cv, 100.0 - max_others)
+    cv = max(mins[changed_supplier], min(maxs[changed_supplier], cv))
+    remaining = 100.0 - cv
+    others = [s for s in SUPPLIERS if s != changed_supplier]
+    prefs = {s: float(st.session_state.get(share_key(country, s), DEFAULT_SHARES[country][s])) for s in others}
+    shares = allocate_with_bounds(prefs, {s: mins[s] for s in others}, {s: maxs[s] for s in others}, remaining)
+    st.session_state[ck] = cv
+    for s in others: st.session_state[share_key(country, s)] = round(shares[s], 4)
+
+def apply_pending_optimized_shares() -> None:
+    pending = st.session_state.pop("pending_optimized_shares", None)
+    if not pending: return
+    for country, sup_shares in pending.items():
+        for s, v in sup_shares.items():
+            st.session_state[share_key(country, s)] = float(v)
+    st.session_state["last_optimization_applied"] = True
+
+apply_pending_optimized_shares()
+
+
+def init_defaults() -> None:
+    for s in SUPPLIERS:
+        st.session_state.setdefault(supplier_name_key(s), DEFAULT_SUPPLIER_DISPLAY_NAME[s])
+        st.session_state.setdefault(supplier_short_name_key(s), DEFAULT_SUPPLIER_SHORT_NAME[s])
+        st.session_state.setdefault(kraljic_key(s), DEFAULT_KRALJIC_REQUIRED[s])
+        st.session_state.setdefault(min_key(s), DEFAULT_MIN_SHARE[s])
+        st.session_state.setdefault(max_key(s), DEFAULT_MAX_SHARE[s])
+        st.session_state.setdefault(approved_key(s), DEFAULT_APPROVED[s])
+    for c in COUNTRIES:
+        for s in SUPPLIERS:
+            st.session_state.setdefault(share_key(c, s), DEFAULT_SHARES[c][s])
+
+init_defaults()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FINANCIAL CALCULATION ENGINE  (preserved from v45, fully intact)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def supplier_risk_scores(risk_inputs, risk_weights) -> Dict[str, float]:
+    wt = sum(risk_weights.values()) or 1.0
+    return {s: sum(risk_inputs[s][d] * risk_weights[d] for d in risk_weights) / wt for s in SUPPLIERS}
+
+def inventory_days_from_ownership(ownership: str, lead: int, safety: int) -> int:
+    if ownership == "Buyer owns transit + safety stock": return int(lead) + int(safety)
+    if ownership == "Buyer owns safety stock only": return int(safety)
+    return 0
+
+def calc_moq_wc_drag(dp, req_vol, ci, method) -> Dict[str, float]:
+    up = float(dp.get("unit_price_reporting", 0.0) or 0.0)
+    moq = float(dp.get("moq", 0.0) or 0.0)
+    rv = float(req_vol or 0.0)
+    if up <= 0 or moq <= 0 or rv <= 0:
+        return {"required_volume": rv, "effective_purchase_volume": rv, "excess_units": 0.0, "cash_tied": 0.0, "holding_days": 0.0, "lost_treasury_return": 0.0, "incremental_inventory_carry": 0.0, "working_capital_drag": 0.0}
+    epv = max(rv, moq); excess = max(epv - rv, 0.0)
+    if excess <= 0:
+        return {"required_volume": rv, "effective_purchase_volume": epv, "excess_units": 0.0, "cash_tied": 0.0, "holding_days": 0.0, "lost_treasury_return": 0.0, "incremental_inventory_carry": 0.0, "working_capital_drag": 0.0}
+    cash = excess * up
+    holding = min(360.0, safe_divide(excess, rv) * 360.0)
+    ltr = cash * equivalent_rate(ci["treasury_return_pct"], ci["treasury_reference_days"], holding, method)
+    icc = cash * equivalent_rate(ci["inventory_carry_rate_pct"], 360, holding, method)
+    return {"required_volume": rv, "effective_purchase_volume": epv, "excess_units": excess, "cash_tied": cash, "holding_days": holding, "lost_treasury_return": ltr, "incremental_inventory_carry": icc, "working_capital_drag": ltr + icc}
+
+def calc_current_by_country(country: str, ci: Dict, method: str) -> Dict:
+    inp = ci[country]
+    s = inp["current_spend"]
+    fr = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], inp["current_payment_days"], method)
+    tr = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], inp["current_payment_days"], method)
+    ir = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inp["current_inventory_days"], method)
+    gfc = s * fr; cg = s * tr; ic = s * ir
+    moq_d = calc_moq_wc_drag(inp.get("direct_profile", {}) or {}, float((inp.get("direct_profile", {}) or {}).get("volume", 0.0) or 0.0), inp, method) if inp.get("analysis_mode") == "Direct Materials" else calc_moq_wc_drag({}, 0.0, inp, method)
+    return {"country": country, "base_spend": s, "gross_financial_cost": gfc, "capital_gain": cg, "inventory_cost": ic, "moq_cash_tied": moq_d["cash_tied"], "moq_lost_treasury_return": moq_d["lost_treasury_return"], "moq_incremental_inventory_carry": moq_d["incremental_inventory_carry"], "moq_working_capital_drag": moq_d["working_capital_drag"], "moq_excess_units": moq_d["excess_units"], "moq_holding_days": moq_d["holding_days"], "gross_total": s + gfc, "economic_total": s + gfc - cg + ic + moq_d["working_capital_drag"], "effective_financial_rate": fr, "effective_treasury_rate": tr, "payment_days": inp["current_payment_days"]}
+
+def calc_proposal_by_country(country, shares, ci, pi, supplier_risk, method) -> Dict:
+    inp = ci[country]
+    ct = {"country": country, "new_spend": 0.0, "new_gross_financial_cost": 0.0, "new_capital_gain": 0.0, "new_inventory_cost": 0.0, "new_moq_cash_tied": 0.0, "new_moq_lost_treasury_return": 0.0, "new_moq_incremental_inventory_carry": 0.0, "new_moq_working_capital_drag": 0.0, "new_gross_total": 0.0, "new_economic_total": 0.0, "weighted_risk_numerator": 0.0, "weighted_payment_days_numerator": 0.0, "weighted_share_sum": 0.0, "weighted_financial_rate_numerator": 0.0, "weighted_treasury_rate_numerator": 0.0, "weighted_return_days_numerator": 0.0, "supplier_rows": []}
+    for sup in SUPPLIERS:
+        share = shares[sup] / 100.0
+        sd = pi[country][sup]
+        asp = sd["spend"] * share
+        fr = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], sd["payment_days"], method)
+        tr = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], sd["payment_days"], method)
+        inv_days = inventory_days_from_ownership(sd.get("inventory_ownership", "Buyer owns transit + safety stock"), sd["lead_time_days"], sd["safety_stock_days"])
+        ir = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inv_days, method)
+        gf = asp * fr; cg = asp * tr; ic = asp * ir
+        dp = sd.get("direct_profile", {}) or {}
+        rv = float(dp.get("volume", 0.0) or 0.0) * share if inp.get("analysis_mode") == "Direct Materials" else 0.0
+        moq_d = calc_moq_wc_drag(dp, rv, inp, method) if inp.get("analysis_mode") == "Direct Materials" and share > 0 else calc_moq_wc_drag({}, 0.0, inp, method)
+        et = asp + gf - cg + ic + moq_d["working_capital_drag"]
+        risk = supplier_risk[sup]
+        ct["new_spend"] += asp; ct["new_gross_financial_cost"] += gf; ct["new_capital_gain"] += cg; ct["new_inventory_cost"] += ic
+        ct["new_moq_cash_tied"] += moq_d["cash_tied"]; ct["new_moq_lost_treasury_return"] += moq_d["lost_treasury_return"]; ct["new_moq_incremental_inventory_carry"] += moq_d["incremental_inventory_carry"]; ct["new_moq_working_capital_drag"] += moq_d["working_capital_drag"]
+        ct["new_gross_total"] += asp + gf; ct["new_economic_total"] += et
+        ct["weighted_risk_numerator"] += asp * risk; ct["weighted_payment_days_numerator"] += share * sd["payment_days"]; ct["weighted_share_sum"] += share
+        ct["weighted_financial_rate_numerator"] += asp * fr; ct["weighted_treasury_rate_numerator"] += asp * tr; ct["weighted_return_days_numerator"] += share * sd["payment_days"]
+        sp = sd.get("service_profile", {}) or {}
+        ct["supplier_rows"].append({"Country": country, "Supplier ID": sup, "Supplier": supplier_display_name(sup), "Item / Scope": sd.get("item_name", ""), "Unit / Demand Driver": sd.get("negotiated_unit", ""), "Quote Currency": dp.get("currency", ""), "FX Rate": dp.get("fx_rate", None), "Incoterm": dp.get("incoterm", ""), "Landed Unit Price": dp.get("unit_price_reporting", None), "100% Equivalent Volume": dp.get("volume", None), "MOQ": dp.get("moq", None), "MOQ Cash Tied": moq_d.get("cash_tied", None), "MOQ WC Drag": moq_d.get("working_capital_drag", None), "Service Scope": sp.get("scope", ""), "Pricing Model": sp.get("pricing_model", ""), "Proposed Contract Value": sp.get("proposed_contract_value", None), "Service TCO Before Productivity": sp.get("service_tco_before_productivity", None), "Productivity Gain": sp.get("productivity_gain", None), "Expected Risk Cost": sp.get("expected_risk_cost", None), "SLA Risk Cost": sp.get("sla_risk_cost", None), "SLA Attainment": sp.get("sla_attainment", None), "SLA Gap": sp.get("sla_gap", None), "Performance Score": sp.get("performance_score", None), "Performance Tier": sp.get("performance_tier", ""), "Performance-Adjusted Cost": sp.get("performance_adjusted_cost", None), "Headcount / FTEs": sp.get("headcount", None), "Price per Person / Month": sp.get("price_per_person_month", None), "Hourly Rate": sp.get("hourly_rate", None), "Overtime Hours / Month": sp.get("overtime_hours_month", None), "Overtime Cost": sp.get("overtime_cost", None), "Should-Cost Target": sp.get("should_cost_target", None), "Should-Cost Gap": sp.get("should_cost_gap", None), "Open-Cost Total": sp.get("open_cost_total", None), "Open-Cost Coverage %": sp.get("open_cost_coverage_pct", None), "Unexplained Quote Value": sp.get("unexplained_quote_value", None), "Productivity ROI %": sp.get("productivity_roi_pct", None), "Payback Months": sp.get("payback_months", None), "Total Contract Value": sp.get("total_contract_value", None), "Custom Cost Adjustment": sd.get("custom_cost_adjustment", 0.0), "Scope Creep %": sp.get("scope_creep_pct", None), "Rate Card Gap %": (sp.get("rate_card_compliance", {}) or {}).get("rate_gap_pct", None), "Share %": shares[sup], "Allocated Spend": asp, "Payment Days": sd["payment_days"], "Financial Rate Used": fr, "Treasury Return Rate Used": tr, "Supplier Financial Cost": gf, "Capital Gain Offset": cg, "Inventory Ownership": sd.get("inventory_ownership", ""), "Inventory Days Charged": inv_days, "Inventory Carrying Cost": ic, "Economic Total": et, "Risk Score": risk})
+    sp_ = ct["new_spend"]
+    ct["weighted_risk"] = safe_divide(ct["weighted_risk_numerator"], sp_)
+    ct["avg_payment_days"] = safe_divide(ct["weighted_payment_days_numerator"], ct["weighted_share_sum"])
+    ct["avg_return_days"] = safe_divide(ct["weighted_return_days_numerator"], ct["weighted_share_sum"])
+    ct["avg_financial_rate"] = safe_divide(ct["weighted_financial_rate_numerator"], sp_)
+    ct["avg_treasury_rate"] = safe_divide(ct["weighted_treasury_rate_numerator"], sp_)
+    return ct
+
+def calc_scenario(all_shares, ci, pi, supplier_risk, method):
+    rows, sup_rows = [], []
+    for country in COUNTRIES:
+        cur = calc_current_by_country(country, ci, method)
+        prop = calc_proposal_by_country(country, all_shares[country], ci, pi, supplier_risk, method)
+        row = {"Country": country, "Group": PRIMARY_COUNTRY if country == PRIMARY_COUNTRY else SECONDARY_GROUP, "Current Spend": cur["base_spend"], "New Spend": prop["new_spend"], "Current Financial Cost": cur["gross_financial_cost"], "New Financial Cost": prop["new_gross_financial_cost"], "Current Total Spend": cur["gross_total"], "New Total Spend": prop["new_gross_total"], "Current Capital Gain": cur["capital_gain"], "New Capital Gain": prop["new_capital_gain"], "Current Net Financial Effect": cur["gross_financial_cost"] - cur["capital_gain"], "New Net Financial Effect": prop["new_gross_financial_cost"] - prop["new_capital_gain"], "Net Financial Delta": (prop["new_gross_financial_cost"] - prop["new_capital_gain"]) - (cur["gross_financial_cost"] - cur["capital_gain"]), "Current Inventory Cost": cur["inventory_cost"], "New Inventory Cost": prop["new_inventory_cost"], "Current MOQ Cash Tied": cur.get("moq_cash_tied", 0.0), "New MOQ Cash Tied": prop.get("new_moq_cash_tied", 0.0), "Current MOQ WC Drag": cur.get("moq_working_capital_drag", 0.0), "New MOQ WC Drag": prop.get("new_moq_working_capital_drag", 0.0), "Current Economic Total": cur["economic_total"], "New Economic Total": prop["new_economic_total"], "Spend Delta": prop["new_spend"] - cur["base_spend"], "Financial Delta": prop["new_gross_financial_cost"] - cur["gross_financial_cost"], "Gross All-In Delta": prop["new_gross_total"] - cur["gross_total"], "Capital Gain Delta": prop["new_capital_gain"] - cur["capital_gain"], "Treasury Return Offset Delta": cur["capital_gain"] - prop["new_capital_gain"], "Inventory Delta": prop["new_inventory_cost"] - cur["inventory_cost"], "MOQ Cash Tied Delta": prop.get("new_moq_cash_tied", 0.0) - cur.get("moq_cash_tied", 0.0), "MOQ WC Drag Delta": prop.get("new_moq_working_capital_drag", 0.0) - cur.get("moq_working_capital_drag", 0.0), "MOQ WC Benefit": cur.get("moq_working_capital_drag", 0.0) - prop.get("new_moq_working_capital_drag", 0.0), "Economic All-In Delta": prop["new_economic_total"] - cur["economic_total"], "Weighted Risk": prop["weighted_risk"], "Current Payment Days": cur["payment_days"], "New Avg Payment Days": prop["avg_payment_days"], "Current Effective Financial Rate": cur["effective_financial_rate"], "New Avg Financial Rate": prop["avg_financial_rate"], "Current Effective Treasury Rate": cur["effective_treasury_rate"], "New Avg Treasury Rate": prop["avg_treasury_rate"], "Current Return Days": cur["payment_days"], "New Avg Return Days": prop["avg_return_days"]}
+        rows.append(row); sup_rows.extend(prop["supplier_rows"])
+    cdf = pd.DataFrame(rows); sdf = pd.DataFrame(sup_rows)
+    agg_cols = ["Current Spend", "New Spend", "Current Financial Cost", "New Financial Cost", "Current Total Spend", "New Total Spend", "Current Capital Gain", "New Capital Gain", "Current Net Financial Effect", "New Net Financial Effect", "Net Financial Delta", "Current Inventory Cost", "New Inventory Cost", "Current MOQ Cash Tied", "New MOQ Cash Tied", "Current MOQ WC Drag", "New MOQ WC Drag", "Current Economic Total", "New Economic Total", "Spend Delta", "Financial Delta", "Gross All-In Delta", "Capital Gain Delta", "Treasury Return Offset Delta", "Inventory Delta", "MOQ Cash Tied Delta", "MOQ WC Drag Delta", "MOQ WC Benefit", "Economic All-In Delta"]
+    gdf = cdf.groupby("Group", as_index=False).agg({c: "sum" for c in agg_cols})
+    req_groups = [PRIMARY_COUNTRY, SECONDARY_GROUP]
+    gdf = gdf.set_index("Group").reindex(req_groups).reset_index().fillna(0.0)
+    wrows = []
+    for g in req_groups:
+        sub = cdf[cdf["Group"] == g]
+        tns = sub["New Spend"].sum(); tcs = sub["Current Spend"].sum()
+        wrows.append({"Group": g, "Weighted Risk": safe_divide((sub["Weighted Risk"] * sub["New Spend"]).sum(), tns), "Current Avg Payment Days": safe_divide((sub["Current Payment Days"] * sub["Current Spend"]).sum(), tcs), "New Avg Payment Days": safe_divide((sub["New Avg Payment Days"] * sub["New Spend"]).sum(), tns), "New Avg Return Days": safe_divide((sub["New Avg Return Days"] * sub["New Spend"]).sum(), tns), "New Avg Financial Rate": safe_divide((sub["New Avg Financial Rate"] * sub["New Spend"]).sum(), tns), "New Avg Treasury Rate": safe_divide((sub["New Avg Treasury Rate"] * sub["New Spend"]).sum(), tns)})
+    gdf = gdf.merge(pd.DataFrame(wrows), on="Group", how="left")
+    total = {c: cdf[c].sum() for c in agg_cols}
+    tns = cdf["New Spend"].sum(); tcs = cdf["Current Spend"].sum()
+    total["Weighted Risk"] = safe_divide((cdf["Weighted Risk"] * cdf["New Spend"]).sum(), tns)
+    total["Current Avg Payment Days"] = safe_divide((cdf["Current Payment Days"] * cdf["Current Spend"]).sum(), tcs)
+    total["New Avg Payment Days"] = safe_divide((cdf["New Avg Payment Days"] * cdf["New Spend"]).sum(), tns)
+    total["New Avg Return Days"] = safe_divide((cdf["New Avg Return Days"] * cdf["New Spend"]).sum(), tns)
+    total["New Avg Financial Rate"] = safe_divide((cdf["New Avg Financial Rate"] * cdf["New Spend"]).sum(), tns)
+    total["New Avg Treasury Rate"] = safe_divide((cdf["New Avg Treasury Rate"] * cdf["New Spend"]).sum(), tns)
+    return cdf, gdf, sdf, total
+
+def calc_full_supplier_reference_stack(supplier, ci, pi, method, payment_day_overrides=None) -> Dict:
+    ts, tfc, tts, wpdn = 0.0, 0.0, 0.0, 0.0
+    for c in COUNTRIES:
+        inp = ci[c]; sd = pi[c][supplier]; sp = sd["spend"]
+        pd_ = payment_day_overrides.get(c, sd["payment_days"]) if payment_day_overrides else sd["payment_days"]
+        fr = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], pd_, method)
+        fc = sp * fr; ts += sp; tfc += fc; tts += sp + fc; wpdn += sp * pd_
+    return {"Reference Spend": ts, "Reference Financial Cost": tfc, "Reference Total Spend": tts, "Reference Avg Payment Days": safe_divide(wpdn, ts)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIMIZATION ENGINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sup_unit_econ_cost(country, supplier, ci, pi, method) -> float:
+    inp = ci[country]; sd = pi[country][supplier]; sp = sd["spend"]
+    fr = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], sd["payment_days"], method)
+    tr = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], sd["payment_days"], method)
+    inv_d = inventory_days_from_ownership(sd.get("inventory_ownership", "Buyer owns transit + safety stock"), sd["lead_time_days"], sd["safety_stock_days"])
+    ir = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inv_d, method)
+    return sp * (1 + fr - tr + ir)
+
+def _opt_lp(ci, pi, supplier_risk, method, risk_threshold) -> Tuple[Dict, str]:
+    if not SCIPY_AVAILABLE: raise RuntimeError("SciPy not available")
+    mins, maxs = get_min_shares(), get_max_shares()
+    issues = constraint_issues(mins, maxs)
+    if issues: raise ValueError("; ".join(issues))
+    variables = [(c, s) for c in COUNTRIES for s in SUPPLIERS]
+    n = len(variables)
+    mean_cost = sum(_sup_unit_econ_cost(c, s, ci, pi, method) for c, s in variables) / max(n, 1)
+    rb = mean_cost * 1e-7
+    c_vec = [_sup_unit_econ_cost(c, s, ci, pi, method) + rb * supplier_risk[s] for c, s in variables]
+    A_eq, b_eq = [], []
+    for country in COUNTRIES:
+        row = [1.0 if vc == country else 0.0 for vc, _ in variables]
+        A_eq.append(row); b_eq.append(1.0)
+    A_ub, b_ub = [], []
+    for country in COUNTRIES:
+        row = [pi[vc][vs]["spend"] * (supplier_risk[vs] - risk_threshold) if vc == country else 0.0 for vc, vs in variables]
+        A_ub.append(row); b_ub.append(0.0)
+    bounds = [(mins[s] / 100.0, maxs[s] / 100.0) for _, s in variables]
+    result = linprog(c=c_vec, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+    rg = True
+    if not result.success:
+        result = linprog(c=c_vec, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs"); rg = False
+    if not result.success: raise ValueError(f"No feasible allocation: {result.message}")
+    opt = {c: {} for c in COUNTRIES}
+    for val, (c, s) in zip(result.x, variables): opt[c][s] = round(float(val) * 100.0, 4)
+    return opt, "Exact LP" + ("" if rg else " (risk gate relaxed)")
+
+def _opt_grid(ci, pi, supplier_risk, method, risk_threshold, step) -> Tuple[Dict, str]:
+    mins, maxs = get_min_shares(), get_max_shares()
+    issues = constraint_issues(mins, maxs)
+    if issues: raise ValueError("; ".join(issues))
+    min_u = {s: int(math.ceil(mins[s] / step - 1e-12)) for s in SUPPLIERS}
+    max_u = {s: int(math.floor(maxs[s] / step + 1e-12)) for s in SUPPLIERS}
+    total_u = int(round(100 / step))
+    combos = [dict(zip(SUPPLIERS, vals)) for vals in product(*(range(min_u[s], max_u[s] + 1) for s in SUPPLIERS)) if sum(vals) == total_u]
+    if not combos: raise ValueError("No feasible combination under current constraints.")
+    combos_scaled = [{s: v * step for s, v in c_.items()} for c_ in combos]
+    opt = {}
+    for country in COUNTRIES:
+        cur = calc_current_by_country(country, ci, method)
+        best_r = best_o = None
+        for sh in combos_scaled:
+            prop = calc_proposal_by_country(country, sh, ci, pi, supplier_risk, method)
+            ed = prop["new_economic_total"] - cur["economic_total"]
+            key_ = (ed, prop["weighted_risk"])
+            row_ = {"Shares": sh, "ed": ed, "wr": prop["weighted_risk"]}
+            if best_o is None or key_ < (best_o["ed"], best_o["wr"]): best_o = row_
+            if prop["weighted_risk"] <= risk_threshold:
+                if best_r is None or key_ < (best_r["ed"], best_r["wr"]): best_r = row_
+        opt[country] = (best_r or best_o)["Shares"]
+    return opt, f"Grid optimizer ({step}% step)"
+
+def optimize_allocations(ci, pi, supplier_risk, method, risk_threshold, step):
+    try:
+        opt, msg = _opt_lp(ci, pi, supplier_risk, method, risk_threshold)
+    except Exception as e:
+        opt, msg = _opt_grid(ci, pi, supplier_risk, method, risk_threshold, step)
+        msg += f" (LP unavailable: {e})"
+    cdf_o, _, _, total_o = calc_scenario(opt, ci, pi, supplier_risk, method)
+    rat_rows = []
+    for _, row in cdf_o.iterrows():
+        c = row["Country"]
+        rat_rows.append({"Country": c, "Chosen Risk": row["Weighted Risk"], "Economic Delta": row["Economic All-In Delta"], "Gross All-In Delta": row["Gross All-In Delta"], "Spend Delta": row["Spend Delta"], **{supplier_short_name(s): opt[c][s] for s in SUPPLIERS}, "Risk Gate Met": row["Weighted Risk"] <= risk_threshold})
+    full_msg = f"Optimization applied. {msg}. Objective: lowest economic all-in. Total delta: {total_o['Economic All-In Delta']:,.2f}."
+    return opt, pd.DataFrame(rat_rows), full_msg
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI EXECUTIVE BRIEF
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_ai_payload(*, analysis_mode, total, group_df, supplier_focus_df, focused_supplier_count, currency) -> str:
     primary = _safe_group_row(group_df, PRIMARY_COUNTRY)
     secondary = _safe_group_row(group_df, SECONDARY_GROUP)
     focus = supplier_focus_df.head(focused_supplier_count) if isinstance(supplier_focus_df, pd.DataFrame) else pd.DataFrame()
@@ -1155,1631 +2245,119 @@ def build_ai_prompt_payload(
         for _, row in focus.iterrows():
             extra = ""
             if analysis_mode == "Indirect / Services" and pd.notna(row.get("Performance Score", None)):
-                extra = f" | Performance score: {row.get('Performance Score', 0):.1f}/100 | Productivity gain: {currency} {row.get('Productivity Gain', 0):,.2f} | Overtime h/mo: {row.get('Overtime Hours / Month', 0):,.1f}"
-            focus_lines.append(
-                f"#{int(row.get('Rank', 0))} {row.get('Supplier','')} | Economic total: {currency} {row.get('Economic Total',0):,.2f} | Risk: {row.get('Risk Score',0):.2f}/5{extra}"
-            )
+                extra = f" | Score {row.get('Performance Score',0):.1f}/100 | ROI {row.get('Productivity ROI %', 0):.0f}% | OT {row.get('Overtime Hours / Month', 0):.0f}h/mo | SLA gap {row.get('SLA Gap', 0):.1f}pp"
+            focus_lines.append(f"#{int(row.get('Rank',0))} {row.get('Supplier','')} | Econ total: {currency} {row.get('Economic Total',0):,.0f} | Risk: {row.get('Risk Score',0):.2f}/5{extra}")
     return "\n".join([
-        "Act as a senior executive procurement advisor. Provide a concise, decision-oriented recommendation.",
-        f"Analysis mode: {analysis_mode}",
-        f"Gross total saving/impact: {currency} {total.get('Gross All-In Delta', 0):,.2f}",
-        f"Working capital gain/impact: {currency} {total.get('Treasury Return Offset Delta', 0):,.2f}",
-        f"Inventory carrying delta: {currency} {total.get('Inventory Delta', 0):,.2f}",
-        f"Final economic all-in saving/impact: {currency} {total.get('Economic All-In Delta', 0):,.2f}",
-        f"Weighted risk: {total.get('Weighted Risk', 0):.2f}/5",
-        f"{PRIMARY_COUNTRY} economic delta: {currency} {primary.get('Economic All-In Delta', 0):,.2f}; current term {primary.get('Current Avg Payment Days', 0):.0f} dd; new term {primary.get('New Avg Payment Days', 0):.0f} dd",
-        f"{SECONDARY_GROUP} economic delta: {currency} {secondary.get('Economic All-In Delta', 0):,.2f}; current term {secondary.get('Current Avg Payment Days', 0):.0f} dd; new term {secondary.get('New Avg Payment Days', 0):.0f} dd",
-        "Top supplier focus:",
-        *focus_lines,
-        "Return: recommendation, best option, risk watchouts, negotiation levers and next actions. Keep it short.",
+        "Act as a senior executive procurement advisor (Amazon/McKinsey caliber). Concise, decision-oriented recommendation.",
+        f"Mode: {analysis_mode}",
+        f"Gross saving/impact: {currency} {total.get('Gross All-In Delta',0):,.0f}",
+        f"WC gain/impact: {currency} {total.get('Treasury Return Offset Delta',0):,.0f}",
+        f"Inventory delta: {currency} {total.get('Inventory Delta',0):,.0f}",
+        f"Final economic all-in: {currency} {total.get('Economic All-In Delta',0):,.0f}",
+        f"Weighted risk: {total.get('Weighted Risk',0):.2f}/5",
+        f"{PRIMARY_COUNTRY}: {currency} {primary.get('Economic All-In Delta',0):,.0f} | term {primary.get('Current Avg Payment Days',0):.0f}→{primary.get('New Avg Payment Days',0):.0f}dd",
+        f"{SECONDARY_GROUP}: {currency} {secondary.get('Economic All-In Delta',0):,.0f}",
+        "Top supplier focus:", *focus_lines,
+        "Return: recommendation, best option, risk watchouts, negotiation levers and next actions. 200 words max.",
     ])
 
-
-def generate_ai_executive_brief(
-    *,
-    analysis_mode: str,
-    total: Dict[str, float],
-    group_df: pd.DataFrame,
-    supplier_focus_df: pd.DataFrame,
-    focused_supplier_count: int,
-    currency: str,
-) -> str:
-    """Local AI-style executive brief.
-
-    This is intentionally concise and deterministic until a real AI API key/integration
-    is connected. It reads the same data that would be sent to an AI assistant.
-    """
-    final_delta = float(total.get("Economic All-In Delta", 0.0))
-    gross_delta = float(total.get("Gross All-In Delta", 0.0))
-    wc_delta = float(total.get("Treasury Return Offset Delta", 0.0))
-    inv_delta = float(total.get("Inventory Delta", 0.0))
+def generate_local_brief(*, analysis_mode, total, group_df, supplier_focus_df, focused_supplier_count, currency) -> str:
+    fd = float(total.get("Economic All-In Delta", 0.0))
+    gd = float(total.get("Gross All-In Delta", 0.0))
+    wc = float(total.get("Treasury Return Offset Delta", 0.0))
+    inv = float(total.get("Inventory Delta", 0.0))
     risk = float(total.get("Weighted Risk", 0.0))
     primary = _safe_group_row(group_df, PRIMARY_COUNTRY)
     secondary = _safe_group_row(group_df, SECONDARY_GROUP)
     focus = supplier_focus_df.head(max(1, focused_supplier_count)) if isinstance(supplier_focus_df, pd.DataFrame) else pd.DataFrame()
-    best_supplier = "No supplier ranked"
-    best_rationale = "Complete supplier inputs to generate the ranked recommendation."
+    best_sup = "No supplier ranked"
+    best_rat = "Complete supplier inputs to generate."
     if not focus.empty:
         top = focus.iloc[0]
-        best_supplier = str(top.get("Supplier", "Top supplier"))
+        best_sup = str(top.get("Supplier", ""))
         if analysis_mode == "Indirect / Services":
-            perf = top.get("Performance Score", None)
-            should_gap = top.get("Should-Cost Gap", None)
-            prod = top.get("Productivity Gain", None)
-            best_rationale = (
-                f"best current executive focus by performance-adjusted cost. "
-                f"Score {perf:.1f}/100, productivity gain {format_money(prod, currency, compact=True) if pd.notna(prod) else 'n/a'}, "
-                f"should-cost gap {format_money(should_gap, currency, compact=True, signed=True) if pd.notna(should_gap) else 'n/a'}."
-            )
+            roi = top.get("Productivity ROI %", None); sla_g = top.get("SLA Gap", None)
+            best_rat = f"best perf-adj cost — Score {top.get('Performance Score',0):.0f}/100 | ROI {roi:.0f}% | SLA gap {sla_g:.1f}pp | risk {top.get('Risk Score',0):.2f}/5." if pd.notna(roi) else f"best economic + risk {top.get('Risk Score',0):.2f}/5."
         else:
-            best_rationale = f"best current executive focus by economic all-in cost and risk score {top.get('Risk Score', 0):.2f}/5."
-
-    decision = "Approve / advance to negotiation" if final_delta <= 0 and risk <= 3.5 else "Negotiate before approval"
-    if final_delta > 0:
-        decision = "Do not approve as-is"
-    wc_msg = "helps the case" if wc_delta < 0 else "does not offset the case enough"
-    inv_msg = "inventory is favorable" if inv_delta < 0 else "inventory adds cost" if inv_delta > 0 else "inventory is neutral"
-    service_extra = ""
+            best_rat = f"best landed cost + risk {top.get('Risk Score',0):.2f}/5."
+    decision = "Approve / advance to negotiation" if fd <= 0 and risk <= 3.5 else ("Do not approve — renegotiate price and terms" if fd > 0 else "Negotiate before approval")
+    wc_msg = "favorable — longer terms create treasury value" if wc < 0 else "unfavorable — treasury return reduces"
+    svc_extra = ""
     if analysis_mode == "Indirect / Services":
-        service_extra = (
-            "<li><b>Services lens:</b> challenge overtime, headcount productivity, SLA credits, rate-card compliance and supplier productivity commitments before contracting.</li>"
-        )
+        svc_extra = "<li><b>Services action:</b> challenge FTE right-sizing, overtime cost, SLA attainment, rate-card compliance and supplier productivity commitments with hard-dollar targets before contracting.</li>"
     else:
-        service_extra = (
-            "<li><b>Direct materials lens:</b> challenge landed unit price, FX, incoterm cost ownership, MOQ, lead time and inventory ownership before contracting.</li>"
-        )
-
-    return f"""
-    <div class="ai-copilot-card">
-        <h4>🤖 AI Executive Copilot — concise recommendation</h4>
+        svc_extra = "<li><b>Direct materials action:</b> challenge landed unit price, FX exposure, incoterm cost ownership, MOQ economics and lead time before contracting.</li>"
+    return f"""<div class="v46-ai-card">
+        <h4>⚡ AI Executive Copilot — Concise Recommendation</h4>
         <ul>
-            <li><b>Decision:</b> {decision}. Final economic all-in = <b>{format_money(final_delta, currency, compact=True, signed=True)}</b>; weighted risk = <b>{risk:.2f}/5</b>.</li>
-            <li><b>Best current option:</b> {escape(best_supplier)} — {escape(best_rationale)}</li>
-            <li><b>Value bridge:</b> gross saving/impact = <b>{format_money(gross_delta, currency, compact=True, signed=True)}</b>; working capital {wc_msg} = <b>{format_money(wc_delta, currency, compact=True, signed=True)}</b>; {inv_msg} = <b>{format_money(inv_delta, currency, compact=True, signed=True)}</b>.</li>
-            <li><b>Market check:</b> {escape(PRIMARY_COUNTRY)} = <b>{format_money(primary.get('Economic All-In Delta', 0), currency, compact=True, signed=True)}</b>; {escape(SECONDARY_GROUP)} = <b>{format_money(secondary.get('Economic All-In Delta', 0), currency, compact=True, signed=True)}</b>.</li>
-            {service_extra}
-            <li><b>Next action:</b> use the top supplier focus list to run a final negotiation round on price, payment term, risk mitigation and implementation commitments.</li>
+            <li><b>Decision:</b> {decision}. Economic all-in = <b>{fmt_money(fd, currency, compact=True, signed=True)}</b> | Weighted risk = <b>{risk:.2f}/5</b>.</li>
+            <li><b>Best option:</b> {escape(best_sup)} — {escape(best_rat)}</li>
+            <li><b>Value bridge:</b> Gross = <b>{fmt_money(gd, currency, compact=True, signed=True)}</b> | Working capital {wc_msg} = <b>{fmt_money(wc, currency, compact=True, signed=True)}</b> | Inventory = <b>{fmt_money(inv, currency, compact=True, signed=True)}</b>.</li>
+            <li><b>Market split:</b> {escape(PRIMARY_COUNTRY)} = <b>{fmt_money(primary.get('Economic All-In Delta',0), currency, compact=True, signed=True)}</b> | {escape(SECONDARY_GROUP)} = <b>{fmt_money(secondary.get('Economic All-In Delta',0), currency, compact=True, signed=True)}</b>.</li>
+            {svc_extra}
+            <li><b>Next action:</b> run final negotiation round on price, payment terms, risk mitigation and productivity commitments with the top {focused_supplier_count} supplier(s).</li>
         </ul>
-    </div>
-    """
+    </div>"""
 
 
 
-def service_scope_config(scope: str) -> Dict[str, object]:
-    return SERVICE_SCOPE_CONFIG.get(scope, SERVICE_SCOPE_CONFIG["Generic Indirect Service"])
-
-
-def service_tier(score: float) -> str:
-    if score >= 90:
-        return "Strategic / preferred"
-    if score >= 75:
-        return "Approved / good"
-    if score >= 60:
-        return "Watchlist"
-    return "Corrective action / exit plan"
-
-
-def service_score_tone(score: float) -> str:
-    if score >= 75:
-        return "#047857"
-    if score >= 60:
-        return "#b45309"
-    return "#b91c1c"
-
-
-def weighted_service_score(scores: Dict[str, float], weights: Dict[str, float] | None = None) -> float:
-    weights = weights or SERVICE_SCORECARD_WEIGHTS
-    total_w = sum(float(v) for v in weights.values()) or 1.0
-    return sum(float(scores.get(dim, 0.0)) * float(weight) for dim, weight in weights.items()) / total_w
-
-
-def weighted_governance_score(scores: Dict[str, float]) -> float:
-    total_w = sum(float(v) for v in SUPPLIER_GOVERNANCE_WEIGHTS.values()) or 1.0
-    return sum(float(scores.get(dim, 0.0)) * float(weight) for dim, weight in SUPPLIER_GOVERNANCE_WEIGHTS.items()) / total_w
-
-
-def score_to_risk(score: float) -> float:
-    """Convert a 0-100 performance/due-diligence score into a 1-5 risk score.
-
-    100 = best performance = 1.0 risk. 0 = critical performance = 5.0 risk.
-    """
-    return max(1.0, min(5.0, 1.0 + 4.0 * (100.0 - float(score)) / 100.0))
-
-
-def governance_tier(score: float) -> str:
-    if score >= 90:
-        return "Strategic / preferred"
-    if score >= 75:
-        return "Approved / good"
-    if score >= 60:
-        return "Watchlist"
-    return "Corrective action / exit"
-
-
-def due_diligence_penalty(status: str) -> float:
-    return {"Clear": 0.0, "Minor gaps": 0.25, "Material gaps": 0.75, "Not approved": 1.50}.get(status, 0.0)
-
-
-def governance_risk_defaults(governance_inputs: Dict[str, Dict[str, float | str]], supplier: str) -> Dict[str, float]:
-    """Map supplier governance/scorecard data into the same risk dimensions used by sourcing optimization."""
-    data = governance_inputs.get(supplier, {}) or {}
-    status_penalty = due_diligence_penalty(str(data.get("Due diligence status", "Clear")))
-    return {
-        "Supply": max(1.0, min(5.0, score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + 0.15 * status_penalty)),
-        "Quality": max(1.0, min(5.0, score_to_risk(float(data.get("Quality / NCR performance", 75.0))))),
-        "Financial": max(1.0, min(5.0, score_to_risk(float(data.get("Financial health", 75.0))) + 0.25 * status_penalty)),
-        "Compliance": max(1.0, min(5.0, score_to_risk(float(data.get("Compliance / due diligence", 75.0))) + status_penalty)),
-        "ESG": max(1.0, min(5.0, score_to_risk(float(data.get("ESG / ethics", 75.0))) + 0.35 * status_penalty)),
-        "Logistics": max(1.0, min(5.0, (score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + score_to_risk(float(data.get("Labor / HSE", 75.0)))) / 2.0)),
-    }
-
-
-def blend_risk_default(base: float, governance_based: float, custom_adjustment: float = 0.0) -> float:
-    """Blend manually curated risk baseline with supplier governance signals."""
-    blended = 0.45 * float(base) + 0.55 * float(governance_based) + float(custom_adjustment)
-    return round(max(1.0, min(5.0, blended)), 1)
-
-
-def render_service_scope_fields(*, key_prefix: str, scope: str) -> Dict[str, float]:
-    """Render scope-specific commercial/service drivers.
-
-    These fields are intentionally descriptive and category-specific. They help the
-    buyer validate scope and demand before comparing suppliers. Not every service
-    should be analyzed with the same units.
-    """
-    cfg = service_scope_config(scope)
-    labels = list(cfg.get("field_labels", ["Service units", "Hours / month", "Sites / users covered"]))
-    c = st.columns(3)
-    values = {}
-    defaults = [0.0, 0.0, 0.0]
-    for idx, label in enumerate(labels[:3]):
-        with c[idx]:
-            values[f"driver_{idx+1}"] = st.number_input(
-                label,
-                min_value=0.0,
-                value=defaults[idx],
-                step=1.0,
-                format="%.2f",
-                key=f"{key_prefix}__scope_driver_{idx+1}",
-            )
-    st.caption(f"Recommended demand driver for this scope: {cfg.get('driver_label', 'service units')}.")
-    return values
-
-
-def render_service_scorecard(*, key_prefix: str, supplier_label: str, default_score: float = 82.0) -> Dict[str, float | str]:
-    st.markdown("<div class='plain-title'>Supplier performance scorecard</div>", unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    scores: Dict[str, float] = {}
-    dims = list(SERVICE_SCORECARD_WEIGHTS.keys())
-    cols = [c1, c2, c3, c4]
-    for idx, dim in enumerate(dims):
-        with cols[idx % 4]:
-            scores[dim] = st.slider(
-                f"{supplier_label} | {dim}",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(default_score),
-                step=1.0,
-                key=f"{key_prefix}__score__{dim}",
-            )
-    score = weighted_service_score(scores)
-    tier = service_tier(score)
-    color = service_score_tone(score)
-    st.markdown(
-        f"""
-        <div class="service-result">
-            <b>Weighted service score:</b> <span class="score-badge" style="color:{color};">{score:,.1f}/100</span>
-            &nbsp; | &nbsp; <b>Supplier tier:</b> {escape(tier)}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    return {"score": float(score), "tier": tier, **scores}
-
-
-def render_service_baseline_builder(
-    *,
-    key_prefix: str,
-    country: str,
-    scope: str,
-    reporting_currency: str,
-) -> Dict[str, float | str]:
-    """Render the current baseline for Indirect / Services mode.
-
-    Current service spend is built as a service lifecycle cost, not a unit x volume material spend.
-    """
-    cfg = service_scope_config(scope)
-    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
-    default_model = pricing_models[0]
-    st.markdown(f"**{cfg.get('icon', '🧾')} {scope} — current baseline ({country})**")
-    r1 = st.columns([1.15, 0.85, 0.85, 0.85])
-    with r1[0]:
-        pricing_model = st.selectbox(
-            "Pricing model",
-            options=pricing_models,
-            index=pricing_models.index(default_model),
-            key=f"{key_prefix}__pricing_model",
-        )
-    with r1[1]:
-        contracted_value = st.number_input(
-            "Current contracted / baseline value",
-            min_value=0.0,
-            value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
-            step=100_000.0,
-            format="%.2f",
-            key=f"{key_prefix}__contracted_value",
-        )
-    with r1[2]:
-        budget_value = st.number_input(
-            "Current budget",
-            min_value=0.0,
-            value=float(DEFAULT_SERVICE_CONTRACT_VALUE[country]),
-            step=100_000.0,
-            format="%.2f",
-            key=f"{key_prefix}__budget_value",
-        )
-    with r1[3]:
-        actual_demand_index = st.number_input(
-            "Actual demand index",
-            min_value=0.0,
-            value=100.0,
-            step=5.0,
-            format="%.2f",
-            key=f"{key_prefix}__actual_demand_index",
-            help="100 = baseline demand. Above 100 indicates demand growth/scope consumption beyond baseline.",
-        )
-
-    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
-
-    st.markdown("<div class='plain-title'>Current workforce, rate card and overtime KPIs</div>", unsafe_allow_html=True)
-    wh = st.columns(6)
-    with wh[0]:
-        headcount = st.number_input("Current headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
-    with wh[1]:
-        price_per_person_month = st.number_input("Current price per person / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
-    with wh[2]:
-        regular_hours_per_person_month = st.number_input("Regular hours / person / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours_per_person_month")
-    with wh[3]:
-        hourly_rate = st.number_input("Current hourly rate", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate", help="If left as zero, the tool estimates hourly rate from price per person divided by regular hours.")
-    with wh[4]:
-        overtime_hours_month = st.number_input("Overtime hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours_month")
-    with wh[5]:
-        overtime_multiplier = st.number_input("OT multiplier", min_value=1.0, value=1.5, step=0.05, format="%.2f", key=f"{key_prefix}__overtime_multiplier")
-    effective_hourly_rate = float(hourly_rate) if float(hourly_rate) > 0 else safe_divide(float(price_per_person_month), float(regular_hours_per_person_month))
-    overtime_cost = float(overtime_hours_month) * effective_hourly_rate * float(overtime_multiplier) * 12.0
-    people_cost_model = float(headcount) * float(price_per_person_month) * 12.0
-
-    st.markdown("<div class='plain-title'>Current service lifecycle costs and leakage</div>", unsafe_allow_html=True)
-    r2 = st.columns(6)
-    with r2[0]:
-        change_orders = st.number_input("Change orders / add-ons", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_orders")
-    with r2[1]:
-        internal_management = st.number_input("Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
-    with r2[2]:
-        rework_cost = st.number_input("Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
-    with r2[3]:
-        downtime_compliance_cost = st.number_input("Downtime / compliance cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__downtime_compliance_cost")
-    with r2[4]:
-        sla_credits_rebates = st.number_input("SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
-    with r2[5]:
-        overtime_cost_input = st.number_input("Annual overtime cost", min_value=0.0, value=float(overtime_cost), step=10_000.0, format="%.2f", key=f"{key_prefix}__overtime_cost_input")
-
-    service_tco = contracted_value + change_orders + internal_management + rework_cost + downtime_compliance_cost + overtime_cost_input - sla_credits_rebates
-    scope_creep_pct = safe_divide(change_orders, contracted_value)
-    budget_variance = service_tco - budget_value
-    st.markdown(
-        f"""
-        <div class="service-result">
-            <b>Current Service TCO:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
-            <b>Scope creep:</b> {scope_creep_pct*100:,.1f}% &nbsp; | &nbsp;
-            <b>Budget variance:</b> {reporting_currency} {budget_variance:,.2f} &nbsp; | &nbsp;
-            <b>Overtime hours/month:</b> {overtime_hours_month:,.1f}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    return {
-        "scope": scope,
-        "pricing_model": pricing_model,
-        "contracted_value": float(contracted_value),
-        "budget_value": float(budget_value),
-        "actual_demand_index": float(actual_demand_index),
-        "change_orders": float(change_orders),
-        "internal_management": float(internal_management),
-        "rework_cost": float(rework_cost),
-        "downtime_compliance_cost": float(downtime_compliance_cost),
-        "sla_credits_rebates": float(sla_credits_rebates),
-        "headcount": float(headcount),
-        "price_per_person_month": float(price_per_person_month),
-        "regular_hours_per_person_month": float(regular_hours_per_person_month),
-        "hourly_rate": float(effective_hourly_rate),
-        "overtime_hours_month": float(overtime_hours_month),
-        "overtime_cost": float(overtime_cost_input),
-        "people_cost_model": float(people_cost_model),
-        "productivity_gain": 0.0,
-        "expected_risk_cost": 0.0,
-        "service_tco": float(service_tco),
-        "scope_creep_pct": float(scope_creep_pct),
-        "budget_variance": float(budget_variance),
-    }
-
-
-def render_service_supplier_builder(
-    *,
-    key_prefix: str,
-    country: str,
-    scope: str,
-    supplier_label: str,
-    default_spend: float,
-    reporting_currency: str,
-) -> Dict[str, float | str]:
-    """Render supplier proposal build-up for Indirect / Services mode.
-
-    The returned service_tco is used as the proposal spend in the TCO engine.
-    It already includes supplier-led productivity gains, leakage assumptions and risk-adjusted cost.
-    """
-    cfg = service_scope_config(scope)
-    pricing_models = list(cfg.get("pricing_models", ["Fixed fee"]))
-    st.markdown(f"<div class='plain-title'>{cfg.get('icon','🧾')} Service pricing, scope and productivity</div>", unsafe_allow_html=True)
-    r1 = st.columns([1.05, .85, .85, .85])
-    with r1[0]:
-        pricing_model = st.selectbox(
-            f"{supplier_label} | Pricing model",
-            options=pricing_models,
-            index=0,
-            key=f"{key_prefix}__pricing_model",
-        )
-    with r1[1]:
-        proposed_contract_value = st.number_input(
-            f"{supplier_label} | Proposed contract / service value",
-            min_value=0.0,
-            value=float(default_spend),
-            step=50_000.0,
-            format="%.2f",
-            key=f"{key_prefix}__proposed_contract_value",
-        )
-    with r1[2]:
-        baseline_demand_index = st.number_input(
-            f"{supplier_label} | Demand / scope index",
-            min_value=0.0,
-            value=100.0,
-            step=5.0,
-            format="%.2f",
-            key=f"{key_prefix}__baseline_demand_index",
-            help="100 = same demand/scope. Use this to normalize proposals with different scope coverage.",
-        )
-    with r1[3]:
-        transition_days = st.number_input(
-            f"{supplier_label} | Transition / implementation days",
-            min_value=0,
-            value=30,
-            step=1,
-            key=f"{key_prefix}__transition_days",
-        )
-
-    render_service_scope_fields(key_prefix=key_prefix, scope=scope)
-
-    st.markdown("<div class='plain-title'>Workforce, rate card and overtime KPIs</div>", unsafe_allow_html=True)
-    wh = st.columns(6)
-    with wh[0]:
-        headcount = st.number_input(f"{supplier_label} | Headcount / FTEs", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__headcount")
-    with wh[1]:
-        price_per_person_month = st.number_input(f"{supplier_label} | Price per person / month", min_value=0.0, value=0.0, step=1_000.0, format="%.2f", key=f"{key_prefix}__price_per_person_month")
-    with wh[2]:
-        regular_hours_per_person_month = st.number_input(f"{supplier_label} | Regular hours / person / month", min_value=0.0, value=168.0, step=1.0, format="%.2f", key=f"{key_prefix}__regular_hours_per_person_month")
-    with wh[3]:
-        hourly_rate = st.number_input(f"{supplier_label} | Hourly rate", min_value=0.0, value=0.0, step=10.0, format="%.2f", key=f"{key_prefix}__hourly_rate", help="If left as zero, the tool estimates hourly rate from price per person divided by regular hours.")
-    with wh[4]:
-        overtime_hours_month = st.number_input(f"{supplier_label} | Overtime hours / month", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__overtime_hours_month")
-    with wh[5]:
-        overtime_multiplier = st.number_input(f"{supplier_label} | OT multiplier", min_value=1.0, value=1.5, step=0.05, format="%.2f", key=f"{key_prefix}__overtime_multiplier")
-    effective_hourly_rate = float(hourly_rate) if float(hourly_rate) > 0 else safe_divide(float(price_per_person_month), float(regular_hours_per_person_month))
-    people_cost_model = float(headcount) * float(price_per_person_month) * 12.0
-    overtime_cost = float(overtime_hours_month) * effective_hourly_rate * float(overtime_multiplier) * 12.0
-
-    st.markdown("<div class='plain-title'>Service should-cost engine</div>", unsafe_allow_html=True)
-    sc = st.columns(6)
-    with sc[0]:
-        should_cost_headcount = st.number_input(f"{supplier_label} | Should-cost HC", min_value=0.0, value=float(headcount), step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_headcount")
-    with sc[1]:
-        benchmark_hourly_rate = st.number_input(f"{supplier_label} | Benchmark hourly rate", min_value=0.0, value=max(float(effective_hourly_rate), 0.0), step=10.0, format="%.2f", key=f"{key_prefix}__benchmark_hourly_rate")
-    with sc[2]:
-        target_hours_month = st.number_input(f"{supplier_label} | Target hours/FTE/month", min_value=0.0, value=float(regular_hours_per_person_month), step=1.0, format="%.2f", key=f"{key_prefix}__target_hours_month")
-    with sc[3]:
-        overhead_tools_pct = st.number_input(f"{supplier_label} | Overhead/tools %", min_value=0.0, max_value=200.0, value=15.0, step=1.0, format="%.2f", key=f"{key_prefix}__overhead_tools_pct")
-    with sc[4]:
-        fair_margin_pct = st.number_input(f"{supplier_label} | Fair margin %", min_value=0.0, max_value=100.0, value=12.0, step=1.0, format="%.2f", key=f"{key_prefix}__fair_margin_pct")
-    with sc[5]:
-        should_cost_productivity_pct = st.number_input(f"{supplier_label} | Productivity target %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__should_cost_productivity_pct")
-    st.markdown("<div class='plain-title'>Open-cost / should-cost breakdown</div>", unsafe_allow_html=True)
-    st.caption("Use these fields to request an open-cost quotation: labor build-up, supervision, tools, subcontractors, transition, risk buffer, overhead and margin. These values enrich the should-cost target and reveal unexplained quote value.")
-    open_cost_values: Dict[str, float] = {}
-    oc_rows = [SERVICE_OPEN_COST_COMPONENTS[i:i+4] for i in range(0, len(SERVICE_OPEN_COST_COMPONENTS), 4)]
-    for row_idx, component_row in enumerate(oc_rows):
-        oc_cols = st.columns(4)
-        for col_idx, (component_key, component_label) in enumerate(component_row):
-            with oc_cols[col_idx]:
-                open_cost_values[component_key] = st.number_input(
-                    f"{supplier_label} | {component_label}",
-                    min_value=0.0,
-                    value=0.0,
-                    step=10_000.0,
-                    format="%.2f",
-                    key=f"{key_prefix}__open_cost__{component_key}",
-                )
-    should_cost_labor = float(should_cost_headcount) * float(target_hours_month) * 12.0 * float(benchmark_hourly_rate)
-    open_cost_total = sum(float(v) for v in open_cost_values.values())
-    # Open-cost components complement the clean-sheet labor model. Keep labor separated to avoid double-counting if the user leaves open-cost fields blank.
-    should_cost_raw = should_cost_labor + open_cost_total
-    should_cost_target = should_cost_raw * (1.0 + overhead_tools_pct / 100.0) * (1.0 + fair_margin_pct / 100.0) * (1.0 - should_cost_productivity_pct / 100.0)
-    should_cost_gap = float(proposed_contract_value) - float(should_cost_target)
-    open_cost_coverage_pct = safe_divide(open_cost_total, float(proposed_contract_value))
-    unexplained_quote_value = max(float(proposed_contract_value) - open_cost_total, 0.0)
-    st.markdown(
-        f"""
-        <div class="open-cost-card">
-            <b>Open-cost coverage:</b> {open_cost_coverage_pct*100:,.1f}% &nbsp; | &nbsp;
-            <b>Open-cost total:</b> {reporting_currency} {open_cost_total:,.2f} &nbsp; | &nbsp;
-            <b>Unexplained quote value:</b> {reporting_currency} {unexplained_quote_value:,.2f} &nbsp; | &nbsp;
-            <b>Clean-sheet should-cost:</b> {reporting_currency} {should_cost_target:,.2f}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("<div class='plain-title'>Service TCO adjustments</div>", unsafe_allow_html=True)
-    r2 = st.columns(6)
-    with r2[0]:
-        transition_cost = st.number_input(f"{supplier_label} | Transition / implementation cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__transition_cost")
-    with r2[1]:
-        change_order_reserve = st.number_input(f"{supplier_label} | Change order reserve", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__change_order_reserve")
-    with r2[2]:
-        internal_management = st.number_input(f"{supplier_label} | Internal management cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__internal_management")
-    with r2[3]:
-        rework_cost = st.number_input(f"{supplier_label} | Rework / quality cost", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__rework_cost")
-    with r2[4]:
-        sla_credits_rebates = st.number_input(f"{supplier_label} | SLA credits / rebates", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__sla_credits_rebates")
-    with r2[5]:
-        overtime_cost_input = st.number_input(f"{supplier_label} | Annual overtime cost", min_value=0.0, value=float(overtime_cost), step=10_000.0, format="%.2f", key=f"{key_prefix}__overtime_cost_input")
-
-    st.markdown("<div class='plain-title'>Supplier-led productivity and risk-adjusted service cost</div>", unsafe_allow_html=True)
-    st.caption(f"Productivity expectation for this scope: {cfg.get('productivity_label', 'supplier-led productivity')}.")
-    r3 = st.columns([1.0, .78, .78, .78])
-    with r3[0]:
-        productivity_description = st.text_input(
-            f"{supplier_label} | Productivity lever",
-            value=str(cfg.get("productivity_label", "supplier-led productivity")),
-            key=f"{key_prefix}__productivity_description",
-        )
-    with r3[1]:
-        productivity_gain = st.number_input(
-            f"{supplier_label} | Productivity gain value",
-            min_value=0.0,
-            value=0.0,
-            step=10_000.0,
-            format="%.2f",
-            key=f"{key_prefix}__productivity_gain",
-            help="Hard-value productivity that the supplier commits to deliver in the chain. This reduces service TCO.",
-        )
-    with r3[2]:
-        risk_probability = st.number_input(f"{supplier_label} | Risk probability %", min_value=0.0, max_value=100.0, value=0.0, step=1.0, format="%.2f", key=f"{key_prefix}__risk_probability")
-    with r3[3]:
-        risk_impact = st.number_input(f"{supplier_label} | Risk financial impact", min_value=0.0, value=0.0, step=10_000.0, format="%.2f", key=f"{key_prefix}__risk_impact")
-
-    scorecard = render_service_scorecard(key_prefix=key_prefix, supplier_label=supplier_label)
-    expected_risk_cost = float(risk_probability) / 100.0 * float(risk_impact)
-    service_tco_before_productivity = proposed_contract_value + transition_cost + change_order_reserve + internal_management + rework_cost + float(overtime_cost_input) + expected_risk_cost - sla_credits_rebates
-    service_tco = max(service_tco_before_productivity - productivity_gain, 0.0)
-    performance_score = float(scorecard["score"])
-    performance_adjusted_cost = safe_divide(service_tco, max(performance_score / 100.0, 1e-9))
-    scope_creep_pct = safe_divide(change_order_reserve, proposed_contract_value)
-    st.markdown(
-        f"""
-        <div class="service-result">
-            <b>Service TCO used as proposal spend:</b> {reporting_currency} {service_tco:,.2f} &nbsp; | &nbsp;
-            <b>Productivity gain:</b> {reporting_currency} {productivity_gain:,.2f} &nbsp; | &nbsp;
-            <b>Expected risk cost:</b> {reporting_currency} {expected_risk_cost:,.2f} &nbsp; | &nbsp;
-            <b>Performance-adjusted cost:</b> {reporting_currency} {performance_adjusted_cost:,.2f} &nbsp; | &nbsp;
-            <b>Should-cost gap:</b> {reporting_currency} {should_cost_gap:,.2f} &nbsp; | &nbsp;
-            <b>OT hours/month:</b> {overtime_hours_month:,.1f}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    return {
-        "scope": scope,
-        "pricing_model": pricing_model,
-        "proposed_contract_value": float(proposed_contract_value),
-        "baseline_demand_index": float(baseline_demand_index),
-        "transition_days": int(transition_days),
-        "transition_cost": float(transition_cost),
-        "change_order_reserve": float(change_order_reserve),
-        "internal_management": float(internal_management),
-        "rework_cost": float(rework_cost),
-        "sla_credits_rebates": float(sla_credits_rebates),
-        "headcount": float(headcount),
-        "price_per_person_month": float(price_per_person_month),
-        "regular_hours_per_person_month": float(regular_hours_per_person_month),
-        "hourly_rate": float(effective_hourly_rate),
-        "people_cost_model": float(people_cost_model),
-        "overtime_hours_month": float(overtime_hours_month),
-        "overtime_cost": float(overtime_cost_input),
-        "should_cost_headcount": float(should_cost_headcount),
-        "benchmark_hourly_rate": float(benchmark_hourly_rate),
-        "should_cost_target": float(should_cost_target),
-        "should_cost_gap": float(should_cost_gap),
-        "open_cost_total": float(open_cost_total),
-        "open_cost_coverage_pct": float(open_cost_coverage_pct),
-        "unexplained_quote_value": float(unexplained_quote_value),
-        **{f"open_cost_{k}": float(v) for k, v in open_cost_values.items()},
-        "productivity_description": productivity_description,
-        "productivity_gain": float(productivity_gain),
-        "risk_probability": float(risk_probability),
-        "risk_impact": float(risk_impact),
-        "expected_risk_cost": float(expected_risk_cost),
-        "service_tco_before_productivity": float(service_tco_before_productivity),
-        "service_tco": float(service_tco),
-        "performance_score": float(performance_score),
-        "performance_tier": str(scorecard["tier"]),
-        "performance_adjusted_cost": float(performance_adjusted_cost),
-        "scope_creep_pct": float(scope_creep_pct),
-        **{f"score_{dim}": float(scorecard[dim]) for dim in SERVICE_SCORECARD_WEIGHTS},
-    }
-
-
-def render_landed_cost_builder(
-    *,
-    key_prefix: str,
-    default_spend: float,
-    default_volume: float,
-    unit: str,
-    reporting_currency: str,
-    currency_default: str = "BRL",
-    supplier_label: str = "Supplier",
-) -> Dict[str, float | str]:
-    """Render Direct Materials landed-cost inputs and return calculated spend.
-
-    The build-up is intentionally unit-based because direct materials are normally
-    negotiated as price x volume. The rest of the dashboard still consumes spend,
-    so this function converts landed unit economics back into 100% equivalent spend.
-    """
-    if currency_default not in CURRENCY_OPTIONS:
-        currency_default = "BRL"
-    default_fx = float(DEFAULT_FX_TO_REPORTING.get(currency_default, 1.0))
-    # Defaults are stored as reporting-currency spend. Convert them back to quote-currency
-    # unit price so the initial landed spend remains aligned with the previous dashboard.
-    base_default = default_unit_price_from_spend(default_spend, max(default_volume * default_fx, 1e-9))
-
-    r1 = st.columns([1.0, 0.82, 0.78, 0.78, 0.72])
-    with r1[0]:
-        base_unit_price = st.number_input(
-            f"{supplier_label} | Base / quoted unit price",
-            min_value=0.0,
-            value=float(base_default),
-            step=0.01,
-            format="%.6f",
-            key=f"{key_prefix}__base_unit_price",
-            help="Quoted price per negotiated unit before additional landed-cost components.",
-        )
-    with r1[1]:
-        currency = st.selectbox(
-            f"{supplier_label} | Quote currency",
-            options=CURRENCY_OPTIONS,
-            index=CURRENCY_OPTIONS.index(currency_default),
-            key=f"{key_prefix}__currency",
-        )
-    with r1[2]:
-        fx_rate = st.number_input(
-            f"{supplier_label} | FX to {reporting_currency}",
-            min_value=0.000001,
-            value=default_fx,
-            step=0.01,
-            format="%.6f",
-            key=f"{key_prefix}__fx_rate",
-            help=f"How many {reporting_currency} one unit of quote currency represents.",
-        )
-    with r1[3]:
-        volume = st.number_input(
-            f"{supplier_label} | 100% equivalent volume ({unit})",
-            min_value=0.0,
-            value=float(default_volume),
-            step=max(float(default_volume) * 0.05, 1.0),
-            format="%.4f",
-            key=f"{key_prefix}__volume",
-            help="Country demand volume used to calculate 100% equivalent spend. Share allocation is applied later.",
-        )
-    with r1[4]:
-        moq = st.number_input(
-            f"{supplier_label} | MOQ ({unit})",
-            min_value=0.0,
-            value=0.0,
-            step=max(float(default_volume) * 0.05, 1.0),
-            format="%.4f",
-            key=f"{key_prefix}__moq",
-        )
-
-    r2 = st.columns(5)
-    with r2[0]:
-        conversion_cost = st.number_input(f"{supplier_label} | Conversion cost / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__conversion_cost")
-    with r2[1]:
-        fixed_margin = st.number_input(f"{supplier_label} | Fixed margin / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__fixed_margin")
-    with r2[2]:
-        international_freight = st.number_input(f"{supplier_label} | International freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__international_freight")
-    with r2[3]:
-        insurance = st.number_input(f"{supplier_label} | Insurance / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__insurance")
-    with r2[4]:
-        incoterm = st.selectbox(f"{supplier_label} | Incoterm", options=INCOTERM_OPTIONS, index=INCOTERM_OPTIONS.index("FOB"), key=f"{key_prefix}__incoterm")
-
-    r3 = st.columns(4)
-    with r3[0]:
-        customs_fees = st.number_input(f"{supplier_label} | Customs / brokerage fees / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__customs_fees")
-    with r3[1]:
-        import_duties_taxes = st.number_input(f"{supplier_label} | Import duties / taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__import_duties_taxes")
-    with r3[2]:
-        domestic_freight = st.number_input(f"{supplier_label} | Domestic freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__domestic_freight")
-    with r3[3]:
-        local_taxes = st.number_input(f"{supplier_label} | Local taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__local_taxes")
-
-    components = {
-        "base_unit_price": float(base_unit_price),
-        "conversion_cost": float(conversion_cost),
-        "fixed_margin": float(fixed_margin),
-        "international_freight": float(international_freight),
-        "insurance": float(insurance),
-        "customs_fees": float(customs_fees),
-        "import_duties_taxes": float(import_duties_taxes),
-        "domestic_freight": float(domestic_freight),
-        "local_taxes": float(local_taxes),
-    }
-    unit_price_quote = sum(components.values())
-    unit_price_reporting = landed_unit_price(components, float(fx_rate))
-    spend = unit_price_reporting * float(volume)
-    moq_note = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ"
-    moq_tone = "#047857" if moq_note == "OK" else "#b91c1c"
-    st.markdown(
-        f"""
-        <div class="landed-result">
-            <b>Landed unit price:</b> {reporting_currency} {unit_price_reporting:,.6f} / {escape(unit)} &nbsp; | &nbsp;
-            <b>100% equivalent spend:</b> {reporting_currency} {spend:,.2f} &nbsp; | &nbsp;
-            <b>MOQ status:</b> <span style="color:{moq_tone}; font-weight:800;">{moq_note}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    return {
-        "spend": float(spend),
-        "unit_price_quote": float(unit_price_quote),
-        "unit_price_reporting": float(unit_price_reporting),
-        "volume": float(volume),
-        "moq": float(moq),
-        "currency": currency,
-        "fx_rate": float(fx_rate),
-        "incoterm": incoterm,
-        **components,
-    }
-
-# =============================================================================
-# Share allocation helpers
-# =============================================================================
-
-def share_key(country: str, supplier: str) -> str:
-    return f"share__{country}__{supplier}"
-
-
-def min_key(supplier: str) -> str:
-    return f"min_share__{supplier}"
-
-
-def max_key(supplier: str) -> str:
-    return f"max_share__{supplier}"
-
-
-def kraljic_key(supplier: str) -> str:
-    return f"kraljic_required__{supplier}"
-
-
-def approved_key(supplier: str) -> str:
-    return f"approved__{supplier}"
-
-
-def supplier_name_key(supplier: str) -> str:
-    return f"supplier_display_name__{supplier}"
-
-
-def supplier_short_name_key(supplier: str) -> str:
-    return f"supplier_short_name__{supplier}"
-
-
-def supplier_display_name(supplier: str) -> str:
-    value = str(st.session_state.get(supplier_name_key(supplier), DEFAULT_SUPPLIER_DISPLAY_NAME.get(supplier, supplier))).strip()
-    return value or DEFAULT_SUPPLIER_DISPLAY_NAME.get(supplier, supplier)
-
-
-def supplier_short_name(supplier: str) -> str:
-    value = str(st.session_state.get(supplier_short_name_key(supplier), DEFAULT_SUPPLIER_SHORT_NAME.get(supplier, supplier))).strip()
-    return value or DEFAULT_SUPPLIER_SHORT_NAME.get(supplier, supplier)
-
-
-def supplier_display_html(supplier: str) -> str:
-    return escape(supplier_display_name(supplier), quote=True)
-
-
-def supplier_short_html(supplier: str) -> str:
-    return escape(supplier_short_name(supplier), quote=True)
-
-
-def get_min_shares() -> Dict[str, float]:
-    mins = {}
-    for supplier in SUPPLIERS:
-        required = bool(st.session_state.get(kraljic_key(supplier), DEFAULT_KRALJIC_REQUIRED[supplier]))
-        mins[supplier] = float(st.session_state.get(min_key(supplier), DEFAULT_MIN_SHARE[supplier])) if required else 0.0
-    return mins
-
-
-def get_max_shares() -> Dict[str, float]:
-    """Return supplier maximum/capacity shares.
-
-    Important: this function does NOT silently override max share when a
-    Kraljic minimum is higher than capacity. That situation is strategically
-    infeasible and must be surfaced to the user instead of hidden.
-    """
-    maxs = {}
-    for supplier in SUPPLIERS:
-        approved = bool(st.session_state.get(approved_key(supplier), DEFAULT_APPROVED[supplier]))
-        raw_max = float(st.session_state.get(max_key(supplier), DEFAULT_MAX_SHARE[supplier])) if approved else 0.0
-        maxs[supplier] = raw_max
-    return maxs
-
-
-def constraint_issues(mins: Dict[str, float], maxs: Dict[str, float]) -> List[str]:
-    issues: List[str] = []
-    for supplier in SUPPLIERS:
-        if mins[supplier] > maxs[supplier] + 1e-9:
-            issues.append(
-                f"{supplier_short_name(supplier)} has Kraljic minimum {mins[supplier]:.0f}% "
-                f"above max/capacity {maxs[supplier]:.0f}%."
-            )
-    if sum(mins.values()) > 100.0 + 1e-9:
-        issues.append("Kraljic minimum shares exceed 100%.")
-    if sum(maxs.values()) < 100.0 - 1e-9:
-        issues.append("Supplier max/capacity constraints cannot reach 100%.")
-    return issues
-
-
-def clamp_shares_to_bounds(country: str) -> None:
-    mins = get_min_shares()
-    maxs = get_max_shares()
-    for supplier in SUPPLIERS:
-        k = share_key(country, supplier)
-        if k not in st.session_state:
-            st.session_state[k] = DEFAULT_SHARES[country][supplier]
-        st.session_state[k] = max(mins[supplier], min(maxs[supplier], float(st.session_state[k])))
-
-
-def allocate_with_bounds(preferences: Dict[str, float], mins: Dict[str, float], maxs: Dict[str, float], total: float = 100.0) -> Dict[str, float]:
-    """Project preferences to shares that sum to total while respecting min/max bounds.
-
-    If bounds are infeasible, this function remains stable for display purposes,
-    but the UI and optimizer separately flag the infeasibility.
-    """
-    maxs = {s: max(float(maxs[s]), float(mins[s])) for s in SUPPLIERS}
-    if sum(mins.values()) > total + 1e-9:
-        return {s: safe_divide(mins[s], sum(mins.values())) * total for s in SUPPLIERS}
-    if sum(maxs.values()) < total - 1e-9:
-        return {s: safe_divide(maxs[s], sum(maxs.values())) * total for s in SUPPLIERS}
-
-    shares = {s: mins[s] for s in SUPPLIERS}
-    remaining = total - sum(shares.values())
-    capacity = {s: max(0.0, maxs[s] - mins[s]) for s in SUPPLIERS}
-
-    pref_excess = {s: max(0.0, preferences.get(s, 0.0) - mins[s]) for s in SUPPLIERS}
-    if sum(pref_excess.values()) <= 1e-9:
-        pref_excess = capacity.copy()
-
-    active = {s for s in SUPPLIERS if capacity[s] > 1e-9}
-    while remaining > 1e-8 and active:
-        denom = sum(pref_excess[s] for s in active)
-        if denom <= 1e-9:
-            denom = sum(capacity[s] for s in active)
-            weights = {s: capacity[s] / denom if denom else 0.0 for s in active}
-        else:
-            weights = {s: pref_excess[s] / denom for s in active}
-
-        moved = 0.0
-        saturated = []
-        for s in list(active):
-            add = remaining * weights[s]
-            add = min(add, capacity[s])
-            shares[s] += add
-            capacity[s] -= add
-            moved += add
-            if capacity[s] <= 1e-8:
-                saturated.append(s)
-        for s in saturated:
-            active.discard(s)
-        if moved <= 1e-8:
-            break
-        remaining -= moved
-
-    # Numeric cleanup.
-    diff = total - sum(shares.values())
-    for s in SUPPLIERS:
-        room = maxs[s] - shares[s]
-        if abs(diff) <= 1e-6:
-            break
-        if diff > 0 and room > 1e-9:
-            add = min(room, diff)
-            shares[s] += add
-            diff -= add
-        elif diff < 0 and shares[s] > mins[s] + 1e-9:
-            remove = min(shares[s] - mins[s], -diff)
-            shares[s] -= remove
-            diff += remove
-
-    return {s: round(shares[s], 6) for s in SUPPLIERS}
-
-
-def rebalance_after_slider_change(country: str, changed_supplier: str) -> None:
-    mins = get_min_shares()
-    maxs = get_max_shares()
-    changed_key = share_key(country, changed_supplier)
-    changed_value = float(st.session_state.get(changed_key, DEFAULT_SHARES[country][changed_supplier]))
-    changed_value = max(mins[changed_supplier], min(maxs[changed_supplier], changed_value))
-
-    min_others = sum(mins[s] for s in SUPPLIERS if s != changed_supplier)
-    max_others = sum(maxs[s] for s in SUPPLIERS if s != changed_supplier)
-    changed_value = min(changed_value, 100.0 - min_others)
-    changed_value = max(changed_value, 100.0 - max_others)
-    changed_value = max(mins[changed_supplier], min(maxs[changed_supplier], changed_value))
-
-    remaining = 100.0 - changed_value
-    others = [s for s in SUPPLIERS if s != changed_supplier]
-    preferences = {s: float(st.session_state.get(share_key(country, s), DEFAULT_SHARES[country][s])) for s in others}
-    other_mins = {s: mins[s] for s in others}
-    other_maxs = {s: maxs[s] for s in others}
-
-    # Local allocation among other suppliers.
-    shares = {s: other_mins[s] for s in others}
-    rem = remaining - sum(shares.values())
-    capacities = {s: max(0.0, other_maxs[s] - other_mins[s]) for s in others}
-    pref_excess = {s: max(0.0, preferences[s] - other_mins[s]) for s in others}
-    if sum(pref_excess.values()) <= 1e-9:
-        pref_excess = capacities.copy()
-    active = {s for s in others if capacities[s] > 1e-9}
-    while rem > 1e-8 and active:
-        denom = sum(pref_excess[s] for s in active)
-        if denom <= 1e-9:
-            denom = sum(capacities[s] for s in active)
-            weights = {s: capacities[s] / denom if denom else 0.0 for s in active}
-        else:
-            weights = {s: pref_excess[s] / denom for s in active}
-        moved = 0.0
-        saturated = []
-        for s in list(active):
-            add = min(rem * weights[s], capacities[s])
-            shares[s] += add
-            capacities[s] -= add
-            moved += add
-            if capacities[s] <= 1e-8:
-                saturated.append(s)
-        for s in saturated:
-            active.discard(s)
-        if moved <= 1e-8:
-            break
-        rem -= moved
-
-    st.session_state[changed_key] = changed_value
-    for s in others:
-        st.session_state[share_key(country, s)] = round(shares[s], 4)
-
-
-def apply_pending_optimized_shares() -> None:
-    pending = st.session_state.pop("pending_optimized_shares", None)
-    if not pending:
-        return
-    for country, supplier_shares in pending.items():
-        for supplier, value in supplier_shares.items():
-            st.session_state[share_key(country, supplier)] = float(value)
-    st.session_state["last_optimization_applied"] = True
-
-
-apply_pending_optimized_shares()
-
-# =============================================================================
-# Input state initialization
-# =============================================================================
-
-def init_defaults() -> None:
-    for supplier in SUPPLIERS:
-        st.session_state.setdefault(supplier_name_key(supplier), DEFAULT_SUPPLIER_DISPLAY_NAME[supplier])
-        st.session_state.setdefault(supplier_short_name_key(supplier), DEFAULT_SUPPLIER_SHORT_NAME[supplier])
-        st.session_state.setdefault(kraljic_key(supplier), DEFAULT_KRALJIC_REQUIRED[supplier])
-        st.session_state.setdefault(min_key(supplier), DEFAULT_MIN_SHARE[supplier])
-        st.session_state.setdefault(max_key(supplier), DEFAULT_MAX_SHARE[supplier])
-        st.session_state.setdefault(approved_key(supplier), DEFAULT_APPROVED[supplier])
-    for country in COUNTRIES:
-        for supplier in SUPPLIERS:
-            st.session_state.setdefault(share_key(country, supplier), DEFAULT_SHARES[country][supplier])
-
-
-init_defaults()
-
-# =============================================================================
-# Financial calculation engine
-# =============================================================================
-
-def supplier_risk_scores(risk_inputs: Dict[str, Dict[str, float]], risk_weights: Dict[str, float]) -> Dict[str, float]:
-    weight_total = sum(risk_weights.values()) or 1.0
-    scores = {}
-    for supplier in SUPPLIERS:
-        score = sum(risk_inputs[supplier][dim] * risk_weights[dim] for dim in risk_weights) / weight_total
-        scores[supplier] = score
-    return scores
-
-
-def inventory_days_from_ownership(ownership: str, lead_time_days: int, safety_stock_days: int) -> int:
-    """Translate inventory ownership assumption into carrying-cost days.
-
-    This avoids overstating inventory carrying cost when a trader/supplier or
-    local distributor keeps ownership until delivery.
-    """
-    if ownership == "Buyer owns transit + safety stock":
-        return int(lead_time_days) + int(safety_stock_days)
-    if ownership == "Buyer owns safety stock only":
-        return int(safety_stock_days)
-    if ownership in {"Supplier/trader owns until delivery", "Distributor holds local stock"}:
-        return 0
-    return int(lead_time_days) + int(safety_stock_days)
-
-
-def calc_current_by_country(country: str, country_inputs: Dict[str, Dict], method: str) -> Dict[str, float]:
-    inp = country_inputs[country]
-    spend = inp["current_spend"]
-    fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], inp["current_payment_days"], method)
-    treasury_rate = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], inp["current_payment_days"], method)
-    inventory_rate = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inp["current_inventory_days"], method)
-    gross_financial_cost = spend * fin_rate
-    capital_gain = spend * treasury_rate
-    inventory_cost = spend * inventory_rate
-    gross_total = spend + gross_financial_cost
-    economic_total = spend + gross_financial_cost - capital_gain + inventory_cost
-    return {
-        "country": country,
-        "base_spend": spend,
-        "gross_financial_cost": gross_financial_cost,
-        "capital_gain": capital_gain,
-        "inventory_cost": inventory_cost,
-        "gross_total": gross_total,
-        "economic_total": economic_total,
-        "effective_financial_rate": fin_rate,
-        "effective_treasury_rate": treasury_rate,
-        "payment_days": inp["current_payment_days"],
-    }
-
-
-def calc_proposal_by_country(
-    country: str,
-    shares: Dict[str, float],
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    supplier_risk: Dict[str, float],
-    method: str,
-) -> Dict[str, float]:
-    country_total = {
-        "country": country,
-        "new_spend": 0.0,
-        "new_gross_financial_cost": 0.0,
-        "new_capital_gain": 0.0,
-        "new_inventory_cost": 0.0,
-        "new_gross_total": 0.0,
-        "new_economic_total": 0.0,
-        "weighted_risk_numerator": 0.0,
-        "weighted_payment_days_numerator": 0.0,
-        "weighted_share_sum": 0.0,
-        "weighted_financial_rate_numerator": 0.0,
-        "weighted_treasury_rate_numerator": 0.0,
-        "weighted_return_days_numerator": 0.0,
-        "supplier_rows": [],
-    }
-    inp = country_inputs[country]
-    for supplier in SUPPLIERS:
-        share = shares[supplier] / 100.0
-        supplier_data = proposal_inputs[country][supplier]
-        allocated_spend = supplier_data["spend"] * share
-        fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], supplier_data["payment_days"], method)
-        treasury_rate = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], supplier_data["payment_days"], method)
-        inventory_days = inventory_days_from_ownership(
-            supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
-            supplier_data["lead_time_days"],
-            supplier_data["safety_stock_days"],
-        )
-        inventory_rate = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inventory_days, method)
-        gross_financial = allocated_spend * fin_rate
-        capital_gain = allocated_spend * treasury_rate
-        inventory_cost = allocated_spend * inventory_rate
-        gross_total = allocated_spend + gross_financial
-        economic_total = allocated_spend + gross_financial - capital_gain + inventory_cost
-        risk = supplier_risk[supplier]
-
-        country_total["new_spend"] += allocated_spend
-        country_total["new_gross_financial_cost"] += gross_financial
-        country_total["new_capital_gain"] += capital_gain
-        country_total["new_inventory_cost"] += inventory_cost
-        country_total["new_gross_total"] += gross_total
-        country_total["new_economic_total"] += economic_total
-        country_total["weighted_risk_numerator"] += allocated_spend * risk
-        # Payment/return days are share-weighted for operational readability.
-        # Financial cost itself is still calculated supplier-by-supplier using allocated spend × equivalent rate.
-        country_total["weighted_payment_days_numerator"] += share * supplier_data["payment_days"]
-        country_total["weighted_share_sum"] += share
-        country_total["weighted_financial_rate_numerator"] += allocated_spend * fin_rate
-        country_total["weighted_treasury_rate_numerator"] += allocated_spend * treasury_rate
-        country_total["weighted_return_days_numerator"] += share * supplier_data["payment_days"]
-        direct_profile = supplier_data.get("direct_profile", {}) or {}
-        service_profile = supplier_data.get("service_profile", {}) or {}
-        country_total["supplier_rows"].append({
-            "Country": country,
-            "Supplier ID": supplier,
-            "Supplier": supplier_display_name(supplier),
-            "Item / Scope": supplier_data.get("item_name", ""),
-            "Unit / Demand Driver": supplier_data.get("negotiated_unit", ""),
-            "Quote Currency": direct_profile.get("currency", ""),
-            "FX Rate": direct_profile.get("fx_rate", None),
-            "Incoterm": direct_profile.get("incoterm", ""),
-            "Landed Unit Price": direct_profile.get("unit_price_reporting", None),
-            "100% Equivalent Volume": direct_profile.get("volume", None),
-            "MOQ": direct_profile.get("moq", None),
-            "Service Scope": service_profile.get("scope", ""),
-            "Pricing Model": service_profile.get("pricing_model", ""),
-            "Proposed Contract Value": service_profile.get("proposed_contract_value", None),
-            "Service TCO Before Productivity": service_profile.get("service_tco_before_productivity", None),
-            "Productivity Gain": service_profile.get("productivity_gain", None),
-            "Expected Risk Cost": service_profile.get("expected_risk_cost", None),
-            "Performance Score": service_profile.get("performance_score", None),
-            "Performance Tier": service_profile.get("performance_tier", ""),
-            "Performance-Adjusted Cost": service_profile.get("performance_adjusted_cost", None),
-            "Headcount / FTEs": service_profile.get("headcount", None),
-            "Price per Person / Month": service_profile.get("price_per_person_month", None),
-            "Hourly Rate": service_profile.get("hourly_rate", None),
-            "Overtime Hours / Month": service_profile.get("overtime_hours_month", None),
-            "Overtime Cost": service_profile.get("overtime_cost", None),
-            "Should-Cost Target": service_profile.get("should_cost_target", None),
-            "Should-Cost Gap": service_profile.get("should_cost_gap", None),
-            "Open-Cost Total": service_profile.get("open_cost_total", None),
-            "Open-Cost Coverage %": service_profile.get("open_cost_coverage_pct", None),
-            "Unexplained Quote Value": service_profile.get("unexplained_quote_value", None),
-            "Custom Cost Adjustment": supplier_data.get("custom_cost_adjustment", 0.0),
-            "Scope Creep %": service_profile.get("scope_creep_pct", None),
-            "Share %": shares[supplier],
-            "Allocated Spend": allocated_spend,
-            "Payment Days": supplier_data["payment_days"],
-            "Return Days Used": supplier_data["payment_days"],
-            "Financial Rate Used": fin_rate,
-            "Treasury Return Rate Used": treasury_rate,
-            "Supplier Financial Cost": gross_financial,
-            "Capital Gain Offset": capital_gain,
-            "Inventory Ownership": supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
-            "Inventory Days Charged": inventory_days,
-            "Inventory Carrying Cost": inventory_cost,
-            "Economic Total": economic_total,
-            "Risk Score": risk,
-        })
-    spend = country_total["new_spend"]
-    country_total["weighted_risk"] = safe_divide(country_total["weighted_risk_numerator"], spend)
-    country_total["avg_payment_days"] = safe_divide(country_total["weighted_payment_days_numerator"], country_total["weighted_share_sum"])
-    country_total["avg_return_days"] = safe_divide(country_total["weighted_return_days_numerator"], country_total["weighted_share_sum"])
-    country_total["avg_financial_rate"] = safe_divide(country_total["weighted_financial_rate_numerator"], spend)
-    country_total["avg_treasury_rate"] = safe_divide(country_total["weighted_treasury_rate_numerator"], spend)
-    return country_total
-
-
-def calc_scenario(
-    all_shares: Dict[str, Dict[str, float]],
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    supplier_risk: Dict[str, float],
-    method: str,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, float]]:
-    rows = []
-    supplier_rows = []
-    for country in COUNTRIES:
-        cur = calc_current_by_country(country, country_inputs, method)
-        prop = calc_proposal_by_country(country, all_shares[country], country_inputs, proposal_inputs, supplier_risk, method)
-        row = {
-            "Country": country,
-            "Group": PRIMARY_COUNTRY if country == PRIMARY_COUNTRY else SECONDARY_GROUP,
-            "Current Spend": cur["base_spend"],
-            "New Spend": prop["new_spend"],
-            "Current Financial Cost": cur["gross_financial_cost"],
-            "New Financial Cost": prop["new_gross_financial_cost"],
-            "Current Total Spend": cur["gross_total"],
-            "New Total Spend": prop["new_gross_total"],
-            "Current Capital Gain": cur["capital_gain"],
-            "New Capital Gain": prop["new_capital_gain"],
-            "Current Net Financial Effect": cur["gross_financial_cost"] - cur["capital_gain"],
-            "New Net Financial Effect": prop["new_gross_financial_cost"] - prop["new_capital_gain"],
-            "Net Financial Delta": (prop["new_gross_financial_cost"] - prop["new_capital_gain"]) - (cur["gross_financial_cost"] - cur["capital_gain"]),
-            "Current Inventory Cost": cur["inventory_cost"],
-            "New Inventory Cost": prop["new_inventory_cost"],
-            "Current Economic Total": cur["economic_total"],
-            "New Economic Total": prop["new_economic_total"],
-            "Spend Delta": prop["new_spend"] - cur["base_spend"],
-            "Financial Delta": prop["new_gross_financial_cost"] - cur["gross_financial_cost"],
-            "Gross All-In Delta": prop["new_gross_total"] - cur["gross_total"],
-            "Capital Gain Delta": prop["new_capital_gain"] - cur["capital_gain"],
-            "Treasury Return Offset Delta": cur["capital_gain"] - prop["new_capital_gain"],
-            "Inventory Delta": prop["new_inventory_cost"] - cur["inventory_cost"],
-            "Economic All-In Delta": prop["new_economic_total"] - cur["economic_total"],
-            "Weighted Risk": prop["weighted_risk"],
-            "Current Payment Days": cur["payment_days"],
-            "New Avg Payment Days": prop["avg_payment_days"],
-            "Current Effective Financial Rate": cur["effective_financial_rate"],
-            "New Avg Financial Rate": prop["avg_financial_rate"],
-            "Current Capital Gain": cur["capital_gain"],
-            "New Capital Gain": prop["new_capital_gain"],
-            "Current Net Financial Effect": cur["gross_financial_cost"] - cur["capital_gain"],
-            "New Net Financial Effect": prop["new_gross_financial_cost"] - prop["new_capital_gain"],
-            "Net Financial Delta": (prop["new_gross_financial_cost"] - prop["new_capital_gain"]) - (cur["gross_financial_cost"] - cur["capital_gain"]),
-            "Current Effective Treasury Rate": cur["effective_treasury_rate"],
-            "New Avg Treasury Rate": prop["avg_treasury_rate"],
-            "Current Return Days": cur["payment_days"],
-            "New Avg Return Days": prop["avg_return_days"],
-        }
-        rows.append(row)
-        supplier_rows.extend(prop["supplier_rows"])
-    country_df = pd.DataFrame(rows)
-    supplier_df = pd.DataFrame(supplier_rows)
-    group_df = country_df.groupby("Group", as_index=False).agg(
-        {
-            "Current Spend": "sum",
-            "New Spend": "sum",
-            "Current Financial Cost": "sum",
-            "New Financial Cost": "sum",
-            "Current Total Spend": "sum",
-            "New Total Spend": "sum",
-            "Current Capital Gain": "sum",
-            "New Capital Gain": "sum",
-            "Current Net Financial Effect": "sum",
-            "New Net Financial Effect": "sum",
-            "Net Financial Delta": "sum",
-            "Current Inventory Cost": "sum",
-            "New Inventory Cost": "sum",
-            "Current Economic Total": "sum",
-            "New Economic Total": "sum",
-            "Spend Delta": "sum",
-            "Financial Delta": "sum",
-            "Gross All-In Delta": "sum",
-            "Capital Gain Delta": "sum",
-            "Treasury Return Offset Delta": "sum",
-            "Inventory Delta": "sum",
-            "Economic All-In Delta": "sum",
-        }
-    )
-    required_groups = [PRIMARY_COUNTRY, SECONDARY_GROUP]
-    group_df = group_df.set_index("Group").reindex(required_groups).reset_index().fillna(0.0)
-    # Weighted metrics by new spend.
-    weighted_rows = []
-    for group in required_groups:
-        subset = country_df[country_df["Group"] == group]
-        total_new_spend = subset["New Spend"].sum()
-        total_current_spend = subset["Current Spend"].sum()
-        weighted_rows.append({
-            "Group": group,
-            "Weighted Risk": safe_divide((subset["Weighted Risk"] * subset["New Spend"]).sum(), total_new_spend),
-            "Current Avg Payment Days": safe_divide((subset["Current Payment Days"] * subset["Current Spend"]).sum(), total_current_spend),
-            "New Avg Payment Days": safe_divide((subset["New Avg Payment Days"] * subset["New Spend"]).sum(), total_new_spend),
-            "New Avg Return Days": safe_divide((subset["New Avg Return Days"] * subset["New Spend"]).sum(), total_new_spend),
-            "New Avg Financial Rate": safe_divide((subset["New Avg Financial Rate"] * subset["New Spend"]).sum(), total_new_spend),
-            "New Avg Treasury Rate": safe_divide((subset["New Avg Treasury Rate"] * subset["New Spend"]).sum(), total_new_spend),
-        })
-    group_df = group_df.merge(pd.DataFrame(weighted_rows), on="Group", how="left")
-
-    total = {}
-    for col in [
-        "Current Spend", "New Spend", "Current Financial Cost", "New Financial Cost", "Current Total Spend",
-        "New Total Spend", "Current Capital Gain", "New Capital Gain", "Current Net Financial Effect", "New Net Financial Effect",
-        "Current Inventory Cost", "New Inventory Cost", "Current Economic Total", "New Economic Total",
-        "Spend Delta", "Financial Delta", "Net Financial Delta", "Gross All-In Delta",
-        "Capital Gain Delta", "Treasury Return Offset Delta", "Inventory Delta", "Economic All-In Delta"
-    ]:
-        total[col] = country_df[col].sum()
-    total["Weighted Risk"] = safe_divide((country_df["Weighted Risk"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
-    total["Current Avg Payment Days"] = safe_divide((country_df["Current Payment Days"] * country_df["Current Spend"]).sum(), country_df["Current Spend"].sum())
-    total["New Avg Payment Days"] = safe_divide((country_df["New Avg Payment Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
-    total["New Avg Return Days"] = safe_divide((country_df["New Avg Return Days"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
-    total["New Avg Financial Rate"] = safe_divide((country_df["New Avg Financial Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
-    total["New Avg Treasury Rate"] = safe_divide((country_df["New Avg Treasury Rate"] * country_df["New Spend"]).sum(), country_df["New Spend"].sum())
-    return country_df, group_df, supplier_df, total
-
-
-def calc_full_supplier_reference_stack(
-    supplier: str,
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    method: str,
-    payment_day_overrides: Dict[str, float] | None = None,
-) -> Dict[str, float]:
-    """Build a 100% allocation reference stack for a single supplier across all countries.
-
-    This is useful for executive benchmarking, e.g. showing the scenario where
-    100% of the total volume is awarded to ChemPrime under its proposed price
-    and payment terms.
-    """
-    total_spend = 0.0
-    total_financial_cost = 0.0
-    total_total_spend = 0.0
-    weighted_payment_days_num = 0.0
-    for country in COUNTRIES:
-        inp = country_inputs[country]
-        supplier_data = proposal_inputs[country][supplier]
-        spend = supplier_data["spend"]
-        payment_days = payment_day_overrides.get(country, supplier_data["payment_days"]) if payment_day_overrides else supplier_data["payment_days"]
-        fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], payment_days, method)
-        financial_cost = spend * fin_rate
-        total_spend += spend
-        total_financial_cost += financial_cost
-        total_total_spend += spend + financial_cost
-        weighted_payment_days_num += spend * payment_days
-    return {
-        "Reference Spend": total_spend,
-        "Reference Financial Cost": total_financial_cost,
-        "Reference Total Spend": total_total_spend,
-        "Reference Avg Payment Days": safe_divide(weighted_payment_days_num, total_spend),
-    }
-
-# =============================================================================
-# Optimization engine
-# =============================================================================
-
-def enumerate_share_combinations(mins: Dict[str, float], maxs: Dict[str, float], step: int = 5) -> List[Dict[str, float]]:
-    """Enumerate feasible share combinations using conservative rounding.
-
-    Minimum constraints are rounded UP and max/capacity constraints are rounded
-    DOWN so the optimizer never violates a strategic floor or capacity ceiling.
-    """
-    if any(mins[s] > maxs[s] + 1e-9 for s in SUPPLIERS):
-        return []
-    min_units = {s: int(math.ceil(mins[s] / step - 1e-12)) for s in SUPPLIERS}
-    max_units = {s: int(math.floor(maxs[s] / step + 1e-12)) for s in SUPPLIERS}
-    total_units = int(round(100 / step))
-    combos = []
-    for vals in product(*(range(min_units[s], max_units[s] + 1) for s in SUPPLIERS)):
-        if sum(vals) == total_units:
-            combos.append({s: vals[i] * step for i, s in enumerate(SUPPLIERS)})
-    return combos
-
-
-def _supplier_unit_economic_cost(
-    country: str,
-    supplier: str,
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    method: str,
-) -> float:
-    """Economic cost generated if supplier gets 100% country share."""
-    inp = country_inputs[country]
-    supplier_data = proposal_inputs[country][supplier]
-    spend = supplier_data["spend"]
-    fin_rate = equivalent_rate(inp["financial_rate_pct"], inp["financial_reference_days"], supplier_data["payment_days"], method)
-    treasury_rate = equivalent_rate(inp["treasury_return_pct"], inp["treasury_reference_days"], supplier_data["payment_days"], method)
-    inventory_days = inventory_days_from_ownership(
-        supplier_data.get("inventory_ownership", "Buyer owns transit + safety stock"),
-        supplier_data["lead_time_days"],
-        supplier_data["safety_stock_days"],
-    )
-    inventory_rate = equivalent_rate(inp["inventory_carry_rate_pct"], 360, inventory_days, method)
-    return spend * (1 + fin_rate - treasury_rate + inventory_rate)
-
-
-def _optimize_allocations_lp(
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    supplier_risk: Dict[str, float],
-    method: str,
-    risk_threshold: float,
-) -> Tuple[Dict[str, Dict[str, float]], str]:
-    """Exact linear optimization using scipy.linprog.
-
-    Decision variables are country-supplier shares in fractions. The objective
-    minimizes proposal economic cost. Since current cost is constant, this is
-    equivalent to minimizing economic all-in delta. Risk is constrained by the
-    preferred risk threshold when feasible.
-    """
-    if not SCIPY_AVAILABLE:
-        raise RuntimeError("SciPy is not available")
-
-    mins = get_min_shares()
-    maxs = get_max_shares()
-    issues = constraint_issues(mins, maxs)
-    if issues:
-        raise ValueError("; ".join(issues))
-
-    variables = [(country, supplier) for country in COUNTRIES for supplier in SUPPLIERS]
-    n = len(variables)
-
-    # Add a very small risk penalty to break true cost ties without allowing risk
-    # to dominate cost. Cost remains priority #1.
-    mean_cost = sum(_supplier_unit_economic_cost(c, s, country_inputs, proposal_inputs, method) for c, s in variables) / max(n, 1)
-    risk_tiebreaker = mean_cost * 1e-7
-    c = []
-    for country, supplier in variables:
-        c.append(_supplier_unit_economic_cost(country, supplier, country_inputs, proposal_inputs, method) + risk_tiebreaker * supplier_risk[supplier])
-
-    # Each country must sum to 100%.
-    A_eq = []
-    b_eq = []
-    for country in COUNTRIES:
-        row = [0.0] * n
-        for i, (c_country, _) in enumerate(variables):
-            if c_country == country:
-                row[i] = 1.0
-        A_eq.append(row)
-        b_eq.append(1.0)
-
-    # Risk threshold by country: sum(spend*x*(risk-threshold)) <= 0.
-    A_ub = []
-    b_ub = []
-    for country in COUNTRIES:
-        row = [0.0] * n
-        for i, (c_country, supplier) in enumerate(variables):
-            if c_country == country:
-                spend = proposal_inputs[country][supplier]["spend"]
-                row[i] = spend * (supplier_risk[supplier] - risk_threshold)
-        A_ub.append(row)
-        b_ub.append(0.0)
-
-    bounds = []
-    for _, supplier in variables:
-        bounds.append((mins[supplier] / 100.0, maxs[supplier] / 100.0))
-
-    result = linprog(c=c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
-    risk_gate_used = True
-
-    # If risk threshold makes the model infeasible, solve without the risk gate
-    # but still use risk as a tiny tie-breaker. This is disclosed in the rationale.
-    if not result.success:
-        result = linprog(c=c, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
-        risk_gate_used = False
-
-    if not result.success:
-        raise ValueError(f"No feasible allocation found: {result.message}")
-
-    optimized: Dict[str, Dict[str, float]] = {country: {} for country in COUNTRIES}
-    for value, (country, supplier) in zip(result.x, variables):
-        optimized[country][supplier] = round(float(value) * 100.0, 4)
-
-    method_message = "Exact LP optimizer used" if risk_gate_used else "Exact LP optimizer used; preferred risk gate was infeasible, so cost optimization ran without the risk ceiling"
-    return optimized, method_message
-
-
-def _optimize_allocations_grid(
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    supplier_risk: Dict[str, float],
-    method: str,
-    risk_threshold: float,
-    optimization_step: int,
-) -> Tuple[Dict[str, Dict[str, float]], str]:
-    mins = get_min_shares()
-    maxs = get_max_shares()
-    issues = constraint_issues(mins, maxs)
-    if issues:
-        raise ValueError("; ".join(issues))
-    candidates = enumerate_share_combinations(mins, maxs, step=optimization_step)
-    if not candidates:
-        raise ValueError("No feasible allocation found under current Kraljic / max-share constraints.")
-
-    optimized = {}
-    for country in COUNTRIES:
-        current_row = calc_current_by_country(country, country_inputs, method)
-        best_under_risk = None
-        best_overall = None
-        for shares in candidates:
-            prop = calc_proposal_by_country(country, shares, country_inputs, proposal_inputs, supplier_risk, method)
-            economic_delta = prop["new_economic_total"] - current_row["economic_total"]
-            gross_delta = prop["new_gross_total"] - current_row["gross_total"]
-            key = (economic_delta, prop["weighted_risk"], gross_delta)
-            row = {"Shares": shares, "Economic Delta": economic_delta, "Weighted Risk": prop["weighted_risk"], "Gross All-In Delta": gross_delta}
-            if best_overall is None or key < (best_overall["Economic Delta"], best_overall["Weighted Risk"], best_overall["Gross All-In Delta"]):
-                best_overall = row
-            if prop["weighted_risk"] <= risk_threshold:
-                if best_under_risk is None or key < (best_under_risk["Economic Delta"], best_under_risk["Weighted Risk"], best_under_risk["Gross All-In Delta"]):
-                    best_under_risk = row
-        chosen = best_under_risk if best_under_risk is not None else best_overall
-        optimized[country] = chosen["Shares"]
-    return optimized, f"Grid optimizer used at {optimization_step}% step"
-
-
-def optimize_allocations(
-    country_inputs: Dict[str, Dict],
-    proposal_inputs: Dict[str, Dict[str, Dict]],
-    supplier_risk: Dict[str, float],
-    method: str,
-    risk_threshold: float,
-    optimization_step: int,
-) -> Tuple[Dict[str, Dict[str, float]], pd.DataFrame, str]:
-    """Optimize allocation by economic all-in value, then risk.
-
-    Uses exact linear programming when SciPy is available; otherwise falls back
-    to grid search with conservative minimum/maximum rounding.
-    """
-    try:
-        optimized, optimizer_message = _optimize_allocations_lp(
-            country_inputs=country_inputs,
-            proposal_inputs=proposal_inputs,
-            supplier_risk=supplier_risk,
-            method=method,
-            risk_threshold=risk_threshold,
-        )
-    except Exception as lp_exc:
-        optimized, optimizer_message = _optimize_allocations_grid(
-            country_inputs=country_inputs,
-            proposal_inputs=proposal_inputs,
-            supplier_risk=supplier_risk,
-            method=method,
-            risk_threshold=risk_threshold,
-            optimization_step=optimization_step,
-        )
-        optimizer_message += f" (LP unavailable/infeasible: {lp_exc})"
-
-    # Build an explainable rationale table.
-    rationale_rows = []
-    country_df_opt, _, _, total_opt = calc_scenario(optimized, country_inputs, proposal_inputs, supplier_risk, method)
-    for _, row in country_df_opt.iterrows():
-        country = row["Country"]
-        rationale_rows.append({
-            "Country": country,
-            "Chosen Risk": row["Weighted Risk"],
-            "Economic Delta": row["Economic All-In Delta"],
-            "Gross All-In Delta": row["Gross All-In Delta"],
-            "Spend Delta": row["Spend Delta"],
-            **{supplier_short_name(s): optimized[country][s] for s in SUPPLIERS},
-            "Risk Gate Met": row["Weighted Risk"] <= risk_threshold,
-        })
-    rationale_df = pd.DataFrame(rationale_rows)
-    message = (
-        f"Optimization applied. {optimizer_message}. Objective: lowest economic all-in cost first, "
-        "with payment-term financial cost, treasury return, inventory ownership/carrying cost and supplier risk considered. "
-        f"Total optimized economic delta: {total_opt['Economic All-In Delta']:,.2f}."
-    )
-    return optimized, rationale_df, message
-
-# =============================================================================
-# Sidebar settings
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## Executive Settings")
-    currency_symbol = st.text_input("Reporting currency", value="BRL", help="Currency used in executive cards and total spend calculations.")
+    st.markdown("## ⚡ Intelligence Platform")
+    currency_symbol = st.text_input("Reporting currency", value="BRL")
+    project_title = st.text_input("Project title", value=st.session_state.get("project_head_title", "Procurement Intelligence Platform"), key="project_head_title")
+    project_subtitle = st.text_input("Project subtitle", value=st.session_state.get("project_subtitle", ""), key="project_subtitle")
 
-    st.markdown("### Sourcing analysis mode")
-    analysis_mode = st.radio(
-        "Tool mode",
-        options=["Direct Materials", "Indirect / Services"],
-        index=0,
-        horizontal=False,
-        help="Direct Materials calculates spend from landed unit price × volume. Indirect / Services keeps the legacy manual spend input.",
-    )
+    st.markdown("### Analysis mode")
+    analysis_mode = st.radio("Tool mode", options=["Direct Materials", "Indirect / Services"], index=0, horizontal=False)
     if analysis_mode == "Direct Materials":
-        st.markdown(
-            """
-            <div class="mode-card">
-                <div class="mode-card-title">🧪 Direct Materials Landed Cost Engine</div>
-                <div class="mode-card-subtitle">Price build-up → landed unit price → spend → TCO, working capital, inventory and risk.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="v46-mode-card"><div class="v46-mode-card-title">🧪 Direct Materials</div><div class="v46-mode-card-sub">Landed cost → price build-up → spend → TCO, working capital, inventory & risk optimization.</div></div>', unsafe_allow_html=True)
         analysed_item_name = st.text_input("Analysed item", value=DEFAULT_ITEM_NAME, key="direct_item_name")
         negotiated_unit = st.text_input("Negotiated unit", value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
         service_scope = None
     else:
-        st.markdown(
-            """
-            <div class="mode-card">
-                <div class="mode-card-title">🧾 Indirect / Services Executive Cockpit</div>
-                <div class="mode-card-subtitle">Scope → pricing model → service TCO → scorecard → productivity gain → contract leakage → executive decision.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        service_scope = st.selectbox(
-            "Service / buying scope",
-            options=SERVICE_SCOPES,
-            index=SERVICE_SCOPES.index(DEFAULT_SERVICE_SCOPE),
-            key="service_scope",
-            help="The tool changes its required fields and analysis logic according to the service scope selected.",
-        )
-        cfg = service_scope_config(service_scope)
-        analysed_item_name = st.text_input("Negotiated service / scope name", value=service_scope, key="service_item_name")
-        negotiated_unit = st.text_input("Main service unit / demand driver", value=str(cfg.get("driver_label", "service unit")), key="service_negotiated_unit")
-        st.caption(f"Suggested productivity lens: {cfg.get('productivity_label', 'supplier-led productivity')}.")
+        st.markdown('<div class="v46-mode-card"><div class="v46-mode-card-title">🎯 Indirect / Services</div><div class="v46-mode-card-sub">Service TCO → FTE decomposition → leakage waterfall → SLA risk → productivity ROI → scorecard → decision.</div></div>', unsafe_allow_html=True)
+        service_scope = st.selectbox("Service / buying scope", options=SERVICE_SCOPES, index=SERVICE_SCOPES.index(DEFAULT_SERVICE_SCOPE), key="service_scope")
+        cfg_sb = service_scope_config(service_scope)
+        analysed_item_name = st.text_input("Service / scope name", value=service_scope, key="service_item_name")
+        negotiated_unit = st.text_input("Main demand driver", value=str(cfg_sb.get("driver_label", "service unit")), key="service_negotiated_unit")
+        st.caption(f"Productivity: {cfg_sb.get('productivity_label','')}")
 
-    st.markdown("### View scope")
-    view_scope = st.radio(
-        "Analysis geography",
-        options=["Global View", "Local View"],
-        index=0,
-        horizontal=True,
-        key="market_view_scope",
-        help="Global View compares countries. Local View compares sites, plants, regions or business units inside the anchor country.",
-    )
+    st.markdown("### Geography")
+    view_scope = st.radio("Analysis scope", options=["Global View", "Local View"], index=0, horizontal=True, key="market_view_scope")
     VIEW_SCOPE = view_scope
 
     if view_scope == "Global View":
-        st.markdown("### Market scope")
-        default_country_selection = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
-        default_country_selection = [c for c in default_country_selection if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
-        selected_countries = st.multiselect(
-            "Countries included in this analysis",
-            options=COUNTRY_OPTIONS,
-            default=default_country_selection,
-            key="selected_country_scope",
-            help="Select only the countries that matter for the sourcing case. The app automatically creates the country cards, proposal inputs, risk tables, share sliders and executive views.",
-        )
-        if not selected_countries:
-            selected_countries = ["Brazil"]
-            st.warning("At least one country is required. Brazil was temporarily selected as the anchor market.")
-
-        primary_default = st.session_state.get("primary_country_scope", selected_countries[0])
-        primary_index = selected_countries.index(primary_default) if primary_default in selected_countries else 0
-        primary_country_choice = st.selectbox(
-            "Primary / anchor country",
-            options=selected_countries,
-            index=primary_index,
-            key="primary_country_scope",
-            help="This country receives its own executive result stack. The remaining selected countries are consolidated as Other selected markets.",
-        )
+        default_sel = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
+        default_sel = [c for c in default_sel if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
+        selected_countries = st.multiselect("Countries", options=COUNTRY_OPTIONS, default=default_sel, key="selected_country_scope")
+        if not selected_countries: selected_countries = ["Brazil"]
+        prim_def = st.session_state.get("primary_country_scope", selected_countries[0])
+        prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
+        primary_country_choice = st.selectbox("Primary / anchor country", options=selected_countries, index=prim_idx, key="primary_country_scope")
         COUNTRIES = list(selected_countries)
         PRIMARY_COUNTRY = primary_country_choice
         ANCHOR_COUNTRY = primary_country_choice
         SECONDARY_GROUP = "Other selected markets"
         scope_label = "country/countries"
     else:
-        st.markdown("### Local scope")
-        anchor_country_choice = st.selectbox(
-            "Anchor country",
-            options=COUNTRY_OPTIONS,
-            index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country", "Brazil")) if st.session_state.get("local_anchor_country", "Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"),
-            key="local_anchor_country",
-            help="Local View analyses localities inside this country. Financial defaults are inherited from this anchor country and can be edited in the baseline tab.",
-        )
-        ANCHOR_COUNTRY = anchor_country_choice
-        locality_options_data = build_locality_options(anchor_country_choice)
-        locality_options = [item["name"] for item in locality_options_data]
-        for item in locality_options_data:
-            LOCALITY_COORDS[item["name"]] = {"lat": float(item["lat"]), "lon": float(item["lon"])}
-        default_locality_selection = st.session_state.get("selected_locality_scope", locality_options[: min(4, len(locality_options))])
-        default_locality_selection = [loc for loc in default_locality_selection if loc in locality_options] or locality_options[: min(3, len(locality_options))]
-        selected_localities = st.multiselect(
-            "Localities included in this analysis",
-            options=locality_options,
-            default=default_locality_selection,
-            key="selected_locality_scope",
-            help="Select sites, regions, cities, plants or business units inside the anchor country.",
-        )
-        custom_locality_text = st.text_area(
-            "Add custom localities / sites",
-            value=st.session_state.get("custom_locality_text", ""),
-            key="custom_locality_text",
-            placeholder="One per line, e.g. Plant 01\nDistribution Center North\nShared Services Hub",
-            height=86,
-            help="Custom locations inherit financial defaults from the anchor country. Map coordinates are estimated around the country center unless a preset exists.",
-        )
-        custom_localities = [line.strip() for line in custom_locality_text.splitlines() if line.strip()]
-        selected_countries = list(dict.fromkeys(selected_localities + custom_localities))
-        if not selected_countries:
-            selected_countries = [locality_options[0]]
-            st.warning("At least one locality is required. The first preset locality was selected temporarily.")
-        primary_default = st.session_state.get("primary_locality_scope", selected_countries[0])
-        primary_index = selected_countries.index(primary_default) if primary_default in selected_countries else 0
-        primary_country_choice = st.selectbox(
-            "Primary / anchor locality",
-            options=selected_countries,
-            index=primary_index,
-            key="primary_locality_scope",
-            help="This locality receives its own executive result stack. The other selected localities are consolidated.",
-        )
+        anchor_choice = st.selectbox("Anchor country", options=COUNTRY_OPTIONS, index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country","Brazil")) if st.session_state.get("local_anchor_country","Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"), key="local_anchor_country")
+        ANCHOR_COUNTRY = anchor_choice
+        loc_data = build_locality_options(anchor_choice)
+        loc_opts = [x["name"] for x in loc_data]
+        for x in loc_data: LOCALITY_COORDS[x["name"]] = {"lat": float(x["lat"]), "lon": float(x["lon"])}
+        def_loc = st.session_state.get("selected_locality_scope", loc_opts[:min(4, len(loc_opts))])
+        def_loc = [l for l in def_loc if l in loc_opts] or loc_opts[:min(3, len(loc_opts))]
+        selected_locs = st.multiselect("Localities", options=loc_opts, default=def_loc, key="selected_locality_scope")
+        custom_loc_text = st.text_area("Custom localities", value=st.session_state.get("custom_locality_text",""), key="custom_locality_text", placeholder="One per line", height=80)
+        custom_locs = [l.strip() for l in custom_loc_text.splitlines() if l.strip()]
+        selected_countries = list(dict.fromkeys(selected_locs + custom_locs)) or [loc_opts[0]]
+        prim_def = st.session_state.get("primary_locality_scope", selected_countries[0])
+        prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
+        primary_country_choice = st.selectbox("Primary locality", options=selected_countries, index=prim_idx, key="primary_locality_scope")
         COUNTRIES = list(selected_countries)
         PRIMARY_COUNTRY = primary_country_choice
         SECONDARY_GROUP = "Other selected localities"
@@ -2787,1633 +2365,706 @@ with st.sidebar:
 
     LATAM_COUNTRIES = [c for c in COUNTRIES if c != PRIMARY_COUNTRY]
     CUSTOM_FACTOR_COUNTRIES = ["All countries"] + COUNTRIES
-    for _selected_country in COUNTRIES:
-        ensure_analysis_unit_defaults(_selected_country, ANCHOR_COUNTRY)
-    market_chips = "".join([f"<span class='market-chip'>{escape(c)}</span>" for c in COUNTRIES])
-    st.markdown(
-        f"""
-        <div class="market-scope-card">
-            <div class="market-scope-title">{'🌎 Global market scope' if view_scope == 'Global View' else '📍 Local market scope'}</div>
-            <div class="market-scope-meta"><b>{len(COUNTRIES)}</b> {scope_label} selected · anchor country: <b>{escape(ANCHOR_COUNTRY)}</b> · focus: <b>{escape(PRIMARY_COUNTRY)}</b></div>
-            <div>{market_chips}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    for _sc in COUNTRIES: ensure_analysis_unit_defaults(_sc, ANCHOR_COUNTRY)
 
-    rate_method = st.radio("Rate conversion method", options=["Compound", "Linear"], index=0)
-    optimization_step = st.select_slider("Fallback optimization share grid", options=[1, 2, 5, 10], value=5, help="Used only if exact LP optimization is unavailable/infeasible. Lower grid = deeper but slower fallback.")
-    st.caption("Optimizer: exact LP available" if SCIPY_AVAILABLE else "Optimizer: grid fallback only; SciPy not available")
-    risk_threshold = st.slider("Preferred weighted risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
+    chips = "".join([f"<span class='v46-chip'>{escape(c)}</span>" for c in COUNTRIES])
+    st.markdown(f"""<div class="v46-market-card">
+        <div class="v46-market-title">{'🌎 Global' if view_scope == 'Global View' else '📍 Local'} market scope</div>
+        <div class="v46-market-meta"><b>{len(COUNTRIES)}</b> {scope_label} · anchor: <b>{escape(ANCHOR_COUNTRY)}</b> · focus: <b>{escape(PRIMARY_COUNTRY)}</b></div>
+        <div>{chips}</div></div>""", unsafe_allow_html=True)
+
+    rate_method = st.radio("Rate conversion", options=["Compound", "Linear"], index=0)
+    opt_step = st.select_slider("Grid optimization step", options=[1, 2, 5, 10], value=5)
+    st.caption("Optimizer: exact LP ✓" if SCIPY_AVAILABLE else "Optimizer: grid fallback only")
+    risk_threshold = st.slider("Risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
 
     st.markdown("### Supplier universe")
-    supplier_count_default = int(st.session_state.get("supplier_count_control", min(4, len(SUPPLIER_POOL))))
-    supplier_count_default = max(1, min(len(SUPPLIER_POOL), supplier_count_default))
-    supplier_count = st.slider(
-        "Number of suppliers in the analysis",
-        min_value=1,
-        max_value=len(SUPPLIER_POOL),
-        value=supplier_count_default,
-        step=1,
-        key="supplier_count_control",
-        help="Controls how many supplier cards are displayed and included in inputs, constraints, shares and optimization.",
-    )
-    focused_default = int(st.session_state.get("focused_supplier_count_control", min(4, int(supplier_count))))
-    focused_default = max(1, min(int(supplier_count), focused_default))
-    focused_supplier_count = st.slider(
-        "Top suppliers to focus executive view",
-        min_value=1,
-        max_value=int(supplier_count),
-        value=focused_default,
-        step=1,
-        key="focused_supplier_count_control",
-        help="After proposals are entered, the cockpit ranks suppliers and highlights only the top N best offers for executive focus.",
-    )
+    sup_count_def = int(st.session_state.get("supplier_count_control", min(4, len(SUPPLIER_POOL))))
+    sup_count_def = max(1, min(len(SUPPLIER_POOL), sup_count_def))
+    supplier_count = st.slider("Number of suppliers", min_value=1, max_value=len(SUPPLIER_POOL), value=sup_count_def, step=1, key="supplier_count_control")
+    focused_def = int(st.session_state.get("focused_supplier_count_control", min(4, int(supplier_count))))
+    focused_def = max(1, min(int(supplier_count), focused_def))
+    focused_supplier_count = st.slider("Top suppliers (executive focus)", min_value=1, max_value=int(supplier_count), value=focused_def, step=1, key="focused_supplier_count_control")
     SUPPLIERS = SUPPLIER_POOL[:int(supplier_count)]
     st.session_state["focused_supplier_count"] = int(focused_supplier_count)
-
-    show_advanced_economic = st.checkbox("Show working capital economic view", value=True)
-
+    show_adv_econ = st.checkbox("Show working capital view", value=True)
 
     with st.expander("Supplier names", expanded=False):
-        st.caption("Edit the supplier names once here. The labels are saved in the current app session and reflected across proposal inputs, risk, share sliders, charts and tables.")
-        for idx, supplier in enumerate(SUPPLIERS, start=1):
-            st.text_input(
-                f"Supplier {idx} full name",
-                key=supplier_name_key(supplier),
-                help=f"Display name for internal supplier ID: {supplier}",
-            )
-            st.text_input(
-                f"Supplier {idx} short label",
-                key=supplier_short_name_key(supplier),
-                help="Compact label used in sliders, charts and executive cards.",
-            )
-
-def show_stack(stack_name: str) -> bool:
-    # Backward-compatible helper. Visual control moved from sidebar to inline stack expanders.
-    return True
+        for idx, sup in enumerate(SUPPLIERS, start=1):
+            st.text_input(f"Supplier {idx} full name", key=supplier_name_key(sup))
+            st.text_input(f"Supplier {idx} short label", key=supplier_short_name_key(sup))
 
 
-@contextmanager
-def result_stack(title: str, subtitle: str, icon: str, accent: str, tag: str, expanded: bool = False):
-    """Native Streamlit expandable result stack.
-
-    The expander header itself is the visual decision-stack button. Keeping the
-    title/subtitle in the clickable header avoids duplicate non-clickable headers
-    inside the expanded content and gives users a clean one-click custom view.
-    """
-    label = f"{icon}  {title}  ·  {tag}  —  {subtitle}"
-    with st.expander(label, expanded=expanded):
-        yield
-
-
-# =============================================================================
-# Header
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# HERO HEADER
+# ─────────────────────────────────────────────────────────────────────────────
 
 mode_chip = "Direct Materials Cockpit" if analysis_mode == "Direct Materials" else "Indirect / Services Command Center"
-hero_class = "hero-direct" if analysis_mode == "Direct Materials" else "hero-service"
-hero_copy = (
-    "Landed cost, FX, incoterm, MOQ, volume, inventory carrying, payment terms, treasury return and supplier-risk optimization."
-    if analysis_mode == "Direct Materials"
-    else "Service TCO, headcount/hour economics, overtime KPIs, scorecards, should-cost, contract leakage, productivity gains and supplier-risk optimization."
-)
+hero_copy = ("Landed cost · FX · Incoterm · MOQ · Payment terms · Treasury return · Inventory · Risk optimization" if analysis_mode == "Direct Materials" else "Service TCO · FTE decomposition · Contract leakage · SLA risk · Productivity ROI · Should-cost · Scorecard")
+hero_title = project_title.strip() or "Procurement Intelligence Platform"
+hero_sub = project_subtitle.strip() or hero_copy
+
 st.markdown(
-    f"""
-    <div class="executive-hero {hero_class}">
-        <div class="mode-chip">{mode_chip}</div>
-        <h1>Executive Procurement TCO & Should-Cost Dashboard</h1>
-        <p>{hero_copy}</p>
-    </div>
-    """,
+    f"""<div class="v46-hero">
+        <div class="v46-hero-mode-chip">{mode_chip}</div>
+        <h1>{escape(hero_title)}</h1>
+        <p>{escape(hero_sub)}</p>
+        <div class="v46-hero-stats">
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Markets</div><div class="v46-hero-stat-value">{len(COUNTRIES)}</div></div>
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Suppliers</div><div class="v46-hero-stat-value">{len(SUPPLIERS)}</div></div>
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Mode</div><div class="v46-hero-stat-value">{'Direct' if analysis_mode == 'Direct Materials' else 'Services'}</div></div>
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Optimizer</div><div class="v46-hero-stat-value">{'LP exact' if SCIPY_AVAILABLE else 'Grid'}</div></div>
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">View</div><div class="v46-hero-stat-value">{VIEW_SCOPE.split()[0]}</div></div>
+        </div>
+    </div>""",
     unsafe_allow_html=True,
 )
 
-# =============================================================================
-# Inputs
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# INPUT TABS
+# ─────────────────────────────────────────────────────────────────────────────
 
 input_tabs = st.tabs([
-    "1. Current Spend & Finance",
-    "2. Supplier Proposals",
-    "3. Supplier Management & Performance",
-    "4. Custom Analysis Items",
-    "5. Supplier Risk & Constraints",
-    "6. Share Projection & Optimization",
-    "7. Executive Dash View",
+    "1 · Current Baseline", "2 · Supplier Proposals",
+    "3 · Supplier Management", "4 · Custom Points",
+    "5 · Risk & Constraints", "6 · Share & Optimization",
+    "7 · Executive Dash",
 ])
 
+# ── TAB 1: Current Baseline ──────────────────────────────────────────────────
 with input_tabs[0]:
     if analysis_mode == "Direct Materials":
-        render_section(
-            "Current Direct Material Baseline & Financial Assumptions",
-            "Build the current baseline from landed unit price × volume, then apply country-specific payment-term, treasury return and inventory assumptions.",
-        )
-        st.info(
-            "Direct Materials rule: Current Spend = landed unit price × 100% equivalent volume. "
-            "All unit-cost components are entered per negotiated unit in the quote currency and converted to the reporting currency using FX."
-        )
+        render_section("Current Direct Material Baseline", "Landed unit price × volume → current spend → financial, treasury & inventory economics.", "#3b82f6")
+        st.info("Current spend = landed unit price × 100% equivalent volume per country.")
     else:
-        render_section(
-            "Current Indirect / Services Baseline & Financial Assumptions",
-            "Build the current service baseline from contract value, demand/scope drivers, leakage, service lifecycle costs and payment-term economics.",
-        )
-        st.info(
-            "Indirect / Services rule: Current Spend = Service TCO baseline. Service TCO includes contracted value, change orders, internal management, rework, downtime/compliance costs and SLA credits/rebates. "
-            "Inventory carrying is set to zero for services unless you later model a service with owned stock."
-        )
+        render_section("Current Indirect / Services Baseline", "Service TCO → FTE decomposition → contract leakage waterfall → lifecycle cost.", "#8b5cf6")
+        st.info("Current spend = Service TCO (contracted value + leakage − credits). Amazon standard: model all leakage vectors before benchmarking suppliers.")
 
-    country_inputs: Dict[str, Dict] = {}
+    country_inputs: Dict = {}
     for country in COUNTRIES:
-        with st.expander(country, expanded=(country == PRIMARY_COUNTRY)):
-            direct_profile: Dict[str, float | str] = {}
-            service_profile: Dict[str, float | str] = {}
+        with st.expander(f"{'🌎' if VIEW_SCOPE=='Global View' else '📍'} {country}", expanded=(country == PRIMARY_COUNTRY)):
+            dp_: Dict = {}; sp_: Dict = {}
             if analysis_mode == "Direct Materials":
-                st.markdown(f"**{analysed_item_name} — Current baseline build-up ({country})**")
-                current_default_volume = DEFAULT_DIRECT_VOLUME[country]
-                direct_profile = render_landed_cost_builder(
-                    key_prefix=f"current_direct__{country}",
-                    default_spend=DEFAULT_CURRENT_SPEND[country],
-                    default_volume=current_default_volume,
-                    unit=negotiated_unit,
-                    reporting_currency=currency_symbol,
-                    currency_default=DEFAULT_DIRECT_CURRENCY[country],
-                    supplier_label=f"{country} current",
-                )
-                current_spend = float(direct_profile["spend"])
-                st.caption(
-                    f"{country} current baseline spend is calculated from {format_quantity(direct_profile['volume'], negotiated_unit)} × "
-                    f"{currency_symbol} {direct_profile['unit_price_reporting']:,.6f}/{negotiated_unit}."
-                )
+                dp_ = render_landed_cost_builder(key_prefix=f"cur_dir__{country}", default_spend=DEFAULT_CURRENT_SPEND[country], default_volume=DEFAULT_DIRECT_VOLUME[country], unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} current")
+                current_spend = float(dp_["spend"])
             else:
-                service_profile = render_service_baseline_builder(
-                    key_prefix=f"current_service__{country}",
-                    country=country,
-                    scope=service_scope or DEFAULT_SERVICE_SCOPE,
-                    reporting_currency=currency_symbol,
-                )
-                current_spend = float(service_profile["service_tco"])
-                st.caption(
-                    f"{country} current baseline spend is calculated as Service TCO for {service_profile['pricing_model']} under the selected service scope."
-                )
-
-            st.markdown("<div class='plain-title'>Financial, treasury and inventory assumptions</div>", unsafe_allow_html=True)
+                sp_ = render_service_baseline_builder(key_prefix=f"cur_svc__{country}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, reporting_currency=currency_symbol)
+                current_spend = float(sp_["service_tco"])
+            st.markdown("<div class='v46-plain-title'>Financial, treasury & inventory parameters</div>", unsafe_allow_html=True)
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                current_payment_days = st.number_input(
-                    f"{country} current payment term days",
-                    min_value=1,
-                    value=DEFAULT_CURRENT_TERM[country],
-                    step=1,
-                    key=f"v24_current_payment_days__{country}",
-                    help="This is the CURRENT baseline payment term. It does not change when supplier proposal terms change.",
-                )
-                current_inventory_days = st.number_input(
-                    f"{country} current stock-on-hand days",
-                    min_value=0,
-                    value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode == "Direct Materials" else 0,
-                    step=1,
-                    key=f"v24_current_inventory_days__{country}",
-                    help="Inventory carrying cost uses this number as stock-on-hand / inventory ownership days for the current baseline. Services default to zero.",
-                    disabled=(analysis_mode != "Direct Materials"),
-                )
+                cur_pmt = st.number_input(f"{country} current payment days", min_value=1, value=DEFAULT_CURRENT_TERM[country], step=1, key=f"v46_cur_pmt__{country}")
+                cur_inv = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode=="Direct Materials" else 0, step=1, key=f"v46_cur_inv__{country}", disabled=(analysis_mode!="Direct Materials"))
             with c2:
-                financial_rate_pct = st.number_input(
-                    f"{country} financial rate (%)",
-                    min_value=0.0,
-                    value=DEFAULT_FINANCIAL_RATE[country],
-                    step=0.05,
-                    format="%.4f",
-                    key=f"v24_financial_rate__{country}",
-                    help="Financial cost rate for the reference period below. Example: 4.84% for 120 days.",
-                )
-                financial_reference_days = st.number_input(
-                    f"{country} financial rate reference days",
-                    min_value=1,
-                    value=DEFAULT_REFERENCE_DAYS[country],
-                    step=1,
-                    key=f"v24_financial_ref_days__{country}",
-                    help="Period attached to the financial rate. Proposal terms will be converted from this base to each supplier payment term.",
-                )
+                fin_rate = st.number_input(f"{country} financial rate %", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v46_fin_rate__{country}")
+                fin_ref_days = st.number_input(f"{country} fin. rate reference days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v46_fin_ref__{country}")
             with c3:
-                treasury_return_pct = st.number_input(
-                    f"{country} net treasury return (%)",
-                    min_value=0.0,
-                    value=DEFAULT_TREASURY_RETURN[country],
-                    step=0.05,
-                    format="%.4f",
-                    key=f"v24_treasury_return__{country}",
-                    help="Treasury/capital return rate for the reference period below. If your treasury return is better than supplier financing, longer payment terms create value.",
-                )
-                treasury_reference_days = st.number_input(
-                    f"{country} treasury return reference days",
-                    min_value=1,
-                    value=DEFAULT_TREASURY_REF_DAYS[country],
-                    step=1,
-                    key=f"v24_treasury_ref_days__{country}",
-                )
+                treas_rate = st.number_input(f"{country} net treasury return %", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v46_treas__{country}")
+                treas_ref = st.number_input(f"{country} treasury ref. days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"v46_treas_ref__{country}")
             with c4:
-                inventory_carry_rate_pct = st.number_input(
-                    f"{country} inventory carrying rate (% p.a.)",
-                    min_value=0.0,
-                    value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode == "Direct Materials" else 0.0,
-                    step=0.05,
-                    format="%.4f",
-                    key=f"v24_inventory_rate__{country}",
-                    disabled=(analysis_mode != "Direct Materials"),
-                )
-                st.markdown("<div class='small-note'><b>Baseline logic</b><br>Financial/treasury effects use the current payment term. Direct-material spend is calculated from landed unit price × volume.</div>", unsafe_allow_html=True)
+                inv_rate = st.number_input(f"{country} inventory carry rate % p.a.", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode=="Direct Materials" else 0.0, step=0.05, format="%.4f", key=f"v46_inv_rate__{country}", disabled=(analysis_mode!="Direct Materials"))
+                st.markdown("<div class='v46-note'>Financial/treasury use current payment term for baseline. Proposals use each supplier's term.</div>", unsafe_allow_html=True)
+            country_inputs[country] = {"current_spend": float(current_spend), "current_payment_days": int(cur_pmt), "financial_rate_pct": float(fin_rate), "financial_reference_days": int(fin_ref_days), "treasury_return_pct": float(treas_rate), "treasury_reference_days": int(treas_ref), "inventory_carry_rate_pct": float(inv_rate), "current_inventory_days": int(cur_inv), "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_, "service_profile": sp_, "service_scope": service_scope}
 
-            country_inputs[country] = {
-                "current_spend": float(current_spend),
-                "current_payment_days": int(current_payment_days),
-                "financial_rate_pct": float(financial_rate_pct),
-                "financial_reference_days": int(financial_reference_days),
-                "treasury_return_pct": float(treasury_return_pct),
-                "treasury_reference_days": int(treasury_reference_days),
-                "inventory_carry_rate_pct": float(inventory_carry_rate_pct),
-                "current_inventory_days": int(current_inventory_days),
-                "analysis_mode": analysis_mode,
-                "item_name": analysed_item_name,
-                "negotiated_unit": negotiated_unit,
-                "direct_profile": direct_profile,
-                "service_profile": service_profile,
-                "service_scope": service_scope,
-            }
-            st.caption(
-                f"{country}: financial rate is referenced to {financial_reference_days} days; current baseline uses {current_payment_days} payment days; supplier proposals use each supplier payment term."
-            )
-
+# ── TAB 2: Supplier Proposals ────────────────────────────────────────────────
 with input_tabs[1]:
     if analysis_mode == "Direct Materials":
-        render_section(
-            "Supplier Direct Material Proposals",
-            "Build each supplier proposal from landed unit economics. The calculated 100% equivalent spend is then used by the share allocation and TCO engine.",
-        )
-        st.info(
-            "Each supplier proposal is entered as price build-up per negotiated unit. The app calculates: landed unit price × 100% equivalent volume = proposal spend. "
-            "MOQ is flagged as a commercial constraint for now; in the next module it can drive order quantity and average inventory."
-        )
+        render_section("Supplier Direct Material Proposals", "Price build-up → landed unit price → 100% equivalent spend → TCO engine.", "#3b82f6")
     else:
-        render_section(
-            "Supplier Service Proposals, Scorecards & Productivity Commitments",
-            "Build each service proposal from pricing model, scope, contract leakage, service scorecard, expected risk cost and supplier-led productivity gains. The calculated Service TCO is used as proposal spend.",
-        )
-        st.info(
-            "For Indirect / Services, every supplier proposal includes a performance scorecard and a mandatory productivity-gain field. "
-            "This is designed for outsourced service providers such as Accenture, Fastenal-style VMI/MRO partners, BPOs, agencies and facilities providers."
-        )
+        render_section("Supplier Service Proposals", "Contract value → FTE decomposition → SLA risk → should-cost → productivity ROI → service TCO.", "#8b5cf6")
 
-    proposal_inputs: Dict[str, Dict[str, Dict]] = {country: {} for country in COUNTRIES}
+    proposal_inputs: Dict = {c: {} for c in COUNTRIES}
     for country in COUNTRIES:
-        with st.expander(country, expanded=(country == PRIMARY_COUNTRY)):
-            country_volume_default = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode == "Direct Materials" else DEFAULT_DIRECT_VOLUME[country]
-            for supplier in SUPPLIERS:
-                display_supplier = supplier_display_name(supplier)
-                proposal_label = f"📦 {supplier_short_name(supplier)} — {display_supplier}" if analysis_mode == "Direct Materials" else f"🧾 {supplier_short_name(supplier)} — {display_supplier}"
-                with st.expander(proposal_label, expanded=(country == PRIMARY_COUNTRY and supplier == SUPPLIERS[0])):
-                    st.markdown("<div class='supplier-expander-note'>Supplier proposal is collapsed by default. Open only the offers needed for the review.</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div class='supplier-box'><span class='pill'>{supplier_short_html(supplier)}</span>", unsafe_allow_html=True)
-                    direct_supplier_profile: Dict[str, float | str] = {}
-                    service_supplier_profile: Dict[str, float | str] = {}
+        with st.expander(f"{'🌎' if VIEW_SCOPE=='Global View' else '📍'} {country}", expanded=(country == PRIMARY_COUNTRY)):
+            cvd = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode=="Direct Materials" else DEFAULT_DIRECT_VOLUME[country]
+            for sup in SUPPLIERS:
+                disp = supplier_display_name(sup)
+                label = f"{'📦' if analysis_mode=='Direct Materials' else '🧾'} {supplier_short_name(sup)} — {disp}"
+                with st.expander(label, expanded=(country==PRIMARY_COUNTRY and sup==SUPPLIERS[0])):
+                    st.markdown(f"<div class='v46-supplier-box'><span class='v46-pill'>{supplier_short_html(sup)}</span>", unsafe_allow_html=True)
+                    dp_s: Dict = {}; sp_s: Dict = {}
                     if analysis_mode == "Direct Materials":
-                        direct_supplier_profile = render_landed_cost_builder(
-                            key_prefix=f"proposal_direct__{country}__{supplier}",
-                            default_spend=DEFAULT_PROPOSAL_SPEND[country][supplier],
-                            default_volume=country_volume_default,
-                            unit=negotiated_unit,
-                            reporting_currency=currency_symbol,
-                            currency_default=DEFAULT_DIRECT_CURRENCY[country],
-                            supplier_label=f"{country} | {display_supplier}",
-                        )
-                        spend = float(direct_supplier_profile["spend"])
+                        dp_s = render_landed_cost_builder(key_prefix=f"prop_dir__{country}__{sup}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], default_volume=cvd, unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} | {disp}")
+                        spend_ = float(dp_s["spend"])
                     else:
-                        service_supplier_profile = render_service_supplier_builder(
-                            key_prefix=f"proposal_service__{country}__{supplier}",
-                            country=country,
-                            scope=service_scope or DEFAULT_SERVICE_SCOPE,
-                            supplier_label=f"{country} | {display_supplier}",
-                            default_spend=DEFAULT_PROPOSAL_SPEND[country][supplier],
-                            reporting_currency=currency_symbol,
-                        )
-                        spend = float(service_supplier_profile["service_tco"])
-
-                    c2, c3, c4, c5 = st.columns([0.75, 0.75, 0.75, 1.20])
-                    with c2:
-                        payment_days = st.number_input(
-                            f"{country} | {display_supplier} | Payment term days",
-                            min_value=0,
-                            value=DEFAULT_PAYMENT_TERM[country][supplier],
-                            step=1,
-                            key=f"proposal_term__{country}__{supplier}",
-                        )
-                    with c3:
-                        lead_time_days = st.number_input(
-                            f"{country} | {display_supplier} | Lead time / transition days",
-                            min_value=0,
-                            value=(DEFAULT_LEAD_TIME_DAYS[country][supplier] if analysis_mode == "Direct Materials" else int(service_supplier_profile.get("transition_days", 30))),
-                            step=1,
-                            key=f"lead_time__{country}__{supplier}",
-                            help="For services this represents implementation / transition days; for direct materials it represents physical lead time.",
-                        )
-                    with c4:
-                        safety_stock_days = st.number_input(
-                            f"{country} | {display_supplier} | Safety stock days",
-                            min_value=0,
-                            value=DEFAULT_SAFETY_STOCK_DAYS[country][supplier] if analysis_mode == "Direct Materials" else 0,
-                            step=1,
-                            key=f"safety_stock__{country}__{supplier}",
-                            disabled=(analysis_mode != "Direct Materials"),
-                        )
-                    with c5:
-                        inventory_ownership = st.selectbox(
-                            f"{country} | {display_supplier} | Inventory ownership",
-                            options=INVENTORY_OWNERSHIP_OPTIONS,
-                            index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][supplier] if analysis_mode == "Direct Materials" else "Supplier/trader owns until delivery"),
-                            key=f"inventory_ownership__{country}__{supplier}",
-                            help="Defines how many days are charged with inventory carrying cost. Services default to zero inventory days.",
-                            disabled=(analysis_mode != "Direct Materials"),
-                        )
+                        sp_s = render_service_supplier_builder(key_prefix=f"prop_svc__{country}__{sup}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, supplier_label=f"{country} | {disp}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], reporting_currency=currency_symbol)
+                        spend_ = float(sp_s["service_tco"])
+                    c2_, c3_, c4_, c5_ = st.columns([.75, .75, .75, 1.2])
+                    with c2_:
+                        pmt_days = st.number_input(f"{country} | {disp} | Payment days", min_value=0, value=DEFAULT_PAYMENT_TERM[country][sup], step=1, key=f"prop_term__{country}__{sup}")
+                    with c3_:
+                        lead_time = st.number_input(f"{country} | {disp} | Lead time days", min_value=0, value=(DEFAULT_LEAD_TIME_DAYS[country][sup] if analysis_mode=="Direct Materials" else int(sp_s.get("transition_days", 30))), step=1, key=f"lead__{country}__{sup}")
+                    with c4_:
+                        safety_st = st.number_input(f"{country} | {disp} | Safety stock days", min_value=0, value=DEFAULT_SAFETY_STOCK_DAYS[country][sup] if analysis_mode=="Direct Materials" else 0, step=1, key=f"sstock__{country}__{sup}", disabled=(analysis_mode!="Direct Materials"))
+                    with c5_:
+                        inv_own = st.selectbox(f"{country} | {disp} | Inventory ownership", options=INVENTORY_OWNERSHIP_OPTIONS, index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][sup] if analysis_mode=="Direct Materials" else "Supplier/trader owns until delivery"), key=f"invown__{country}__{sup}", disabled=(analysis_mode!="Direct Materials"))
                     st.markdown("</div>", unsafe_allow_html=True)
-                    proposal_inputs[country][supplier] = {
-                        "spend": float(spend),
-                        "payment_days": int(payment_days),
-                        "lead_time_days": int(lead_time_days),
-                        "safety_stock_days": int(safety_stock_days),
-                        "inventory_ownership": inventory_ownership,
-                        "analysis_mode": analysis_mode,
-                        "item_name": analysed_item_name,
-                        "negotiated_unit": negotiated_unit,
-                        "direct_profile": direct_supplier_profile,
-                        "service_profile": service_supplier_profile,
-                        "service_scope": service_scope,
-                    }
+                    proposal_inputs[country][sup] = {"spend": float(spend_), "payment_days": int(pmt_days), "lead_time_days": int(lead_time), "safety_stock_days": int(safety_st), "inventory_ownership": inv_own, "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_s, "service_profile": sp_s, "service_scope": service_scope}
 
-
+# ── TAB 3: Supplier Management ────────────────────────────────────────────────
 with input_tabs[2]:
-    render_section(
-        "Supplier Management, Performance & Due Diligence",
-        "Executive supplier governance layer. These scorecards automatically feed the proposal risk defaults used by the sourcing optimization engine.",
-    )
-    st.info(
-        "Governance rule: performance and due-diligence inputs are converted into risk defaults for Supply, Quality, Financial, Compliance, ESG and Logistics. "
-        "You can still fine-tune the final risk sliders in the Risk & Constraints tab."
-    )
-    supplier_management_inputs: Dict[str, Dict[str, float | str]] = {}
-    governance_rows = []
-    for supplier in SUPPLIERS:
-        with st.expander(f"🛡️ {supplier_display_name(supplier)} — governance, KPIs and due diligence", expanded=(supplier == SUPPLIERS[0])):
-            st.markdown("<div class='governance-card'>", unsafe_allow_html=True)
-            gcols = st.columns(4)
-            gov_scores: Dict[str, float] = {}
-            dims = list(SUPPLIER_GOVERNANCE_WEIGHTS.keys())
-            for idx, dim in enumerate(dims):
-                with gcols[idx % 4]:
-                    gov_scores[dim] = st.slider(
-                        dim,
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=82.0,
-                        step=1.0,
-                        key=f"governance__{supplier}__{dim}",
-                        help="0 = critical issue, 100 = best-in-class. These values feed sourcing risk defaults.",
-                    )
-            d1, d2, d3, d4 = st.columns(4)
-            with d1:
-                dd_status = st.selectbox(
-                    "Due diligence status",
-                    options=DUE_DILIGENCE_STATUS_OPTIONS,
-                    index=0,
-                    key=f"governance__{supplier}__dd_status",
-                )
-            with d2:
-                qbr_frequency = st.selectbox(
-                    "Governance cadence",
-                    options=["Monthly", "Quarterly", "Semiannual", "Annual", "Ad hoc"],
-                    index=1,
-                    key=f"governance__{supplier}__qbr_frequency",
-                )
-            with d3:
-                corrective_actions = st.number_input(
-                    "Open corrective actions",
-                    min_value=0,
-                    value=0,
-                    step=1,
-                    key=f"governance__{supplier}__corrective_actions",
-                )
-            with d4:
-                dependency_level = st.selectbox(
-                    "Business dependency",
-                    options=["Low", "Medium", "High", "Critical"],
-                    index=1,
-                    key=f"governance__{supplier}__dependency_level",
-                )
-            governance_score = weighted_governance_score(gov_scores)
-            tier = governance_tier(governance_score)
-            supplier_management_inputs[supplier] = {
-                **gov_scores,
-                "Due diligence status": dd_status,
-                "Governance cadence": qbr_frequency,
-                "Open corrective actions": float(corrective_actions),
-                "Business dependency": dependency_level,
-                "Governance score": float(governance_score),
-                "Governance tier": tier,
-            }
-            st.markdown(
-                f"""
-                <div class="service-result">
-                    <b>Governance score:</b> <span class="score-badge">{governance_score:,.1f}/100</span>
-                    &nbsp; | &nbsp; <b>Tier:</b> {escape(tier)}
-                    &nbsp; | &nbsp; <b>Due diligence:</b> {escape(dd_status)}
-                    &nbsp; | &nbsp; <b>Business dependency:</b> {escape(dependency_level)}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.markdown("</div>", unsafe_allow_html=True)
-            governance_rows.append({
-                "Supplier": supplier_display_name(supplier),
-                "Governance Score": governance_score,
-                "Tier": tier,
-                "Due Diligence": dd_status,
-                "Cadence": qbr_frequency,
-                "Open Actions": corrective_actions,
-                "Dependency": dependency_level,
-                **gov_scores,
-            })
-    st.markdown("<div class='plain-title'>Supplier governance summary</div>", unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(governance_rows), use_container_width=True, hide_index=True)
+    render_section("Supplier Management, Performance & Due Diligence", "Governance scorecards → risk defaults → optimization feed.", "#06b6d4")
+    supplier_management_inputs: Dict = {}; gov_rows = []
+    for sup in SUPPLIERS:
+        with st.expander(f"🛡️ {supplier_display_name(sup)}", expanded=(sup==SUPPLIERS[0])):
+            st.markdown("<div class='v46-gov-card'>", unsafe_allow_html=True)
+            gc = st.columns(4); gov_scores: Dict[str, float] = {}
+            for idx, dim in enumerate(list(SUPPLIER_GOVERNANCE_WEIGHTS.keys())):
+                with gc[idx % 4]:
+                    gov_scores[dim] = st.slider(dim, 0.0, 100.0, 82.0, 1.0, key=f"gov__{sup}__{dim}")
+            d1_, d2_, d3_, d4_ = st.columns(4)
+            with d1_: dd_st = st.selectbox("Due diligence", options=DUE_DILIGENCE_STATUS_OPTIONS, index=0, key=f"gov__{sup}__dd")
+            with d2_: qbr = st.selectbox("Governance cadence", ["Monthly","Quarterly","Semiannual","Annual","Ad hoc"], index=1, key=f"gov__{sup}__qbr")
+            with d3_: ca = st.number_input("Open corrective actions", min_value=0, value=0, step=1, key=f"gov__{sup}__ca")
+            with d4_: dep = st.selectbox("Business dependency", ["Low","Medium","High","Critical"], index=1, key=f"gov__{sup}__dep")
+            gov_sc = weighted_governance_score(gov_scores); g_tier = governance_tier(gov_sc)
+            supplier_management_inputs[sup] = {**gov_scores, "Due diligence status": dd_st, "Governance cadence": qbr, "Open corrective actions": float(ca), "Business dependency": dep, "Governance score": gov_sc, "Governance tier": g_tier}
+            st.markdown(f"""<div class="v46-svc-result"><b>Governance score:</b> <span class="v46-score-badge" style="color:{service_score_color(gov_sc)};border-color:{service_score_color(gov_sc)}">{gov_sc:.1f}/100</span> &nbsp;·&nbsp; <b>Tier:</b> {escape(g_tier)} &nbsp;·&nbsp; <b>DD:</b> {escape(dd_st)}</div></div>""", unsafe_allow_html=True)
+            gov_rows.append({"Supplier": supplier_display_name(sup), "Score": gov_sc, "Tier": g_tier, "Due Diligence": dd_st, "Cadence": qbr, "Open Actions": ca, "Dependency": dep, **gov_scores})
+    st.markdown("<div class='v46-plain-title'>Governance summary</div>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
 
+# ── TAB 4: Custom Points ──────────────────────────────────────────────────────
 with input_tabs[3]:
-    render_section(
-        "Custom Negotiated Items & Analysis Points",
-        "Add buyer-specific items, cost adders, savings levers, risk adjustments and qualitative criteria. The model automatically applies cost and risk adjustments to the supplier analysis.",
-    )
-    st.info(
-        "Use this area when a buyer needs more flexibility than the standard template. Examples: special tooling, transition credits, service credits, tax benefit, implementation risk, exclusivity premium, SLA penalty exposure or supplier-specific productivity commitment."
-    )
-    custom_factor_count = st.number_input(
-        "Number of custom analysis points",
-        min_value=0,
-        max_value=12,
-        value=0,
-        step=1,
-        key="custom_factor_count",
-    )
-    custom_cost_adjustments: Dict[str, Dict[str, float]] = {country: {supplier: 0.0 for supplier in SUPPLIERS} for country in COUNTRIES}
-    custom_risk_adjustments: Dict[str, float] = {supplier: 0.0 for supplier in SUPPLIERS}
-    custom_factor_rows: List[Dict[str, float | str]] = []
-    for factor_idx in range(int(custom_factor_count)):
-        with st.expander(f"➕ Custom analysis point {factor_idx + 1}", expanded=(factor_idx == 0)):
-            st.markdown("<div class='custom-factor-card'>", unsafe_allow_html=True)
-            h1, h2, h3, h4 = st.columns([1.3, .9, .85, .75])
-            with h1:
-                factor_name = st.text_input("Item / analysis point name", value=f"Custom point {factor_idx + 1}", key=f"custom_factor__{factor_idx}__name")
-            with h2:
-                factor_type = st.selectbox("Adjustment type", options=CUSTOM_FACTOR_TYPES, index=0, key=f"custom_factor__{factor_idx}__type")
-            with h3:
-                country_scope = st.selectbox("Country scope", options=CUSTOM_FACTOR_COUNTRIES, index=0, key=f"custom_factor__{factor_idx}__country")
-            with h4:
-                weight = st.number_input("Weight / multiplier", min_value=0.0, value=1.0, step=0.1, format="%.2f", key=f"custom_factor__{factor_idx}__weight")
-            st.markdown("<div class='matrix-header'>Supplier values for this custom point</div>", unsafe_allow_html=True)
-            value_cols = st.columns(min(5, len(SUPPLIERS)))
-            for s_idx, supplier in enumerate(SUPPLIERS):
-                with value_cols[s_idx % len(value_cols)]:
-                    raw_value = st.number_input(
-                        supplier_short_name(supplier),
-                        value=0.0,
-                        step=10_000.0 if "Cost" in factor_type or "Productivity" in factor_type else 0.1,
-                        format="%.2f",
-                        key=f"custom_factor__{factor_idx}__{supplier}__value",
-                    )
-                signed_value = float(raw_value) * float(weight)
-                target_countries = COUNTRIES if country_scope == "All countries" else [country_scope]
-                if factor_type == "Cost add-on":
-                    for c in target_countries:
-                        custom_cost_adjustments[c][supplier] += signed_value
-                elif factor_type in {"Cost reduction / saving", "Productivity gain"}:
-                    for c in target_countries:
-                        custom_cost_adjustments[c][supplier] -= signed_value
-                elif factor_type == "Risk increase":
-                    custom_risk_adjustments[supplier] += safe_divide(signed_value, 100.0)
-                elif factor_type == "Risk reduction":
-                    custom_risk_adjustments[supplier] -= safe_divide(signed_value, 100.0)
-                custom_factor_rows.append({
-                    "Analysis Point": factor_name,
-                    "Type": factor_type,
-                    "Country Scope": country_scope,
-                    "Supplier": supplier_display_name(supplier),
-                    "Value": signed_value,
-                })
-            st.caption("Cost values are applied to proposal spend for the selected scope. Risk values are treated as basis points where 100 = 1.0 risk point. Score-only items remain in the audit table for buyer discussion.")
+    render_section("Custom Analysis Points", "Tooling, credits, productivity commitments, tax benefits, exclusivity premiums or any buyer-specific lever.", "#f59e0b")
+    cf_count = st.number_input("Number of custom points", min_value=0, max_value=12, value=0, step=1, key="cf_count")
+    custom_cost_adj: Dict = {c: {s: 0.0 for s in SUPPLIERS} for c in COUNTRIES}
+    custom_risk_adj: Dict[str, float] = {s: 0.0 for s in SUPPLIERS}
+    cf_rows = []
+    for fi in range(int(cf_count)):
+        with st.expander(f"➕ Custom point {fi+1}", expanded=(fi==0)):
+            st.markdown("<div class='v46-gov-card'>", unsafe_allow_html=True)
+            h1_, h2_, h3_, h4_ = st.columns([1.3, .9, .85, .75])
+            with h1_: fn_ = st.text_input("Name", value=f"Custom point {fi+1}", key=f"cf__{fi}__name")
+            with h2_: ft_ = st.selectbox("Type", options=CUSTOM_FACTOR_TYPES, index=0, key=f"cf__{fi}__type")
+            with h3_: cs_ = st.selectbox("Country scope", options=CUSTOM_FACTOR_COUNTRIES, index=0, key=f"cf__{fi}__country")
+            with h4_: wt_ = st.number_input("Weight", min_value=0.0, value=1.0, step=0.1, format="%.2f", key=f"cf__{fi}__weight")
+            vc_ = st.columns(min(5, len(SUPPLIERS)))
+            for si_, sup_ in enumerate(SUPPLIERS):
+                with vc_[si_ % len(vc_)]:
+                    rv_ = st.number_input(supplier_short_name(sup_), value=0.0, step=10_000.0 if "Cost" in ft_ or "Productivity" in ft_ else 0.1, format="%.2f", key=f"cf__{fi}__{sup_}__val")
+                sv_ = float(rv_) * float(wt_)
+                tcs_ = COUNTRIES if cs_ == "All countries" else [cs_]
+                if ft_ == "Cost add-on":
+                    for c in tcs_: custom_cost_adj[c][sup_] += sv_
+                elif ft_ in {"Cost reduction / saving", "Productivity gain"}:
+                    for c in tcs_: custom_cost_adj[c][sup_] -= sv_
+                elif ft_ == "Risk increase": custom_risk_adj[sup_] += safe_divide(sv_, 100.0)
+                elif ft_ == "Risk reduction": custom_risk_adj[sup_] -= safe_divide(sv_, 100.0)
+                cf_rows.append({"Analysis Point": fn_, "Type": ft_, "Country": cs_, "Supplier": supplier_display_name(sup_), "Value": sv_})
             st.markdown("</div>", unsafe_allow_html=True)
-
-    # Apply custom cost adjustments to proposal spend before risk and optimization are calculated.
-    for country in COUNTRIES:
-        for supplier in SUPPLIERS:
-            adj = float(custom_cost_adjustments[country][supplier])
+    for c in COUNTRIES:
+        for s in SUPPLIERS:
+            adj = float(custom_cost_adj[c][s])
             if abs(adj) > 1e-9:
-                proposal_inputs[country][supplier]["spend_before_custom_adjustment"] = float(proposal_inputs[country][supplier]["spend"])
-                proposal_inputs[country][supplier]["custom_cost_adjustment"] = adj
-                proposal_inputs[country][supplier]["spend"] = max(float(proposal_inputs[country][supplier]["spend"]) + adj, 0.0)
+                proposal_inputs[c][s]["spend"] = max(float(proposal_inputs[c][s]["spend"]) + adj, 0.0)
+                proposal_inputs[c][s]["custom_cost_adjustment"] = adj
             else:
-                proposal_inputs[country][supplier]["custom_cost_adjustment"] = 0.0
-    if custom_factor_rows:
-        custom_df = pd.DataFrame(custom_factor_rows)
-        display_custom = custom_df.copy()
-        if "Value" in display_custom:
-            display_custom["Value"] = display_custom["Value"].map(lambda x: format_money(x, currency_symbol, signed=True) if abs(float(x)) >= 100 else f"{x:,.2f}")
-        st.markdown("<div class='plain-title'>Custom analysis audit trail</div>", unsafe_allow_html=True)
-        st.dataframe(display_custom, use_container_width=True, hide_index=True)
+                proposal_inputs[c][s]["custom_cost_adjustment"] = 0.0
+    if cf_rows:
+        st.markdown("<div class='v46-plain-title'>Custom analysis audit</div>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(cf_rows), use_container_width=True, hide_index=True)
     else:
-        st.caption("No custom analysis points added. Standard proposal, risk, performance and TCO logic will be used.")
+        st.caption("No custom points. Standard proposal, risk and TCO logic will be used.")
 
+# ── TAB 5: Risk & Constraints ─────────────────────────────────────────────────
 with input_tabs[4]:
-    render_section("Supplier Risk & Strategic Constraints", "Add Kraljic minimum shares, max allocation/capacity and multi-dimensional risk scores. These constraints drive optimization.")
-    cweights = st.columns(len(DEFAULT_RISK_WEIGHTS))
+    render_section("Supplier Risk & Strategic Constraints", "Kraljic minimums, capacity ceilings and multi-dimensional risk scores → optimization engine.", "#ef4444")
+    rw_cols = st.columns(len(DEFAULT_RISK_WEIGHTS))
     risk_weights: Dict[str, float] = {}
-    for idx, dim in enumerate(DEFAULT_RISK_WEIGHTS):
-        with cweights[idx]:
-            risk_weights[dim] = st.number_input(f"{dim} weight", min_value=0.0, value=DEFAULT_RISK_WEIGHTS[dim], step=1.0, key=f"risk_weight__{dim}")
+    for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
+        with rw_cols[idx_]: risk_weights[dim_] = st.number_input(f"{dim_} weight", min_value=0.0, value=DEFAULT_RISK_WEIGHTS[dim_], step=1.0, key=f"rw__{dim_}")
+    risk_inputs: Dict = {s: {} for s in SUPPLIERS}
+    for sup in SUPPLIERS:
+        with st.expander(supplier_display_name(sup), expanded=(sup=="ChemPrime")):
+            c1_, c2_, c3_, c4_ = st.columns(4)
+            with c1_: st.checkbox("Approved", value=DEFAULT_APPROVED[sup], key=approved_key(sup)); st.checkbox("Kraljic min required", value=DEFAULT_KRALJIC_REQUIRED[sup], key=kraljic_key(sup))
+            with c2_: st.number_input("Min share %", 0.0, 100.0, DEFAULT_MIN_SHARE[sup], 1.0, key=min_key(sup))
+            with c3_: st.number_input("Max share %", 0.0, 100.0, DEFAULT_MAX_SHARE[sup], 1.0, key=max_key(sup))
+            with c4_: st.caption("1 = low risk · 5 = high risk")
+            gov_risk = governance_risk_defaults(supplier_management_inputs, sup)
+            cust_adj = float(custom_risk_adj.get(sup, 0.0))
+            rc_ = st.columns(len(DEFAULT_RISK_WEIGHTS))
+            for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
+                with rc_[idx_]:
+                    dfr = blend_risk_default(DEFAULT_RISK[sup][dim_], gov_risk.get(dim_, DEFAULT_RISK[sup][dim_]), cust_adj)
+                    risk_inputs[sup][dim_] = st.slider(dim_, 1.0, 5.0, dfr, 0.1, key=f"risk__{sup}__{dim_}")
+            st.caption(f"Gov score: {supplier_management_inputs.get(sup,{}).get('Governance score',0):.1f}/100 | Custom adj: {cust_adj:+.2f}")
 
-    risk_inputs: Dict[str, Dict[str, float]] = {supplier: {} for supplier in SUPPLIERS}
-    for supplier in SUPPLIERS:
-        with st.expander(supplier_display_name(supplier), expanded=(supplier == "ChemPrime")):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.checkbox("Approved supplier", value=DEFAULT_APPROVED[supplier], key=approved_key(supplier))
-                st.checkbox("Kraljic minimum required", value=DEFAULT_KRALJIC_REQUIRED[supplier], key=kraljic_key(supplier))
-            with c2:
-                st.number_input("Minimum share %", min_value=0.0, max_value=100.0, value=DEFAULT_MIN_SHARE[supplier], step=1.0, key=min_key(supplier))
-            with c3:
-                st.number_input("Maximum share / capacity %", min_value=0.0, max_value=100.0, value=DEFAULT_MAX_SHARE[supplier], step=1.0, key=max_key(supplier))
-            with c4:
-                st.caption("Risk scores use 1 = low risk and 5 = high risk.")
-            governance_based_risk = governance_risk_defaults(supplier_management_inputs, supplier)
-            custom_risk_adj = float(custom_risk_adjustments.get(supplier, 0.0))
-            rcols = st.columns(len(DEFAULT_RISK_WEIGHTS))
-            for idx, dim in enumerate(DEFAULT_RISK_WEIGHTS):
-                with rcols[idx]:
-                    default_risk_value = blend_risk_default(DEFAULT_RISK[supplier][dim], governance_based_risk.get(dim, DEFAULT_RISK[supplier][dim]), custom_risk_adj)
-                    risk_inputs[supplier][dim] = st.slider(
-                        f"{dim}",
-                        min_value=1.0,
-                        max_value=5.0,
-                        value=default_risk_value,
-                        step=0.1,
-                        key=f"risk__{supplier}__{dim}",
-                        help="Default is blended from original sourcing risk + Supplier Management scorecard + custom risk adjustments.",
-                    )
-            st.caption(
-                f"Governance feed: {supplier_management_inputs.get(supplier, {}).get('Governance score', 0):.1f}/100 | "
-                f"Custom risk adjustment: {custom_risk_adj:+.2f} point(s)."
-            )
-
+# ── TAB 6: Share & Optimization ───────────────────────────────────────────────
 with input_tabs[5]:
-    render_section(
-        "Share Projection & Cost Optimization",
-        "Use sliders as a scenario gadget while supplier proposal inputs remain fully active. Cost Optimization automatically searches the best allocation and updates the sliders."
-    )
+    render_section("Share Projection & Cost Optimization", "Slider scenarios + automatic LP optimization respecting Kraljic constraints.", "#10b981")
+    st.info("Current baseline uses each country's current payment term only. Proposals use each supplier's proposed term.")
+    share_mode = st.radio("Share control", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
+    mins_now = get_min_shares(); maxs_now = get_max_shares(); issues_now = constraint_issues(mins_now, maxs_now)
+    invalid_c = bool(issues_now)
+    if invalid_c:
+        st.error("Constraint setup is infeasible.")
+        for iss in issues_now: st.warning(iss)
+    sup_risk_preview = supplier_risk_scores(risk_inputs, risk_weights)
 
-    st.info(
-        "Rate-period rule: Current baseline uses each country's current payment term only. "
-        "Supplier proposals use each supplier's proposed payment term as the NEW financial-rate period and the NEW treasury-return period. "
-        "Proposal payment terms never overwrite the current baseline."
-    )
-
-    share_mode = st.radio("Share control mode", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
-    mins_now = get_min_shares()
-    maxs_now = get_max_shares()
-    issues_now = constraint_issues(mins_now, maxs_now)
-    invalid_constraints = bool(issues_now)
-
-    if invalid_constraints:
-        st.error("Constraint setup is infeasible. Please fix before using Cost Optimization.")
-        for issue in issues_now:
-            st.warning(issue)
-
-    supplier_risk_preview = supplier_risk_scores(risk_inputs, risk_weights)
-
-    # Keep the optimization control visible before the country sliders. In previous
-    # versions it appeared after all expanders, which made it easy to miss.
-    st.markdown("### Automatic Cost Optimization")
-    opt_col1, opt_col2 = st.columns([0.28, 0.72])
-    with opt_col1:
-        if st.button("Cost Optimization", type="primary", use_container_width=True, key="cost_optimization_top"):
-            if invalid_constraints:
-                st.error("Optimization cannot run while Kraljic minimums or max/capacity constraints are infeasible.")
+    st.markdown("#### ⚡ Cost Optimization")
+    oc1_, oc2_ = st.columns([.28, .72])
+    with oc1_:
+        if st.button("Run Optimization", type="primary", use_container_width=True, key="opt_top"):
+            if invalid_c:
+                st.error("Fix constraints first.")
             else:
                 try:
-                    optimized_shares, rationale_df, opt_message = optimize_allocations(
-                        country_inputs=country_inputs,
-                        proposal_inputs=proposal_inputs,
-                        supplier_risk=supplier_risk_preview,
-                        method=rate_method,
-                        risk_threshold=risk_threshold,
-                        optimization_step=int(optimization_step),
-                    )
-                    st.session_state["pending_optimized_shares"] = optimized_shares
-                    st.session_state["optimization_rationale_df"] = rationale_df
-                    st.session_state["optimization_message"] = opt_message
+                    os_, ord_, om_ = optimize_allocations(country_inputs, proposal_inputs, sup_risk_preview, rate_method, risk_threshold, int(opt_step))
+                    st.session_state["pending_optimized_shares"] = os_
+                    st.session_state["optimization_rationale_df"] = ord_
+                    st.session_state["optimization_message"] = om_
                     st.rerun()
-                except Exception as exc:
-                    st.error(f"Optimization failed: {exc}")
-    with opt_col2:
-        st.caption(
-            "Objective: minimize economic all-in cost first, then weighted risk. "
-            "The optimizer respects Kraljic minimum shares, supplier max/capacity and approved-supplier flags. "
-            "After it runs, it automatically updates the Share Projection sliders."
-        )
-
+                except Exception as exc: st.error(f"Optimization failed: {exc}")
+    with oc2_:
+        st.markdown('<div class="v46-insight"><b>Objective:</b> minimize economic all-in cost, then weighted risk. Respects Kraljic minimums, supplier max/capacity and approved flags. Sliders update automatically after run.</div>', unsafe_allow_html=True)
     if st.session_state.get("last_optimization_applied"):
-        st.success(st.session_state.get("optimization_message", "Optimization applied."))
-        st.session_state["last_optimization_applied"] = False
+        st.success(st.session_state.get("optimization_message", "Optimization applied.")); st.session_state["last_optimization_applied"] = False
 
-    all_shares: Dict[str, Dict[str, float]] = {}
+    all_shares: Dict = {}
     for country in COUNTRIES:
         clamp_shares_to_bounds(country)
-        with st.expander(f"{country} share projection", expanded=(country == PRIMARY_COUNTRY)):
-            if share_mode == "Automatic":
-                st.caption("Automatic mode: changing one supplier will rebalance the others proportionally while respecting min/max shares.")
-            else:
-                st.caption("Manual mode: sliders are normalized for the calculation if the raw total is not exactly 100%.")
-
-            cols = st.columns(min(4, max(1, len(SUPPLIERS))))
-            raw_shares = {}
-            for idx, supplier in enumerate(SUPPLIERS):
-                with cols[idx % len(cols)]:
-                    min_value = float(mins_now[supplier])
-                    max_value = float(maxs_now[supplier])
-                    key = share_key(country, supplier)
-                    current_value = float(st.session_state.get(key, DEFAULT_SHARES[country][supplier]))
-
-                    if max_value < min_value - 1e-9:
-                        # Infeasible constraint: do not render a broken slider.
-                        raw = min_value
-                        st.warning(
-                            f"{supplier_short_name(supplier)} infeasible: floor {min_value:.0f}% > capacity {max_value:.0f}%."
-                        )
-                        st.slider(
-                            supplier_short_name(supplier),
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=min(raw, 100.0),
-                            step=1.0,
-                            key=f"{key}__display_infeasible",
-                            disabled=True,
-                        )
-                    elif max_value <= min_value + 1e-9:
-                        raw = float(min_value)
-                        st.session_state[key] = raw
-                        st.slider(
-                            supplier_short_name(supplier),
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=raw,
-                            step=1.0,
-                            key=f"{key}__display_locked",
-                            disabled=True,
-                        )
-                        st.caption(f"Locked at {raw:.0f}% by Kraljic/capacity constraint")
+        with st.expander(f"{country} share projection", expanded=(country==PRIMARY_COUNTRY)):
+            if share_mode=="Automatic": st.caption("Auto-rebalance: changing one supplier rebalances others proportionally.")
+            else: st.caption("Manual: sliders normalized if total ≠ 100%.")
+            s_cols = st.columns(min(4, max(1, len(SUPPLIERS))))
+            raw_sh = {}
+            for idx_, sup_ in enumerate(SUPPLIERS):
+                with s_cols[idx_ % len(s_cols)]:
+                    mn_ = float(mins_now[sup_]); mx_ = float(maxs_now[sup_])
+                    k_ = share_key(country, sup_)
+                    cv_ = float(st.session_state.get(k_, DEFAULT_SHARES[country][sup_]))
+                    if mx_ < mn_ - 1e-9:
+                        raw_sh[sup_] = mn_
+                        st.warning(f"{supplier_short_name(sup_)}: floor {mn_:.0f}% > cap {mx_:.0f}%")
+                        st.slider(supplier_short_name(sup_), 0.0, 100.0, min(mn_,100.0), 1.0, key=f"{k_}__inf", disabled=True)
+                    elif mx_ <= mn_ + 1e-9:
+                        raw_sh[sup_] = float(mn_); st.session_state[k_] = float(mn_)
+                        st.slider(supplier_short_name(sup_), 0.0, 100.0, float(mn_), 1.0, key=f"{k_}__lock", disabled=True)
+                        st.caption(f"Locked at {mn_:.0f}%")
                     else:
-                        current_value = max(min_value, min(max_value, current_value))
-                        st.session_state[key] = current_value
-                        kwargs = {}
-                        if share_mode == "Automatic" and not invalid_constraints:
-                            kwargs = {"on_change": rebalance_after_slider_change, "args": (country, supplier)}
-                        raw = st.slider(
-                            supplier_short_name(supplier),
-                            min_value=min_value,
-                            max_value=max_value,
-                            value=current_value,
-                            step=1.0,
-                            key=key,
-                            **kwargs,
-                        )
-                        if mins_now[supplier] > 0:
-                            st.caption(f"Kraljic floor: {mins_now[supplier]:.0f}%")
-
-                    raw_shares[supplier] = float(raw)
-
-            if share_mode == "Manual":
-                effective = allocate_with_bounds(raw_shares, mins_now, maxs_now, total=100.0)
+                        cv_ = max(mn_, min(mx_, cv_)); st.session_state[k_] = cv_
+                        kwargs_ = {"on_change": rebalance_after_slider_change, "args": (country, sup_)} if share_mode=="Automatic" and not invalid_c else {}
+                        raw_sh[sup_] = st.slider(supplier_short_name(sup_), mn_, mx_, cv_, 1.0, key=k_, **kwargs_)
+                        if mins_now[sup_] > 0: st.caption(f"Kraljic floor: {mins_now[sup_]:.0f}%")
+            if share_mode=="Manual":
+                eff_ = allocate_with_bounds(raw_sh, mins_now, maxs_now, 100.0)
             else:
-                total_raw = sum(float(st.session_state.get(share_key(country, s), raw_shares.get(s, 0.0))) for s in SUPPLIERS)
-                if abs(total_raw - 100.0) > 1e-6:
-                    # Do not write back to st.session_state after the sliders have been instantiated.
-                    # Streamlit forbids changing a widget-backed session key in the same run.
-                    # The model still receives a normalized/effective allocation for calculations.
-                    effective = allocate_with_bounds(raw_shares, mins_now, maxs_now, total=100.0)
-                else:
-                    effective = {s: float(st.session_state.get(share_key(country, s), raw_shares.get(s, 0.0))) for s in SUPPLIERS}
+                tot_raw = sum(float(st.session_state.get(share_key(country, s), raw_sh.get(s,0.0))) for s in SUPPLIERS)
+                eff_ = allocate_with_bounds(raw_sh, mins_now, maxs_now, 100.0) if abs(tot_raw - 100.0) > 1e-6 else {s: float(st.session_state.get(share_key(country, s), raw_sh.get(s,0.0))) for s in SUPPLIERS}
+            all_shares[country] = eff_
+            st.dataframe(pd.DataFrame([{"Supplier": supplier_short_name(s), "Effective Share %": eff_[s]} for s in SUPPLIERS]), use_container_width=True)
 
-            all_shares[country] = effective
-            share_df = pd.DataFrame([{"Supplier": supplier_short_name(s), "Effective Model Share %": effective[s]} for s in SUPPLIERS])
-            st.dataframe(share_df, use_container_width=True)
+    _, _, _, total_preview = calc_scenario(all_shares, country_inputs, proposal_inputs, sup_risk_preview, rate_method)
 
-    country_df_preview, group_df_preview, supplier_df_preview, total_preview = calc_scenario(
-        all_shares, country_inputs, proposal_inputs, supplier_risk_preview, rate_method
-    )
-
-# =============================================================================
-# Calculate scenario after inputs
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN CALCULATION
+# ─────────────────────────────────────────────────────────────────────────────
 
 supplier_risk = supplier_risk_scores(risk_inputs, risk_weights)
-# Re-read shares from session after all widgets.
-final_shares: Dict[str, Dict[str, float]] = {}
-for country in COUNTRIES:
-    raw = {s: float(st.session_state.get(share_key(country, s), DEFAULT_SHARES[country][s])) for s in SUPPLIERS}
-    final_shares[country] = allocate_with_bounds(raw, get_min_shares(), get_max_shares(), total=100.0)
-
+final_shares: Dict = {}
+for c in COUNTRIES:
+    raw_ = {s: float(st.session_state.get(share_key(c, s), DEFAULT_SHARES[c][s])) for s in SUPPLIERS}
+    final_shares[c] = allocate_with_bounds(raw_, get_min_shares(), get_max_shares(), 100.0)
 country_df, group_df, supplier_df, total = calc_scenario(final_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
 
-# Supplier focus lens: ranks all entered suppliers and highlights the top N offers
-# selected in the sidebar. Core scenario calculations still use the modeled shares;
-# this lens is intended to help executives quickly compare the best supplier offers.
-def build_supplier_focus_df(supplier_df: pd.DataFrame, analysis_mode: str) -> pd.DataFrame:
-    if supplier_df.empty:
-        return pd.DataFrame()
-    agg_map = {
-        "Economic Total": "sum",
-        "Allocated Spend": "sum",
-        "Risk Score": "mean",
-    }
-    optional_sum = [
-        "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap",
-        "Overtime Hours / Month", "Overtime Cost", "Service TCO Before Productivity",
-        "Proposed Contract Value",
-    ]
-    for col in optional_sum:
-        if col in supplier_df.columns:
-            agg_map[col] = "sum" if col not in {"Overtime Hours / Month"} else "mean"
-    if "Performance Score" in supplier_df.columns:
-        agg_map["Performance Score"] = "mean"
-    focus = supplier_df.groupby(["Supplier ID", "Supplier"], as_index=False).agg(agg_map)
-    if analysis_mode == "Indirect / Services" and "Performance-Adjusted Cost" in focus.columns:
+
+def build_supplier_focus_df(sdf: pd.DataFrame, mode: str) -> pd.DataFrame:
+    if sdf.empty: return pd.DataFrame()
+    agg = {"Economic Total": "sum", "Allocated Spend": "sum", "Risk Score": "mean"}
+    for col in ["Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap", "Overtime Hours / Month", "Productivity ROI %", "SLA Gap", "Total Contract Value"]:
+        if col in sdf.columns: agg[col] = "mean" if "Hours" in col else "sum"
+    if "Performance Score" in sdf.columns: agg["Performance Score"] = "mean"
+    focus = sdf.groupby(["Supplier ID", "Supplier"], as_index=False).agg(agg)
+    if mode == "Indirect / Services" and "Performance-Adjusted Cost" in focus.columns:
         focus["Executive Focus Metric"] = focus["Performance-Adjusted Cost"].fillna(focus["Economic Total"])
-        focus["Focus Rationale"] = "Lower performance-adjusted service cost, then lower risk"
     else:
         focus["Executive Focus Metric"] = focus["Economic Total"]
-        focus["Focus Rationale"] = "Lower economic all-in cost, then lower risk"
     focus = focus.sort_values(["Executive Focus Metric", "Risk Score"], ascending=[True, True]).reset_index(drop=True)
     focus["Rank"] = range(1, len(focus) + 1)
     return focus
 
 supplier_focus_df = build_supplier_focus_df(supplier_df, analysis_mode)
 focused_supplier_count = int(st.session_state.get("focused_supplier_count", min(4, len(SUPPLIERS))))
-top_focus_supplier_ids = supplier_focus_df.head(focused_supplier_count)["Supplier ID"].tolist() if not supplier_focus_df.empty else SUPPLIERS[:focused_supplier_count]
+top_focus_ids = supplier_focus_df.head(focused_supplier_count)["Supplier ID"].tolist() if not supplier_focus_df.empty else SUPPLIERS[:focused_supplier_count]
+primary_row = group_df[group_df["Group"] == PRIMARY_COUNTRY].iloc[0]
+secondary_row = group_df[group_df["Group"] == SECONDARY_GROUP].iloc[0]
+gross_delta = total["Gross All-In Delta"]
+wc_delta = total["Treasury Return Offset Delta"]
+moq_benefit = total.get("MOQ WC Benefit", 0.0)
+moq_drag_delta = total.get("MOQ WC Drag Delta", 0.0)
+total_saving_wc = gross_delta + wc_delta - moq_benefit
+final_econ = total["Economic All-In Delta"]
 
 
-def build_heatmap_dataframe(metric: str) -> pd.DataFrame:
-    rows = []
-    for _, row in country_df.iterrows():
-        unit = str(row["Country"])
-        loc = coord_for_analysis_unit(unit, ANCHOR_COUNTRY)
-        if metric == "Spend":
-            value = float(row.get("New Spend", 0.0))
-        elif metric == "Saving":
-            value = max(-float(row.get("Economic All-In Delta", 0.0)), 0.0)
-        elif metric == "Suppliers":
-            subset = supplier_df[(supplier_df["Country"] == unit) & (supplier_df["Share %"] > 0)] if not supplier_df.empty else pd.DataFrame()
-            value = float(subset["Supplier ID"].nunique()) if not subset.empty else 0.0
-        elif metric == "SLA / Performance":
-            subset = supplier_df[supplier_df["Country"] == unit] if not supplier_df.empty else pd.DataFrame()
-            if "Performance Score" in subset.columns and subset["Performance Score"].notna().any():
-                value = float(subset["Performance Score"].fillna(0).mean())
-            else:
-                value = max(0.0, 100.0 - float(row.get("Weighted Risk", 0.0)) * 18.0)
-        elif metric == "Risk":
-            value = float(row.get("Weighted Risk", 0.0))
-        else:
-            value = float(row.get("New Spend", 0.0))
-        rows.append({"Location": unit, "lat": float(loc["lat"]), "lon": float(loc["lon"]), "Metric": metric, "Value": value, "Economic Delta": float(row.get("Economic All-In Delta", 0.0)), "Risk": float(row.get("Weighted Risk", 0.0))})
-    return pd.DataFrame(rows)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 7: EXECUTIVE DASH VIEW
+# ─────────────────────────────────────────────────────────────────────────────
 
-def render_executive_view_summary() -> None:
-    st.markdown(
-        f"""
-        <div class="exec-dash-panel" style="margin-top:16px;">
-            <div class="exec-dash-title">{'🌎 Global Executive View' if VIEW_SCOPE == 'Global View' else '📍 Local Executive View'}</div>
-            <div class="exec-dash-subtitle">Scope: <b>{escape(VIEW_SCOPE)}</b> · Anchor country: <b>{escape(ANCHOR_COUNTRY)}</b> · Focus: <b>{escape(PRIMARY_COUNTRY)}</b> · {len(COUNTRIES)} analysis unit(s)</div>
-            <div class="dash-pill-row">
-                <span class="dash-pill">Mode: {escape(analysis_mode)}</span>
-                <span class="dash-pill">Top focus suppliers: {focused_supplier_count}</span>
-                <span class="dash-pill">Risk: {total.get('Weighted Risk', 0):.2f}/5</span>
-                <span class="dash-pill">New avg term: {total.get('New Avg Payment Days', 0):.0f}dd</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    cols = st.columns(5, gap="medium")
-    with cols[0]:
-        render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Baseline", "neutral", short=True)
-    with cols[1]:
-        render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Proposal mix", delta_tone(total["Spend Delta"]), short=True)
-    with cols[2]:
-        render_kpi("Economic All-In", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + finance + WC + inventory", delta_tone(total["Economic All-In Delta"]), short=True)
-    with cols[3]:
-        render_kpi("Working Capital", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new", delta_tone(total["Treasury Return Offset Delta"]), short=True)
-    with cols[4]:
-        render_kpi("Weighted Risk", f"{total.get('Weighted Risk', 0):.2f}/5", "Lower is better", risk_tone(total.get("Weighted Risk", 0)), short=True)
+def coord_unit(unit):
+    if unit in LOCALITY_COORDS: return LOCALITY_COORDS[unit]
+    if unit in COUNTRY_GEO_POINTS: return COUNTRY_GEO_POINTS[unit]
+    base = get_country_geo(ANCHOR_COUNTRY); dl, dn = _stable_offset(unit)
+    return {"lat": base["lat"]+dl, "lon": base["lon"]+dn}
 
+with input_tabs[6]:
+    render_section("Executive Dash View", "Visual cockpit — filter, map, rank and compare across markets and suppliers.", "#6366f1")
 
-def render_executive_dash_view() -> None:
-    st.markdown(
-        f"""
-        <div class="section-header" style="margin-top:18px;">
-            <div class="section-title">Executive Dash View</div>
-            <div class="section-subtitle">Visual executive cockpit inspired by BI dashboards, preserving the tool identity while switching between global country analysis and local site analysis.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    unit_lbl = "Country" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} locality"
+    dsdf = supplier_df.copy() if not supplier_df.empty else pd.DataFrame(columns=["Country","Supplier","Allocated Spend"])
+    dcdf = country_df.copy() if not country_df.empty else pd.DataFrame(columns=["Country","New Spend","Weighted Risk","Economic All-In Delta"])
 
-    unit_label = "Country" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} location"
-    dash_supplier_df = supplier_df.copy() if not supplier_df.empty else pd.DataFrame(columns=["Country", "Supplier", "Allocated Spend"])
-    dash_country_df = country_df.copy() if not country_df.empty else pd.DataFrame(columns=["Country", "New Spend", "Weighted Risk", "Economic All-In Delta"])
+    fl_cols = st.columns(5)
+    sup_opts = ["All"] + sorted(dsdf["Supplier"].dropna().astype(str).unique().tolist()) if not dsdf.empty else ["All"]
+    loc_opts_d = ["All"] + COUNTRIES
+    with fl_cols[0]: sf_ = st.selectbox("Supplier", sup_opts, key="dash_sup_f")
+    with fl_cols[1]: lf_ = st.selectbox(unit_lbl, loc_opts_d, key="dash_loc_f")
+    with fl_cols[2]: metric_ = st.selectbox("Map metric", ["Spend","Saving","Risk","Suppliers"], key="dash_metric")
+    with fl_cols[3]: pass
+    with fl_cols[4]: pass
 
-    if not dash_supplier_df.empty:
-        dash_supplier_df["Dashboard Category"] = dash_supplier_df.apply(
-            lambda r: (
-                r.get("Service Scope")
-                or r.get("Item / Scope")
-                or r.get("Pricing Model")
-                or r.get("Incoterm")
-                or "General"
-            ), axis=1
-        )
-        dash_supplier_df["Dashboard Status"] = dash_supplier_df.apply(
-            lambda r: (
-                "High risk" if float(r.get("Risk Score", 0) or 0) >= 3.5 else
-                (r.get("Performance Tier") or ("Approved" if float(r.get("Share %", 0) or 0) > 0 else "Modelled"))
-            ), axis=1
-        )
-    else:
-        dash_supplier_df["Dashboard Category"] = []
-        dash_supplier_df["Dashboard Status"] = []
+    fsd = dsdf.copy()
+    if not fsd.empty:
+        if sf_ != "All": fsd = fsd[fsd["Supplier"]==sf_]
+        if lf_ != "All": fsd = fsd[fsd["Country"]==lf_]
+    f_units = sorted(fsd["Country"].unique().tolist()) if not fsd.empty else COUNTRIES
+    if lf_ != "All": f_units = [lf_]
+    fcd = dcdf[dcdf["Country"].isin(f_units)].copy() if not dcdf.empty else pd.DataFrame()
 
-    filter_panel_cols = st.columns(5, gap="small")
-    supplier_options = ["All"] + sorted(dash_supplier_df["Supplier"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
-    location_options = ["All"] + COUNTRIES
-    category_options = ["All"] + sorted(dash_supplier_df["Dashboard Category"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
-    status_options = ["All"] + sorted(dash_supplier_df["Dashboard Status"].dropna().astype(str).unique().tolist()) if not dash_supplier_df.empty else ["All"]
+    kpi_cols_ = st.columns(5)
+    with kpi_cols_[0]: render_kpi("Current Spend", fmt_money(total["Current Spend"], currency_symbol, compact=True), "Baseline", "neutral")
+    with kpi_cols_[1]: render_kpi("New Spend", fmt_money(total["New Spend"], currency_symbol, compact=True), "Proposals × shares", delta_tone(total["Spend Delta"]))
+    with kpi_cols_[2]: render_kpi("Economic All-In", fmt_money(final_econ, currency_symbol, compact=True, signed=True), "Spend + finance + WC + inventory", delta_tone(final_econ))
+    with kpi_cols_[3]: render_kpi("Working Capital", fmt_money(wc_delta, currency_symbol, compact=True, signed=True), "Treasury return delta", delta_tone(wc_delta))
+    with kpi_cols_[4]: render_kpi("Weighted Risk", f"{total.get('Weighted Risk',0):.2f}/5", "Lower is better", risk_tone(total.get("Weighted Risk",0)))
 
-    with filter_panel_cols[0]:
-        supplier_filter = st.selectbox("Supplier Name", supplier_options, key="exec_dash_supplier_filter")
-    with filter_panel_cols[1]:
-        location_filter = st.selectbox(unit_label, location_options, key="exec_dash_location_filter")
-    with filter_panel_cols[2]:
-        category_filter = st.selectbox("Category", category_options, key="exec_dash_category_filter")
-    with filter_panel_cols[3]:
-        status_filter = st.selectbox("Status", status_options, key="exec_dash_status_filter")
-    with filter_panel_cols[4]:
-        metric = st.selectbox(
-            "Heat map metric",
-            options=["Spend", "Saving", "Suppliers", "SLA / Performance", "Risk"],
-            index=0,
-            key="exec_dash_heat_metric",
-            help="Global View shows the world map for selected countries. Local View zooms into the anchor country and plots the selected localities.",
-        )
-
-    filtered_supplier = dash_supplier_df.copy()
-    if not filtered_supplier.empty:
-        if supplier_filter != "All":
-            filtered_supplier = filtered_supplier[filtered_supplier["Supplier"] == supplier_filter]
-        if location_filter != "All":
-            filtered_supplier = filtered_supplier[filtered_supplier["Country"] == location_filter]
-        if category_filter != "All":
-            filtered_supplier = filtered_supplier[filtered_supplier["Dashboard Category"] == category_filter]
-        if status_filter != "All":
-            filtered_supplier = filtered_supplier[filtered_supplier["Dashboard Status"] == status_filter]
-
-    filtered_units = sorted(filtered_supplier["Country"].unique().tolist()) if not filtered_supplier.empty else ([] if location_filter == "All" else [location_filter])
-    if location_filter != "All":
-        filtered_units = [location_filter]
-    if not filtered_units:
-        filtered_units = COUNTRIES.copy()
-    filtered_country = dash_country_df[dash_country_df["Country"].isin(filtered_units)].copy() if not dash_country_df.empty else pd.DataFrame()
-
-    def build_filtered_heatmap_df(selected_metric: str) -> pd.DataFrame:
-        rows = []
-        source_units = filtered_units if filtered_units else COUNTRIES
-        for unit in source_units:
-            loc = coord_for_analysis_unit(unit, ANCHOR_COUNTRY)
-            unit_country = filtered_country[filtered_country["Country"] == unit] if not filtered_country.empty else pd.DataFrame()
-            unit_supplier = filtered_supplier[filtered_supplier["Country"] == unit] if not filtered_supplier.empty else pd.DataFrame()
-            if selected_metric == "Spend":
-                value = float(unit_supplier["Allocated Spend"].sum()) if not unit_supplier.empty else float(unit_country.get("New Spend", pd.Series([0.0])).sum())
-            elif selected_metric == "Saving":
-                value = max(-float(unit_country["Economic All-In Delta"].sum()) if not unit_country.empty else 0.0, 0.0)
-            elif selected_metric == "Suppliers":
-                value = float(unit_supplier["Supplier ID"].nunique()) if not unit_supplier.empty else 0.0
-            elif selected_metric == "SLA / Performance":
-                value = float(unit_supplier["Performance Score"].fillna(0).mean()) if (not unit_supplier.empty and "Performance Score" in unit_supplier.columns) else max(0.0, 100.0 - float(unit_country.get("Weighted Risk", pd.Series([0.0])).mean()) * 18.0)
-            else:
-                value = float(unit_country["Weighted Risk"].mean()) if not unit_country.empty else 0.0
-            econ = float(unit_country["Economic All-In Delta"].sum()) if not unit_country.empty else 0.0
-            risk = float(unit_country["Weighted Risk"].mean()) if not unit_country.empty else 0.0
-            rows.append({"Location": unit, "lat": float(loc["lat"]), "lon": float(loc["lon"]), "Metric": selected_metric, "Value": value, "Economic Delta": econ, "Risk": risk})
-        return pd.DataFrame(rows)
-
-    heat_df = build_filtered_heatmap_df(metric)
-    total_orders = int(len(filtered_supplier)) if not filtered_supplier.empty else 0
-    total_quantity = float(filtered_supplier["100% Equivalent Volume"].fillna(0).sum()) if (not filtered_supplier.empty and analysis_mode == "Direct Materials") else float(filtered_supplier.get("Headcount / FTEs", pd.Series(dtype=float)).fillna(0).sum())
-    pending_payments = float(filtered_country["New Financial Cost"].sum()) if not filtered_country.empty else 0.0
-    paid_pct = 100.0 * safe_divide(float(filtered_country["Current Total Spend"].sum() - filtered_country["Current Financial Cost"].sum()) if not filtered_country.empty else 0.0, max(float(filtered_country["Current Total Spend"].sum()), 1.0) if not filtered_country.empty else 1.0)
-    total_cost = float(filtered_country["New Total Spend"].sum()) if not filtered_country.empty else 0.0
-
-    kpi_cols = st.columns(5, gap="small")
-    with kpi_cols[0]:
-        render_kpi("Total orders", f"{total_orders:,}", "Filtered supplier-country lines", "neutral", short=True)
-    with kpi_cols[1]:
-        qty_label = "Total quantity ordered" if analysis_mode == "Direct Materials" else "Total headcount / FTEs"
-        qty_fmt = f"{total_quantity:,.0f}" if abs(total_quantity) >= 100 else f"{total_quantity:,.2f}"
-        render_kpi(qty_label, qty_fmt, "Filtered demand driver", "neutral", short=True)
-    with kpi_cols[2]:
-        render_kpi("Pending payments", format_money(pending_payments, currency_symbol, compact=True), "New financial cost", delta_tone(pending_payments), short=True)
-    with kpi_cols[3]:
-        render_kpi("% paid", f"{paid_pct:,.2f}%", "Current baseline proxy", "neutral", short=True)
-    with kpi_cols[4]:
-        render_kpi("Total cost", format_money(total_cost, currency_symbol, compact=True), "New total spend", delta_tone(total_cost), short=True)
-
-    top_row_left, top_row_right = st.columns([1.15, 0.85], gap="large")
-    with top_row_left:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
-        if PLOTLY_AVAILABLE and not heat_df.empty:
-            line_df = heat_df.sort_values("Location").copy()
-            fig_line = go.Figure()
-            fig_line.add_trace(go.Scatter(
-                x=line_df["Location"], y=line_df["Value"], mode="lines+markers+text",
-                text=[format_money(v, currency_symbol, compact=True) if metric in {"Spend", "Saving"} else f"{v:,.1f}" for v in line_df["Value"]],
-                textposition="top center", line=dict(width=3), marker=dict(size=10)
-            ))
-            fig_line.update_layout(title=f"{metric} by {unit_label}", height=320, yaxis_title=metric, transition=dict(duration=850, easing="cubic-in-out"))
-            st.plotly_chart(apply_chart_theme(fig_line), use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.dataframe(heat_df, use_container_width=True)
+    top_l, top_r = st.columns([1.2, 0.8], gap="large")
+    with top_l:
+        st.markdown("<div class='v46-chart'><h4>Cost by market</h4>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE and not fcd.empty:
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(name="Current", x=fcd["Country"], y=fcd["Current Spend"], marker_color="#334155", text=fcd["Current Spend"].map(lambda v: fmt_money(v, currency_symbol, compact=True)), textposition="outside"))
+            fig_bar.add_trace(go.Bar(name="New", x=fcd["Country"], y=fcd["New Spend"], marker_color="#3b82f6", text=fcd["New Spend"].map(lambda v: fmt_money(v, currency_symbol, compact=True)), textposition="outside"))
+            fig_bar.update_layout(title="Current vs New Spend by Market", barmode="group")
+            st.plotly_chart(apply_chart_theme(fig_bar, 320), use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
-    with top_row_right:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
-        if PLOTLY_AVAILABLE and not heat_df.empty:
-            center_lat = float(heat_df["lat"].mean())
-            center_lon = float(heat_df["lon"].mean())
-            size_norm = heat_df["Value"].abs() / max(float(heat_df["Value"].abs().max()), 1.0)
-            marker_size = (20 + size_norm * 30).clip(lower=16, upper=50)
-            fig_map = go.Figure(go.Scattergeo(
-                lat=heat_df["lat"], lon=heat_df["lon"], text=heat_df["Location"], mode="markers+text", textposition="top center",
-                marker=dict(size=marker_size, color=heat_df["Value"], colorscale="Bluered" if metric == "Risk" else "Purples", showscale=True, opacity=0.82, line=dict(width=1, color="white")),
-                customdata=heat_df[["Economic Delta", "Risk"]].values,
-                hovertemplate="%{text}<br>" + metric + ": %{marker.color:,.2f}<br>Economic delta: " + currency_symbol + " %{customdata[0]:,.2f}<br>Risk: %{customdata[1]:.2f}/5<extra></extra>",
-            ))
-            projection_scale = 2.1 if VIEW_SCOPE == "Global View" else (4.8 if ANCHOR_COUNTRY in {"Brazil", "Mexico", "Argentina", "Colombia"} else 3.2)
-            fig_map.update_geos(visible=True, showcountries=True, showland=True, landcolor="#e2e8f0", countrycolor="#94a3b8", coastlinecolor="#94a3b8", projection_type="mercator", center={"lat": center_lat, "lon": center_lon}, projection_scale=projection_scale, fitbounds="locations" if len(heat_df) > 1 else False)
-            map_title = "World heat map" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} heat map"
-            fig_map.update_layout(title=f"{map_title} — {metric}", height=320, margin=dict(l=10, r=10, t=52, b=10), paper_bgcolor="white", plot_bgcolor="white", transition=dict(duration=900, easing="cubic-in-out"))
+    with top_r:
+        st.markdown("<div class='v46-chart'><h4>Geographic heat map</h4>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE and COUNTRIES:
+            map_rows = []
+            for u in COUNTRIES:
+                loc_ = coord_unit(u)
+                cr = dcdf[dcdf["Country"]==u] if not dcdf.empty else pd.DataFrame()
+                val_ = float(cr["New Spend"].sum()) if metric_=="Spend" and not cr.empty else max(-float(cr["Economic All-In Delta"].sum()),0.0) if metric_=="Saving" and not cr.empty else float(cr["Weighted Risk"].mean()) if metric_=="Risk" and not cr.empty else float(dsdf[dsdf["Country"]==u]["Supplier ID"].nunique()) if not dsdf.empty else 0.0
+                map_rows.append({"loc": u, "lat": float(loc_["lat"]), "lon": float(loc_["lon"]), "val": val_})
+            mdf = pd.DataFrame(map_rows)
+            sz_norm = mdf["val"].abs() / max(float(mdf["val"].abs().max()), 1.0)
+            fig_map = go.Figure(go.Scattergeo(lat=mdf["lat"], lon=mdf["lon"], text=mdf["loc"], mode="markers+text", textposition="top center", marker=dict(size=(20+sz_norm*30).clip(16,48), color=mdf["val"], colorscale="Blues" if metric_!="Risk" else "RdYlGn_r", showscale=True, opacity=0.85, line=dict(width=1,color="rgba(255,255,255,.3)")), hovertemplate="%{text}<br>" + metric_ + ": %{marker.color:,.2f}<extra></extra>"))
+            ps_ = 2.0 if VIEW_SCOPE=="Global View" else 4.0
+            fig_map.update_geos(visible=True, showcountries=True, showland=True, landcolor="#1e293b", countrycolor="#334155", coastlinecolor="#475569", bgcolor="rgba(15,23,42,0)", projection_type="mercator", projection_scale=ps_, fitbounds="locations" if len(mdf)>1 else False)
+            fig_map.update_layout(title=f"{metric_} heat map", height=320, margin=dict(l=8,r=8,t=44,b=8), paper_bgcolor="rgba(15,23,42,0)", plot_bgcolor="rgba(15,23,42,0)")
             st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.dataframe(heat_df, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    bottom_left, bottom_right = st.columns([0.75, 1.25], gap="large")
-    with bottom_left:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
-        category_df = filtered_supplier.groupby("Dashboard Category", as_index=False)["Allocated Spend"].sum().sort_values("Allocated Spend", ascending=False) if not filtered_supplier.empty else pd.DataFrame(columns=["Dashboard Category", "Allocated Spend"])
-        if PLOTLY_AVAILABLE and not category_df.empty:
-            fig_pie = go.Figure(go.Pie(labels=category_df["Dashboard Category"], values=category_df["Allocated Spend"], hole=0.55, textinfo="label+percent"))
-            fig_pie.update_layout(title="Total cost by category", height=360, transition=dict(duration=800, easing="cubic-in-out"))
-            st.plotly_chart(apply_chart_theme(fig_pie), use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.dataframe(category_df, use_container_width=True)
+    bot_l, bot_r = st.columns([0.72, 1.28], gap="large")
+    with bot_l:
+        st.markdown("<div class='v46-chart'><h4>Spend by supplier</h4>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE and not fsd.empty:
+            srank = fsd.groupby("Supplier", as_index=False)["Allocated Spend"].sum().sort_values("Allocated Spend", ascending=False).head(8)
+            fig_hb = go.Figure(go.Bar(x=srank["Allocated Spend"], y=srank["Supplier"], orientation="h", marker_color="#6366f1", text=srank["Allocated Spend"].map(lambda v: fmt_money(v, currency_symbol, compact=True)), textposition="auto"))
+            fig_hb.update_layout(title="Allocated spend by supplier", height=350)
+            st.plotly_chart(apply_chart_theme(fig_hb, 350), use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
-    with bottom_right:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
-        supplier_rank_df = filtered_supplier.groupby("Supplier", as_index=False)["Allocated Spend"].sum().sort_values("Allocated Spend", ascending=False).head(10) if not filtered_supplier.empty else pd.DataFrame(columns=["Supplier", "Allocated Spend"])
-        if PLOTLY_AVAILABLE and not supplier_rank_df.empty:
-            fig_bar = go.Figure(go.Bar(x=supplier_rank_df["Allocated Spend"], y=supplier_rank_df["Supplier"], orientation="h", text=supplier_rank_df["Allocated Spend"].map(lambda v: format_money(v, currency_symbol, compact=True)), textposition="auto"))
-            fig_bar.update_layout(title="Total cost by supplier name", height=360, xaxis_title="Allocated spend", yaxis_title="", transition=dict(duration=850, easing="cubic-in-out"))
-            st.plotly_chart(apply_chart_theme(fig_bar), use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.dataframe(supplier_rank_df, use_container_width=True)
+    with bot_r:
+        st.markdown("<div class='v46-chart'><h4>Cost × Risk frontier</h4>", unsafe_allow_html=True)
+        if PLOTLY_AVAILABLE:
+            fr_rows = [{"Scenario": "Current", "Risk": total["Weighted Risk"], "Econ Delta": total["Economic All-In Delta"]}]
+            try:
+                opt_s, _, _ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(opt_step))
+                _, _, _, opt_t = calc_scenario(opt_s, country_inputs, proposal_inputs, supplier_risk, rate_method)
+                fr_rows.append({"Scenario": "Optimized", "Risk": opt_t["Weighted Risk"], "Econ Delta": opt_t["Economic All-In Delta"]})
+            except: pass
+            frf = pd.DataFrame(fr_rows)
+            col_map = {"Current": "#64748b", "Optimized": "#10b981", "Lowest risk": "#f59e0b"}
+            fig_fr = go.Figure()
+            for _, rw in frf.iterrows():
+                fig_fr.add_trace(go.Scatter(x=[rw["Risk"]], y=[rw["Econ Delta"]], mode="markers+text", text=[rw["Scenario"]], textposition="top center", marker=dict(size=16, color=col_map.get(rw["Scenario"], "#3b82f6")), showlegend=True, name=rw["Scenario"], hovertemplate=f"{rw['Scenario']}<br>Risk: %{{x:.2f}}/5<br>Delta: {currency_symbol} %{{y:,.0f}}<extra></extra>"))
+            fig_fr.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)")
+            fig_fr.update_layout(title="Cost × Risk Decision Map", xaxis_title="Weighted risk score", yaxis_title=f"Economic delta ({currency_symbol})", height=350)
+            st.plotly_chart(apply_chart_theme(fig_fr, 350), use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
 
-# =============================================================================
-# Always-visible Cost Optimization panel
-# =============================================================================
 
-render_section(
-    "Cost Optimization",
-    "Run the optimizer from here at any time. It will respect Kraljic minimum shares, supplier capacity, approved-supplier flags, payment terms, financial rates, treasury return, inventory carrying cost and service TCO/productivity economics."
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIMIZATION (always-visible panel)
+# ─────────────────────────────────────────────────────────────────────────────
 
-current_mins_for_optimization = get_min_shares()
-current_maxs_for_optimization = get_max_shares()
-optimization_issues = constraint_issues(current_mins_for_optimization, current_maxs_for_optimization)
-optimization_blocked = bool(optimization_issues)
+render_section("Cost Optimization", "Run optimizer at any time — respects all constraints and updates share sliders automatically.", "#10b981")
+opt_iss = constraint_issues(get_min_shares(), get_max_shares()); opt_blocked = bool(opt_iss)
+for iss in opt_iss: st.error(f"Optimization blocked: {iss}")
+ocm1, ocm2 = st.columns([.24, .76])
+with ocm1:
+    run_opt = st.button("⚡ Run Optimization", type="primary", use_container_width=True, key="opt_main", disabled=opt_blocked)
+with ocm2:
+    st.markdown('<div class="v46-insight"><b>Logic:</b> Minimizes economic all-in delta (spend + payment-term finance cost − treasury return + inventory carry + MOQ drag). In Services mode, proposal spend includes service TCO, productivity gains, SLA risk cost and leakage.</div>', unsafe_allow_html=True)
 
-for issue in optimization_issues:
-    st.error(f"Optimization cannot run: {issue}")
-
-opt_main_col, opt_note_col = st.columns([0.24, 0.76])
-with opt_main_col:
-    run_global_optimization = st.button(
-        "Cost Optimization",
-        type="primary",
-        use_container_width=True,
-        key="cost_optimization_always_visible",
-        disabled=optimization_blocked,
-    )
-
-with opt_note_col:
-    st.markdown(
-        """
-        <div class="insight-box" style="min-height: 92px; padding: 14px 16px;">
-            <b>Optimization logic</b><br>
-            Searches the best allocation by minimizing economic all-in cost first and weighted risk second. In Services mode, proposal spend already includes service TCO, productivity gains, leakage and expected risk cost.
-            If a better allocation is found, the Share Projection sliders are updated automatically after the page refreshes.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-if run_global_optimization:
+if run_opt:
     try:
-        optimized_shares, rationale_df, opt_message = optimize_allocations(
-            country_inputs=country_inputs,
-            proposal_inputs=proposal_inputs,
-            supplier_risk=supplier_risk,
-            method=rate_method,
-            risk_threshold=risk_threshold,
-            optimization_step=int(optimization_step),
-        )
-        st.session_state["pending_optimized_shares"] = optimized_shares
-        st.session_state["optimization_rationale_df"] = rationale_df
-        st.session_state["optimization_message"] = opt_message
+        os_, ord_, om_ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(opt_step))
+        st.session_state["pending_optimized_shares"] = os_
+        st.session_state["optimization_rationale_df"] = ord_
+        st.session_state["optimization_message"] = om_
         st.rerun()
-    except Exception as exc:
-        st.error(f"Optimization failed: {exc}")
-
+    except Exception as exc: st.error(f"Optimization failed: {exc}")
 if st.session_state.get("optimization_message"):
     st.success(st.session_state.get("optimization_message"))
 
-st.markdown("<div class='major-section-spacer' style='height:48px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
 
-# =============================================================================
-# Financial calculation audit
-# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# DECISION STACKS
+# ─────────────────────────────────────────────────────────────────────────────
 
-st.markdown(
-    """
-    <div class="insight-box" style="min-height: 90px; padding: 14px 16px; margin-bottom: 14px;">
-        <b>Financial calculation audit</b><br>
-        Current Financial Cost is calculated only from <b>current spend × financial rate for the current/reference period</b>.
-        New Financial Cost is calculated supplier-by-supplier from <b>allocated proposal spend × equivalent financial rate for each proposed payment term</b>.
-        The audit's new payment days are <b>share-weighted</b>; supplier payment terms never overwrite the current baseline.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+render_section("Decision Stacks", "Expand the stacks needed for the meeting. Everything is collapsed by default for a clean screen.", "#6366f1")
 
-with st.expander("Show gross financial cost and treasury return audit by country"):
-    st.markdown(
-        """
-        **Audit logic:** Gross Financial Delta is only the payment-term supplier financing cost impact.
-        The correct finance decision view is **Net Financial Delta = Gross Financial Delta + Treasury Return Offset**,
-        where Treasury Return Offset equals `Current Treasury Return - New Treasury Return`. A negative value is favorable because
-        additional treasury return is offsetting financial cost.
-        """
-    )
-    audit_cols = [
-        "Country",
-        "Current Spend",
-        "Current Payment Days",
-        "Current Effective Financial Rate",
-        "Current Financial Cost",
-        "Current Capital Gain",
-        "New Spend",
-        "New Avg Payment Days",
-        "New Avg Financial Rate",
-        "New Financial Cost",
-        "New Capital Gain",
-        "Financial Delta",
-        "Treasury Return Offset Delta",
-        "Net Financial Delta",
-    ]
-    audit_df = country_df[audit_cols].copy()
-    money_cols = [
-        "Current Spend",
-        "Current Financial Cost",
-        "Current Capital Gain",
-        "New Spend",
-        "New Financial Cost",
-        "New Capital Gain",
-        "Financial Delta",
-        "Treasury Return Offset Delta",
-        "Net Financial Delta",
-    ]
-    signed_cols = {"Financial Delta", "Treasury Return Offset Delta", "Net Financial Delta"}
-    for col in money_cols:
-        audit_df[col] = audit_df[col].map(lambda x, col=col: format_money(x, currency_symbol, signed=(col in signed_cols)))
-    for col in ["Current Effective Financial Rate", "New Avg Financial Rate"]:
-        audit_df[col] = audit_df[col].map(format_pct)
-    audit_df["Current Payment Days"] = audit_df["Current Payment Days"].map(lambda x: f"{x:.0f} dd")
-    audit_df["New Avg Payment Days"] = audit_df["New Avg Payment Days"].map(lambda x: f"{x:.0f} dd")
-    st.dataframe(audit_df, use_container_width=True)
+@contextmanager
+def stack(title, subtitle, icon, color, tag, expanded=False):
+    label = f"{icon}  {title}  ·  {tag}  —  {subtitle}"
+    with st.expander(label, expanded=expanded):
+        yield
 
-# =============================================================================
-# Executive Dash View tab
-# =============================================================================
-
-with input_tabs[6]:
-    render_executive_view_summary()
-    render_executive_dash_view()
-
-# =============================================================================
-# Executive output
-# =============================================================================
-
-render_section(
-    "Decision Stacks",
-    "Decision-ready cockpit. Expand only the result stacks needed for the meeting and keep the screen clean."
-)
-
-# Keep commonly used regional rows available even when the stacks are hidden.
-primary_row = group_df[group_df["Group"] == PRIMARY_COUNTRY].iloc[0]
-secondary_row = group_df[group_df["Group"] == SECONDARY_GROUP].iloc[0]
-
-gross_total_saving_impact = total["Gross All-In Delta"]
-working_capital_gain_offset = total["Treasury Return Offset Delta"]
-total_saving_plus_working_capital = gross_total_saving_impact + working_capital_gain_offset
-final_economic_all_in = total["Economic All-In Delta"]
-
+# ── Top supplier focus ────────────────────────────────────────────────────────
 if not supplier_focus_df.empty:
-    with result_stack("Top supplier focus lens", f"Executive view focused on the top {focused_supplier_count} supplier offer(s) from the {len(SUPPLIERS)} supplier universe.", "🎛️", "#2563eb" if analysis_mode == "Direct Materials" else "#7c3aed", "Supplier focus", expanded=False):
-        focus_display = supplier_focus_df.head(focused_supplier_count).copy()
-        focus_cols = ["Rank", "Supplier", "Executive Focus Metric", "Economic Total", "Risk Score"]
-        if analysis_mode != "Direct Materials":
-            for extra in ["Performance Score", "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap", "Overtime Hours / Month"]:
-                if extra in focus_display.columns:
-                    focus_cols.append(extra)
-        focus_cols = [c for c in focus_cols if c in focus_display.columns]
-        focus_display = focus_display[focus_cols]
-        for col in ["Executive Focus Metric", "Economic Total", "Performance-Adjusted Cost", "Productivity Gain", "Should-Cost Gap"]:
-            if col in focus_display.columns:
-                focus_display[col] = focus_display[col].map(lambda x: format_money(x, currency_symbol, compact=True, signed=(col == "Should-Cost Gap")))
-        if "Risk Score" in focus_display.columns:
-            focus_display["Risk Score"] = focus_display["Risk Score"].map(lambda x: f"{x:.2f}")
-        if "Performance Score" in focus_display.columns:
-            focus_display["Performance Score"] = focus_display["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-        if "Overtime Hours / Month" in focus_display.columns:
-            focus_display["Overtime Hours / Month"] = focus_display["Overtime Hours / Month"].map(lambda x: "" if pd.isna(x) else f"{x:.1f} h/mo")
-        st.markdown(f"<div class='executive-panel {'direct-accent' if analysis_mode == 'Direct Materials' else 'service-accent'}'>", unsafe_allow_html=True)
-        st.dataframe(focus_display, use_container_width=True, hide_index=True)
-        st.caption("Use the sidebar focus slider to change how many top suppliers are highlighted. Share allocation and optimization respect the selected countries, modeled shares and constraints.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-with result_stack("Total project saving", "Final selected-market result, separating gross total saving, working-capital gain and inventory-adjusted economic all-in.", "🏁", GREEN if final_economic_all_in <= 0 else RED, "Final project result", expanded=True):
-    project_cols = st.columns([1.2, 1.2, 1.55, 1.35], gap="medium")
-    with project_cols[0]:
-        render_kpi(
-            "Gross Total Saving / Impact",
-            format_money(gross_total_saving_impact, currency_symbol, compact=True, signed=True),
-            "New total spend - current total spend | before treasury return",
-            delta_tone(gross_total_saving_impact),
-            short=True,
-        )
-    with project_cols[1]:
-        render_kpi(
-            "Working Capital Gain",
-            format_money(working_capital_gain_offset, currency_symbol, compact=True, signed=True),
-            "Current treasury return - new treasury return | favorable when negative",
-            delta_tone(working_capital_gain_offset),
-            short=True,
-        )
-    with project_cols[2]:
-        render_kpi(
-            "Total Saving + Working Capital",
-            format_money(total_saving_plus_working_capital, currency_symbol, compact=True, signed=True),
-            "Gross total saving/impact + incremental treasury return offset",
-            delta_tone(total_saving_plus_working_capital),
-        )
-    with project_cols[3]:
-        render_kpi(
-            "Final Economic All-In",
-            format_money(final_economic_all_in, currency_symbol, compact=True, signed=True),
-            "Total saving + working capital + inventory carrying delta",
-            delta_tone(final_economic_all_in),
-            short=True,
-        )
+    with stack("Top Supplier Focus", f"Top {focused_supplier_count} of {len(SUPPLIERS)} suppliers by executive lens.", "🎛️", "#3b82f6", "Supplier focus"):
+        fd = supplier_focus_df.head(focused_supplier_count).copy()
+        show_cols = ["Rank","Supplier","Executive Focus Metric","Economic Total","Risk Score"]
+        if analysis_mode=="Indirect / Services":
+            for ec in ["Performance Score","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap","Productivity ROI %","SLA Gap"]:
+                if ec in fd.columns: show_cols.append(ec)
+        show_cols = [c for c in show_cols if c in fd.columns]
+        fd = fd[show_cols]
+        for mc in ["Executive Focus Metric","Economic Total","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap"]:
+            if mc in fd.columns: fd[mc] = fd[mc].map(lambda x: fmt_money(x, currency_symbol, compact=True, signed=(mc=="Should-Cost Gap")))
+        if "Risk Score" in fd.columns: fd["Risk Score"] = fd["Risk Score"].map(lambda x: f"{x:.2f}")
+        if "Performance Score" in fd.columns: fd["Performance Score"] = fd["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+        if "Productivity ROI %" in fd.columns: fd["Productivity ROI %"] = fd["Productivity ROI %"].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+        if "SLA Gap" in fd.columns: fd["SLA Gap"] = fd["SLA Gap"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
+        st.dataframe(fd, use_container_width=True, hide_index=True)
 
-    contribution_cols = st.columns(2, gap="medium")
-    with contribution_cols[0]:
-        render_kpi(
-            f"{PRIMARY_COUNTRY} Contribution",
-            format_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
-            f"{PRIMARY_COUNTRY} economic all-in delta",
-            delta_tone(primary_row["Economic All-In Delta"]),
-            short=True,
-        )
-    with contribution_cols[1]:
-        render_kpi(
-            f"{SECONDARY_GROUP} Contribution",
-            format_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True),
-            f"{len(LATAM_COUNTRIES)} other selected market(s) economic all-in delta",
-            delta_tone(secondary_row["Economic All-In Delta"]),
-            short=True,
-        )
+# ── Total project saving ────────────────────────────────────────────────────
+with stack("Total Project Saving", "Gross saving, working capital gain and economic all-in.", "🏁", "#10b981" if final_econ<=0 else "#ef4444", "Final result", expanded=True):
+    c5 = st.columns(5)
+    with c5[0]: render_kpi("Gross Total Saving / Impact", fmt_money(gross_delta, currency_symbol, compact=True, signed=True), "New total spend − current total spend", delta_tone(gross_delta))
+    with c5[1]: render_kpi("Working Capital Gain", fmt_money(wc_delta, currency_symbol, compact=True, signed=True), "Current treasury return − new treasury return", delta_tone(wc_delta))
+    with c5[2]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "MOQ cash drag reduction", benefit_tone(moq_benefit))
+    with c5[3]: render_kpi("Total Saving + WC", fmt_money(total_saving_wc, currency_symbol, compact=True, signed=True), "Gross + treasury offset + MOQ release", delta_tone(total_saving_wc))
+    with c5[4]: render_kpi("Final Economic All-In", fmt_money(final_econ, currency_symbol, compact=True, signed=True), "Finance + treasury + inventory + MOQ drag", delta_tone(final_econ))
+    cc = st.columns(2)
+    with cc[0]: render_kpi(f"{PRIMARY_COUNTRY} contribution", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} economic delta", delta_tone(primary_row["Economic All-In Delta"]))
+    with cc[1]: render_kpi(f"{SECONDARY_GROUP} contribution", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{len(LATAM_COUNTRIES)} other markets", delta_tone(secondary_row["Economic All-In Delta"]))
 
-with result_stack("AI Executive Copilot", "One-click concise executive recommendation based on the current scenario. Local preview today; the prompt payload is ready for external AI/API integration.", "🤖", "#6366f1", "AI brief", expanded=False):
-    ai_cols = st.columns([0.30, 0.70], gap="large")
-    with ai_cols[0]:
-        if st.button("Generate AI Executive Brief", type="primary", use_container_width=True, key="generate_ai_exec_brief"):
-            st.session_state["ai_prompt_payload"] = build_ai_prompt_payload(
-                analysis_mode=analysis_mode,
-                total=total,
-                group_df=group_df,
-                supplier_focus_df=supplier_focus_df,
-                focused_supplier_count=focused_supplier_count,
-                currency=currency_symbol,
-            )
-            st.session_state["ai_exec_brief"] = generate_ai_executive_brief(
-                analysis_mode=analysis_mode,
-                total=total,
-                group_df=group_df,
-                supplier_focus_df=supplier_focus_df,
-                focused_supplier_count=focused_supplier_count,
-                currency=currency_symbol,
-            )
-        st.caption("For now this is a controlled in-app executive analysis. A future API key can replace the local logic with a real AI call.")
-    with ai_cols[1]:
-        st.markdown(
-            "<div class='insight-box'><b>How it works</b><br>The app summarizes the current scenario, top suppliers, total saving, working capital, regional deltas, service KPIs and risk. The output is intentionally short for executive use.</div>",
-            unsafe_allow_html=True,
-        )
-    if st.session_state.get("ai_exec_brief"):
-        st.markdown(st.session_state["ai_exec_brief"], unsafe_allow_html=True)
-        with st.expander("Copy/paste payload for external AI tool", expanded=False):
-            st.text_area(
-                "Prompt payload",
-                value=st.session_state.get("ai_prompt_payload", ""),
-                height=220,
-                key="ai_prompt_payload_textarea",
-            )
+# ── AI Copilot ────────────────────────────────────────────────────────────────
+with stack("AI Executive Copilot", "Concise decision-oriented brief from the current scenario.", "🤖", "#6366f1", "AI brief"):
+    ai1, ai2 = st.columns([.30, .70])
+    with ai1:
+        if st.button("Generate Brief", type="primary", use_container_width=True, key="gen_brief"):
+            st.session_state["ai_payload"] = build_ai_payload(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
+            st.session_state["ai_brief"] = generate_local_brief(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
+        st.caption("Local deterministic brief. Connect Anthropic API key for live AI analysis.")
+    with ai2:
+        st.markdown('<div class="v46-insight"><b>How it works:</b> Reads the full scenario — suppliers, economics, risk, SLA, productivity — and produces an Amazon-caliber concise recommendation with negotiation levers and next actions.</div>', unsafe_allow_html=True)
+    if st.session_state.get("ai_brief"):
+        st.markdown(st.session_state["ai_brief"], unsafe_allow_html=True)
+        with st.expander("Copy prompt for external AI", expanded=False):
+            st.text_area("Prompt payload", value=st.session_state.get("ai_payload",""), height=200, key="ai_payload_ta")
 
-with result_stack("Total cost stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline", expanded=False):
-    row1 = st.columns(6, gap="medium")
-    with row1[0]:
-        render_kpi("Current Spend", format_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
-    with row1[1]:
-        render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Supplier proposals x shares", "neutral")
-    with row1[2]:
-        render_kpi("Current Financial Cost", format_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend x current payment-term rate", "neutral")
-    with row1[3]:
-        render_kpi("New Financial Cost", format_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend x proposed payment-term rates", "neutral")
-    with row1[4]:
-        render_kpi("Current Total Spend", format_money(total["Current Total Spend"], currency_symbol, compact=True), "Current spend + current financial cost", "neutral")
-    with row1[5]:
-        render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
+# ── Cost Stack ───────────────────────────────────────────────────────────────
+with stack("Total Cost Stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline"):
+    c6 = st.columns(6)
+    with c6[0]: render_kpi("Current Spend", fmt_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
+    with c6[1]: render_kpi("New Spend", fmt_money(total["New Spend"], currency_symbol, compact=True), "Proposals × shares", "neutral")
+    with c6[2]: render_kpi("Current Fin. Cost", fmt_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend × current term rate", "neutral")
+    with c6[3]: render_kpi("New Fin. Cost", fmt_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend × proposed term rates", "neutral")
+    with c6[4]: render_kpi("Current Total", fmt_money(total["Current Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
+    with c6[5]: render_kpi("New Total", fmt_money(total["New Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
 
-if SUPPLIERS:
-    with result_stack("Reference supplier condition stack", "Benchmark scenario assuming 100% volume under revised reference-supplier conditions.", "🏭", "#f59e0b", "Reference case", expanded=False):
-        primary_reference_supplier = SUPPLIERS[0]
-        primary_reference_name = supplier_display_name(primary_reference_supplier)
-        primary_reference_short = supplier_short_name(primary_reference_supplier)
-        chemprime_reference = calc_full_supplier_reference_stack(
-            supplier=primary_reference_supplier,
-            country_inputs=country_inputs,
-            proposal_inputs=proposal_inputs,
-            method=rate_method,
-            payment_day_overrides={c: (90 if c == "Brazil" else 60 if c in ["Mexico", "Argentina", "Colombia"] else proposal_inputs[c][primary_reference_supplier]["payment_days"]) for c in COUNTRIES},
-        )
-        row1b = st.columns(6, gap="medium")
-        with row1b[0]:
-            render_kpi(f"100% {primary_reference_short} Spend", format_money(chemprime_reference["Reference Spend"], currency_symbol, compact=True), f"100% awarded to {primary_reference_short} at proposed spend", "neutral")
-        with row1b[1]:
-            render_kpi("New Spend", format_money(total["New Spend"], currency_symbol, compact=True), "Supplier proposals x shares", "neutral")
-        with row1b[2]:
-            render_kpi(f"100% {primary_reference_short} Fin. Cost", format_money(chemprime_reference["Reference Financial Cost"], currency_symbol, compact=True), "Selected-market reference payment terms", "neutral")
-        with row1b[3]:
-            render_kpi("New Financial Cost", format_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend x proposed payment-term rates", "neutral")
-        with row1b[4]:
-            render_kpi(f"100% {primary_reference_short} Total Spend", format_money(chemprime_reference["Reference Total Spend"], currency_symbol, compact=True), f"100% {primary_reference_short} spend + reference financial cost", "neutral")
-        with row1b[5]:
-            render_kpi("New Total Spend", format_money(total["New Total Spend"], currency_symbol, compact=True), "New spend + new financial cost", "neutral")
-    
-with result_stack("Working capital carry view", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing", expanded=False):
-    wc_row = st.columns(5, gap="medium")
-    with wc_row[0]:
-        render_kpi("Current Treasury Return", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current payment terms", "good", short=True)
-    with wc_row[1]:
-        render_kpi("New Treasury Return", format_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed payment terms", "good", short=True)
-    with wc_row[2]:
-        render_kpi("Current Net Financial Effect", format_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Current financial cost - treasury return", delta_tone(total["Current Net Financial Effect"]), short=True)
-    with wc_row[3]:
-        render_kpi("New Net Financial Effect", format_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost - treasury return", delta_tone(total["New Net Financial Effect"]), short=True)
-    with wc_row[4]:
-        render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New net effect - current net effect", delta_tone(total["Net Financial Delta"]), short=True)
+# ── Working capital carry view ────────────────────────────────────────────────
+with stack("Working Capital Carry", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing"):
+    wc6 = st.columns(6)
+    with wc6[0]: render_kpi("Current Treasury Return", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current terms", "good")
+    with wc6[1]: render_kpi("New Treasury Return", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed terms", "good")
+    with wc6[2]: render_kpi("Current Net Financial", fmt_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Financial cost − treasury return", delta_tone(total["Current Net Financial Effect"]))
+    with wc6[3]: render_kpi("New Net Financial", fmt_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost − treasury return", delta_tone(total["New Net Financial Effect"]))
+    with wc6[4]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New − current net financial effect", delta_tone(total["Net Financial Delta"]))
+    with wc6[5]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "Lower MOQ cash drag", benefit_tone(moq_benefit))
 
-with result_stack("Total decomposition", "Decision-ready breakdown of spend, financial effect, inventory and risk.", "🧩", "#8b5cf6", "Decision view", expanded=False):
-    row2 = st.columns(6, gap="medium")
-    with row2[0]:
-        render_kpi("Spend Saving / Impact", format_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New spend - current spend", delta_tone(total["Spend Delta"]), short=True)
-    with row2[1]:
-        render_kpi("Gross Financial Saving / Impact", format_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New gross financial cost - current gross financial cost", delta_tone(total["Financial Delta"]), short=True)
-    with row2[2]:
-        render_kpi("Treasury Return Offset", format_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current treasury return - new treasury return", delta_tone(total["Treasury Return Offset Delta"]), short=True)
-    with row2[3]:
-        render_kpi("Net Financial Saving / Impact", format_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross financial delta + treasury return offset", delta_tone(total["Net Financial Delta"]), short=True)
-    with row2[4]:
-        render_kpi("Economic All-In Saving / Impact", format_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net financial effect + inventory carrying", delta_tone(total["Economic All-In Delta"]), short=True)
-    with row2[5]:
-        render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]), short=True)
+# ── Total decomposition ───────────────────────────────────────────────────────
+with stack("Total Decomposition", "Decision-ready breakdown of spend, finance, inventory and risk.", "🧩", "#8b5cf6", "Decision view"):
+    c7 = st.columns(7)
+    with c7[0]: render_kpi("Spend Delta", fmt_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New − current spend", delta_tone(total["Spend Delta"]))
+    with c7[1]: render_kpi("Gross Financial Delta", fmt_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New − current gross fin. cost", delta_tone(total["Financial Delta"]))
+    with c7[2]: render_kpi("Treasury Offset", fmt_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current − new treasury return", delta_tone(total["Treasury Return Offset Delta"]))
+    with c7[3]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross fin. + treasury offset", delta_tone(total["Net Financial Delta"]))
+    with c7[4]: render_kpi("MOQ WC Drag Delta", fmt_money(moq_drag_delta, currency_symbol, compact=True, signed=True), "New − current MOQ drag", delta_tone(moq_drag_delta))
+    with c7[5]: render_kpi("Economic All-In", fmt_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net fin. + inventory + MOQ", delta_tone(final_econ))
+    with c7[6]: render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]))
 
-with result_stack(f"{PRIMARY_COUNTRY} result", f"Country-level result and impact drivers for {PRIMARY_COUNTRY}, including payment-term movement.", "📍", "#06b6d4", "Anchor market", expanded=False):
-    row3 = st.columns(7, gap="medium")
-    with row3[0]:
-        render_kpi("Current Avg Payment Term", f"{primary_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
-    with row3[1]:
-        render_kpi("New Proposal Avg Payment Term", f"{primary_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
-    with row3[2]:
-        render_kpi("Spend Saving / Impact", format_money(primary_row["Spend Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} new spend - current spend", delta_tone(primary_row["Spend Delta"]), short=True)
-    with row3[3]:
-        render_kpi("Gross Financial Saving / Impact", format_money(primary_row["Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} gross financial cost delta", delta_tone(primary_row["Financial Delta"]), short=True)
-    with row3[4]:
-        render_kpi("Treasury Return Offset", format_money(primary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} current return - new return", delta_tone(primary_row["Treasury Return Offset Delta"]), short=True)
-    with row3[5]:
-        render_kpi("Net Financial Saving / Impact", format_money(primary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} net financial effect after treasury return", delta_tone(primary_row["Net Financial Delta"]), short=True)
-    with row3[6]:
-        render_kpi("Economic All-In Saving / Impact", format_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} spend + net financial effect + inventory", delta_tone(primary_row["Economic All-In Delta"]), short=True)
+# ── Anchor market ────────────────────────────────────────────────────────────
+with stack(f"{PRIMARY_COUNTRY} Result", f"Detailed P&L for anchor market {PRIMARY_COUNTRY}.", "📍", "#06b6d4", "Anchor market"):
+    c7a = st.columns(7)
+    with c7a[0]: render_kpi("Current Avg Term", f"{primary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
+    with c7a[1]: render_kpi("New Avg Term", f"{primary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
+    with c7a[2]: render_kpi("Spend Delta", fmt_money(primary_row["Spend Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Spend Delta"]))
+    with c7a[3]: render_kpi("Gross Fin. Delta", fmt_money(primary_row["Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Financial Delta"]))
+    with c7a[4]: render_kpi("Treasury Offset", fmt_money(primary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Treasury Return Offset Delta"]))
+    with c7a[5]: render_kpi("Net Fin. Delta", fmt_money(primary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Net Financial Delta"]))
+    with c7a[6]: render_kpi("Economic All-In", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Economic All-In Delta"]))
 
-with result_stack(f"{SECONDARY_GROUP} result", f"Consolidated impact view for {len(LATAM_COUNTRIES)} other selected market(s), including payment-term movement.", "🌎", "#ec4899", "Regional view", expanded=False):
-    row4 = st.columns(7, gap="medium")
-    with row4[0]:
-        render_kpi("Current Avg Payment Term", f"{secondary_row['Current Avg Payment Days']:.0f} dd", "Current baseline payment term", "neutral", short=True)
-    with row4[1]:
-        render_kpi("New Proposal Avg Payment Term", f"{secondary_row['New Avg Payment Days']:.0f} dd", "Share-weighted proposed payment term", "neutral", short=True)
-    with row4[2]:
-        render_kpi("Spend Saving / Impact", format_money(secondary_row["Spend Delta"], currency_symbol, compact=True, signed=True), f"{SECONDARY_GROUP} new spend - current spend", delta_tone(secondary_row["Spend Delta"]), short=True)
-    with row4[3]:
-        render_kpi("Gross Financial Saving / Impact", format_money(secondary_row["Financial Delta"], currency_symbol, compact=True, signed=True), f"{SECONDARY_GROUP} gross financial cost delta", delta_tone(secondary_row["Financial Delta"]), short=True)
-    with row4[4]:
-        render_kpi("Treasury Return Offset", format_money(secondary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), f"{SECONDARY_GROUP} current return - new return", delta_tone(secondary_row["Treasury Return Offset Delta"]), short=True)
-    with row4[5]:
-        render_kpi("Net Financial Saving / Impact", format_money(secondary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), f"{SECONDARY_GROUP} net financial effect after treasury return", delta_tone(secondary_row["Net Financial Delta"]), short=True)
-    with row4[6]:
-        render_kpi("Economic All-In Saving / Impact", format_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{SECONDARY_GROUP} spend + net financial effect + inventory", delta_tone(secondary_row["Economic All-In Delta"]), short=True)
+# ── Other markets ────────────────────────────────────────────────────────────
+with stack(f"{SECONDARY_GROUP} Result", f"Consolidated view for {len(LATAM_COUNTRIES)} other selected markets.", "🌎", "#ec4899", "Regional view"):
+    c7b = st.columns(7)
+    with c7b[0]: render_kpi("Current Avg Term", f"{secondary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
+    with c7b[1]: render_kpi("New Avg Term", f"{secondary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
+    with c7b[2]: render_kpi("Spend Delta", fmt_money(secondary_row["Spend Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Spend Delta"]))
+    with c7b[3]: render_kpi("Gross Fin. Delta", fmt_money(secondary_row["Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Financial Delta"]))
+    with c7b[4]: render_kpi("Treasury Offset", fmt_money(secondary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Treasury Return Offset Delta"]))
+    with c7b[5]: render_kpi("Net Fin. Delta", fmt_money(secondary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Net Financial Delta"]))
+    with c7b[6]: render_kpi("Economic All-In", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Economic All-In Delta"]))
 
-with result_stack("Decision recommendation", "Clear go/no-go interpretation of the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
-    if total["Economic All-In Delta"] <= 0:
-        st.markdown(
-            f"""
-            <div class="decision-card decision-good">
-                <div class="decision-title">Recommended scenario is economically attractive</div>
-                <div class="decision-body">
-                    Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b> after considering supplier financing,
-                    treasury carry, inventory carrying cost and weighted risk. Commercial spend delta is <b>{format_money(total['Spend Delta'], currency_symbol, signed=True)}</b>.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"""
-            <div class="decision-card decision-bad">
-                <div class="decision-title">Scenario still creates economic cost impact</div>
-                <div class="decision-body">
-                    Economic all-in delta is <b>{format_money(total['Economic All-In Delta'], currency_symbol, signed=True)}</b>. Use Cost Optimization or adjust supplier mix, payment terms, risk constraints or proposal spend.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+# ── Decision recommendation ────────────────────────────────────────────────
+with stack("Decision Recommendation", "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
+    cls_ = "good" if final_econ <= 0 else "bad"
+    title_ = "Scenario is economically attractive — recommend approval" if final_econ <= 0 else "Scenario creates economic cost impact — renegotiate before approval"
+    st.markdown(
+        f"""<div class="v46-decision {cls_}">
+        <div class="v46-decision-title">{'✅' if final_econ<=0 else '⚠'} {title_}</div>
+        <div class="v46-decision-body">
+        Economic all-in delta: <b>{fmt_money(final_econ, currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
+        Commercial spend delta: <b>{fmt_money(total['Spend Delta'], currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
+        Weighted risk: <b>{total['Weighted Risk']:.2f}/5</b>.
+        {'Use Cost Optimization or adjust supplier mix, payment terms or proposal spend to improve the case.' if final_econ>0 else 'Proceed with final commercial negotiation using the top supplier focus list as the anchor for price, payment terms and productivity commitments.'}
+        </div></div>""",
+        unsafe_allow_html=True,
+    )
 
-# =============================================================================
-# Charts
-# =============================================================================
-
-with result_stack("Charts", "Visual comparison of cost stack, decomposition and cost-risk trade-offs.", "📈", "#2563eb", "Visual analytics", expanded=False):
-    chart_col1, chart_col2 = st.columns([1.2, 1.0], gap="large")
-    with chart_col1:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+# ── Charts ────────────────────────────────────────────────────────────────────
+with stack("Charts", "Cost stack, economic waterfall and decision map.", "📈", "#2563eb", "Visual analytics"):
+    cc1, cc2 = st.columns([1.2, 1.0], gap="large")
+    with cc1:
+        st.markdown("<div class='v46-chart'><h4>Total Cost Stack</h4>", unsafe_allow_html=True)
         if PLOTLY_AVAILABLE:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"],
-                y=[total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]],
-                marker_color=["#64748b", "#2563eb", "#f97316", "#f97316", "#0f766e", "#1d4ed8"],
-                text=[format_money(v, currency_symbol, compact=True) for v in [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]],
-                textposition="outside",
-                hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
-            ))
-            fig.update_layout(title="Total Cost Stack", height=430, yaxis_title=f"Value ({currency_symbol})")
-            st.plotly_chart(apply_chart_theme(fig), use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.bar_chart(pd.DataFrame({"Value": [total["Current Spend"], total["New Spend"], total["Current Financial Cost"], total["New Financial Cost"], total["Current Total Spend"], total["New Total Spend"]]}, index=["Current Spend", "New Spend", "Current Fin. Cost", "New Fin. Cost", "Current Total", "New Total"]))
+            labels_ = ["Current\nSpend","New\nSpend","Current\nFin. Cost","New\nFin. Cost","Current\nTotal","New\nTotal"]
+            values_ = [total["Current Spend"],total["New Spend"],total["Current Financial Cost"],total["New Financial Cost"],total["Current Total Spend"],total["New Total Spend"]]
+            colors_ = ["#475569","#3b82f6","#f97316","#fb923c","#0f766e","#1d4ed8"]
+            fig_cs = go.Figure(go.Bar(x=labels_, y=values_, marker_color=colors_, text=[fmt_money(v,currency_symbol,compact=True) for v in values_], textposition="outside", hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
+            fig_cs.update_layout(title="Total Cost Stack", yaxis_title=f"({currency_symbol})")
+            st.plotly_chart(apply_chart_theme(fig_cs), use_container_width=True, config={"displayModeBar":False})
         st.markdown("</div>", unsafe_allow_html=True)
-
-    with chart_col2:
-        st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
+    with cc2:
+        st.markdown("<div class='v46-chart'><h4>Economic Delta Waterfall</h4>", unsafe_allow_html=True)
         if PLOTLY_AVAILABLE:
-            fig = go.Figure()
-            decomp_names = ["Spend", "Net financial", "Inventory", "Economic all-in"]
-            decomp_vals = [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]
-            fig.add_trace(go.Waterfall(
-                name="Economic bridge",
-                orientation="v",
-                measure=["relative", "relative", "relative", "total"],
-                x=decomp_names,
-                y=decomp_vals,
-                text=[format_money(v, currency_symbol, compact=True, signed=True) for v in decomp_vals],
-                textposition="outside",
-                connector={"line": {"color": "rgba(100,116,139,.55)", "width": 2}},
-                increasing={"marker": {"color": RED}},
-                decreasing={"marker": {"color": GREEN}},
-                totals={"marker": {"color": BLUE}},
-                hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>",
-            ))
-            fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-            fig.update_layout(title="Economic Delta Waterfall", height=430, yaxis_title=f"Delta ({currency_symbol})")
-            st.plotly_chart(apply_chart_theme(fig), use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.bar_chart(pd.DataFrame({"Value": [total["Spend Delta"], total["Net Financial Delta"], total["Inventory Delta"], total["Economic All-In Delta"]]}, index=["Spend Delta", "Net Financial Delta", "Inventory Delta", "Economic Delta"]))
+            wf_names = ["Spend","Net financial","Inventory","MOQ WC","Economic all-in"]
+            wf_vals = [total["Spend Delta"],total["Net Financial Delta"],total["Inventory Delta"],moq_drag_delta,final_econ]
+            fig_wf = go.Figure(go.Waterfall(orientation="v", measure=["relative","relative","relative","relative","total"], x=wf_names, y=wf_vals, text=[fmt_money(v,currency_symbol,compact=True,signed=True) for v in wf_vals], textposition="outside", connector={"line":{"color":"rgba(148,163,184,.3)","width":2}}, increasing={"marker":{"color":"#ef4444"}}, decreasing={"marker":{"color":"#10b981"}}, totals={"marker":{"color":"#3b82f6"}}, hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
+            fig_wf.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)")
+            fig_wf.update_layout(title="Economic Delta Waterfall", yaxis_title=f"({currency_symbol})")
+            st.plotly_chart(apply_chart_theme(fig_wf), use_container_width=True, config={"displayModeBar":False})
         st.markdown("</div>", unsafe_allow_html=True)
 
-    frontier_rows = [
-        {"Scenario": "Current scenario", "Risk": total["Weighted Risk"], "Economic Delta": total["Economic All-In Delta"]},
-    ]
-    try:
-        opt_shares, _, _ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(optimization_step))
-        _, _, _, opt_total = calc_scenario(opt_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
-        frontier_rows.append({"Scenario": "Optimized", "Risk": opt_total["Weighted Risk"], "Economic Delta": opt_total["Economic All-In Delta"]})
-    except Exception:
-        pass
-    try:
-        low_risk_preferences = {s: max(0.0, 6.0 - supplier_risk[s]) for s in SUPPLIERS}
-        low_risk_shares = {country: allocate_with_bounds(low_risk_preferences, get_min_shares(), get_max_shares(), 100.0) for country in COUNTRIES}
-        _, _, _, low_risk_total = calc_scenario(low_risk_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
-        frontier_rows.append({"Scenario": "Lowest risk", "Risk": low_risk_total["Weighted Risk"], "Economic Delta": low_risk_total["Economic All-In Delta"]})
-    except Exception:
-        pass
-    frontier_df = pd.DataFrame(frontier_rows)
-    st.markdown("<div class='chart-shell'>", unsafe_allow_html=True)
-    if PLOTLY_AVAILABLE:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=frontier_df["Risk"],
-            y=frontier_df["Economic Delta"],
-            mode="markers+text",
-            text=frontier_df["Scenario"],
-            textposition="top center",
-            marker=dict(size=15, color=[BLUE, GREEN, AMBER, "#7c3aed"][:len(frontier_df)]),
-            hovertemplate="%{text}<br>Risk: %{x:.2f}/5<br>Economic delta: " + currency_symbol + " %{y:,.2f}<extra></extra>",
-        ))
-        fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-        fig.update_layout(title="Cost x Risk Decision Map", height=430, xaxis_title="Weighted risk score", yaxis_title=f"Economic delta ({currency_symbol})")
-        st.plotly_chart(apply_chart_theme(fig), use_container_width=True, config={"displayModeBar": False})
-    else:
-        st.dataframe(frontier_df, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# =============================================================================
-# Working capital economic view and rationale
-# =============================================================================
-
-if show_advanced_economic:
-    with result_stack("Working capital economic view", "Separates P&L spend, payment-term financing, capital carry benefit and inventory carrying cost.", "💼", "#0f766e", "Economic view", expanded=False):
-        render_section("Working Capital Economic View", "This view separates P&L spend, payment-term financing, capital carry benefit and inventory carrying cost.")
-        econ_cols = st.columns(5, gap="medium")
-        with econ_cols[0]:
-            render_kpi("Current Capital Gain", format_money(total["Current Capital Gain"], currency_symbol, compact=True), "Uses current payment terms by country", "good", short=True)
-        with econ_cols[1]:
-            render_kpi("New Capital Gain", format_money(total["New Capital Gain"], currency_symbol, compact=True), f"Uses supplier payment terms | avg {total.get('New Avg Return Days', 0):.0f}dd", "good", short=True)
-        with econ_cols[2]:
-            render_kpi("Inventory Delta", format_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New inventory cost - current inventory cost", delta_tone(total["Inventory Delta"]), short=True)
-        with econ_cols[3]:
-            render_kpi("Current Economic Total", format_money(total["Current Economic Total"], currency_symbol, compact=True), "Gross total - capital gain + inventory", "neutral", short=True)
-        with econ_cols[4]:
-            render_kpi("New Economic Total", format_money(total["New Economic Total"], currency_symbol, compact=True), "Gross total - capital gain + inventory", "neutral", short=True)
-    
-        st.markdown("<div class='plain-title'>Optimization rationale</div>", unsafe_allow_html=True)
-        rationale_df = st.session_state.get("optimization_rationale_df")
-        if isinstance(rationale_df, pd.DataFrame) and not rationale_df.empty:
-            display_rat = rationale_df.copy()
-            for col in ["Economic Delta", "Gross All-In Delta", "Spend Delta"]:
-                if col in display_rat.columns:
-                    display_rat[col] = display_rat[col].map(lambda x: format_money(x, currency_symbol, signed=True))
-            st.dataframe(display_rat, use_container_width=True)
+# ── Working capital economic view ──────────────────────────────────────────
+if show_adv_econ:
+    with stack("Working Capital Economic View", "Treasury return, capital gain and inventory separated.", "💼", "#0f766e", "Economic view"):
+        ec5 = st.columns(5)
+        with ec5[0]: render_kpi("Current Capital Gain", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Current payment terms", "good")
+        with ec5[1]: render_kpi("New Capital Gain", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), f"Avg {total.get('New Avg Return Days',0):.0f}dd", "good")
+        with ec5[2]: render_kpi("Inventory Delta", fmt_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New − current inventory carry", delta_tone(total["Inventory Delta"]))
+        with ec5[3]: render_kpi("Current Econ. Total", fmt_money(total["Current Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
+        with ec5[4]: render_kpi("New Econ. Total", fmt_money(total["New Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
+        st.markdown("<div class='v46-plain-title'>Optimization rationale</div>", unsafe_allow_html=True)
+        rat_df = st.session_state.get("optimization_rationale_df")
+        if isinstance(rat_df, pd.DataFrame) and not rat_df.empty:
+            rd_ = rat_df.copy()
+            for mc in ["Economic Delta","Gross All-In Delta","Spend Delta"]:
+                if mc in rd_.columns: rd_[mc] = rd_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=True))
+            st.dataframe(rd_, use_container_width=True)
         else:
-            st.info("Run Cost Optimization to generate a country-by-country allocation rationale.")
-    
-# =============================================================================
-# Detailed tables
-# =============================================================================
+            st.info("Run Cost Optimization to generate the rationale table.")
 
-with result_stack("Detailed data", "Audit trail for Finance, Procurement and category strategy discussions.", "🧾", "#64748b", "Detailed data", expanded=False):
-    render_section("Detailed Data", "Audit trail for Finance, Procurement and category strategy discussions.")
-    detail_tab_names = ["Country summary", "Region summary", "Supplier allocation", "Risk scores", "Supplier governance", "Custom analysis"]
-    if analysis_mode != "Direct Materials":
-        detail_tab_names.append("Service scorecards")
-    detail_tabs = st.tabs(detail_tab_names)
-    with detail_tabs[0]:
-        display_country = country_df.copy()
-        money_cols = [c for c in display_country.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
-        for col in money_cols:
-            display_country[col] = display_country[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
-        for col in ["Weighted Risk", "Current Effective Financial Rate", "New Avg Financial Rate", "Current Effective Treasury Rate", "New Avg Treasury Rate"]:
-            if col in display_country:
-                if "Rate" in col:
-                    display_country[col] = display_country[col].map(format_pct)
-                else:
-                    display_country[col] = display_country[col].map(lambda x: f"{x:.2f}")
-        st.dataframe(display_country, use_container_width=True)
-    with detail_tabs[1]:
-        display_group = group_df.copy()
-        money_cols = [c for c in display_group.columns if any(k in c for k in ["Spend", "Cost", "Gain", "Total", "Delta"])]
-        for col in money_cols:
-            display_group[col] = display_group[col].map(lambda x: format_money(x, currency_symbol, signed=("Delta" in col)))
-        st.dataframe(display_group, use_container_width=True)
-    with detail_tabs[2]:
-        display_supplier = supplier_df.copy()
-        if top_focus_supplier_ids:
-            display_supplier["Executive Focus"] = display_supplier["Supplier ID"].isin(top_focus_supplier_ids).map({True: "Top focus", False: "Other"})
-        supplier_money_cols = [
-            "Allocated Spend", "Supplier Financial Cost", "Capital Gain Offset", "Inventory Carrying Cost", "Economic Total",
-            "Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost",
-            "Price per Person / Month", "Hourly Rate", "Overtime Cost", "Should-Cost Target", "Should-Cost Gap", "Open-Cost Total", "Unexplained Quote Value", "Custom Cost Adjustment",
-        ]
-        for col in supplier_money_cols:
-            if col in display_supplier.columns:
-                display_supplier[col] = display_supplier[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol, signed=(col == "Should-Cost Gap")))
-        if "Share %" in display_supplier.columns:
-            display_supplier["Share %"] = display_supplier["Share %"].map(lambda x: f"{x:.1f}%")
-        if "Risk Score" in display_supplier.columns:
-            display_supplier["Risk Score"] = display_supplier["Risk Score"].map(lambda x: f"{x:.2f}")
-        if "Performance Score" in display_supplier.columns:
-            display_supplier["Performance Score"] = display_supplier["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-        if "Scope Creep %" in display_supplier.columns:
-            display_supplier["Scope Creep %"] = display_supplier["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-        st.dataframe(display_supplier, use_container_width=True)
-    with detail_tabs[3]:
-        risk_df = pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS])
-        st.dataframe(risk_df, use_container_width=True)
-    with detail_tabs[4]:
-        if governance_rows:
-            st.dataframe(pd.DataFrame(governance_rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("No supplier governance data available.")
-    with detail_tabs[5]:
-        if custom_factor_rows:
-            st.dataframe(pd.DataFrame(custom_factor_rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("No custom analysis points were added.")
-    if analysis_mode != "Direct Materials":
-        with detail_tabs[6]:
-            service_cols = [
-                "Country", "Supplier", "Service Scope", "Pricing Model", "Proposed Contract Value",
-                "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost",
-                "Performance Score", "Performance Tier", "Performance-Adjusted Cost", "Headcount / FTEs",
-                "Price per Person / Month", "Hourly Rate", "Overtime Hours / Month", "Overtime Cost",
-                "Should-Cost Target", "Should-Cost Gap", "Open-Cost Total", "Open-Cost Coverage %", "Unexplained Quote Value", "Custom Cost Adjustment", "Scope Creep %",
-                "Share %", "Allocated Spend",
-            ]
-            available_cols = [c for c in service_cols if c in supplier_df.columns]
-            service_df = supplier_df[available_cols].copy()
-            for col in ["Proposed Contract Value", "Service TCO Before Productivity", "Productivity Gain", "Expected Risk Cost", "Performance-Adjusted Cost", "Allocated Spend", "Price per Person / Month", "Hourly Rate", "Overtime Cost", "Should-Cost Target", "Should-Cost Gap", "Open-Cost Total", "Unexplained Quote Value", "Custom Cost Adjustment"]:
-                if col in service_df.columns:
-                    service_df[col] = service_df[col].map(lambda x: "" if pd.isna(x) else format_money(x, currency_symbol, signed=(col == "Should-Cost Gap")))
-            if "Performance Score" in service_df.columns:
-                service_df["Performance Score"] = service_df["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-            if "Scope Creep %" in service_df.columns:
-                service_df["Scope Creep %"] = service_df["Scope Creep %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-            if "Open-Cost Coverage %" in service_df.columns:
-                service_df["Open-Cost Coverage %"] = service_df["Open-Cost Coverage %"].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-            if "Share %" in service_df.columns:
-                service_df["Share %"] = service_df["Share %"].map(lambda x: f"{x:.1f}%")
-            st.dataframe(service_df, use_container_width=True)
+# ── Detailed data ─────────────────────────────────────────────────────────────
+with stack("Detailed Data", "Full audit trail for Finance, Procurement and category strategy.", "🧾", "#64748b", "Audit trail"):
+    dt_names = ["Country summary","Region summary","Supplier allocation","Risk scores","Governance","Custom analysis"]
+    if analysis_mode != "Direct Materials": dt_names.append("Service scorecards")
+    dt_tabs = st.tabs(dt_names)
+    with dt_tabs[0]:
+        dc_ = country_df.copy()
+        for mc in [c for c in dc_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
+            dc_[mc] = dc_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
+        for mc in ["Weighted Risk","Current Effective Financial Rate","New Avg Financial Rate","Current Effective Treasury Rate","New Avg Treasury Rate"]:
+            if mc in dc_: dc_[mc] = dc_[mc].map(fmt_pct if "Rate" in mc else lambda x: f"{x:.2f}")
+        st.dataframe(dc_, use_container_width=True)
+    with dt_tabs[1]:
+        dg_ = group_df.copy()
+        for mc in [c for c in dg_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
+            dg_[mc] = dg_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
+        st.dataframe(dg_, use_container_width=True)
+    with dt_tabs[2]:
+        ds_ = supplier_df.copy()
+        if top_focus_ids: ds_["Executive Focus"] = ds_["Supplier ID"].isin(top_focus_ids).map({True:"Top focus",False:"Other"})
+        for mc in ["Allocated Spend","Supplier Financial Cost","Capital Gain Offset","Inventory Carrying Cost","Economic Total","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","Performance-Adjusted Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Custom Cost Adjustment","Total Contract Value"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
+        for mc in ["Share %"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.1f}%")
+        for mc in ["Risk Score"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.2f}")
+        for mc in ["Performance Score"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+        for mc in ["Productivity ROI %"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+        for mc in ["SLA Gap"]:
+            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
+        st.dataframe(ds_, use_container_width=True)
+    with dt_tabs[3]:
+        st.dataframe(pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS]), use_container_width=True)
+    with dt_tabs[4]:
+        if gov_rows: st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
+        else: st.info("No governance data.")
+    with dt_tabs[5]:
+        if cf_rows: st.dataframe(pd.DataFrame(cf_rows), use_container_width=True, hide_index=True)
+        else: st.info("No custom points added.")
+    if analysis_mode != "Direct Materials" and len(dt_tabs) > 6:
+        with dt_tabs[6]:
+            svc_cols = ["Country","Supplier","Service Scope","Pricing Model","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","SLA Attainment","SLA Gap","Performance Score","Performance Tier","Performance-Adjusted Cost","Headcount / FTEs","Price per Person / Month","Hourly Rate","Overtime Hours / Month","Overtime Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Open-Cost Coverage %","Unexplained Quote Value","Productivity ROI %","Payback Months","Total Contract Value","Scope Creep %","Rate Card Gap %","Share %","Allocated Spend"]
+            ac_ = [c for c in svc_cols if c in supplier_df.columns]
+            svdf_ = supplier_df[ac_].copy()
+            for mc in ["Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","Performance-Adjusted Cost","Allocated Spend","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Total Contract Value"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
+            for mc in ["Performance Score"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+            for mc in ["Scope Creep %","Open-Cost Coverage %"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
+            for mc in ["Rate Card Gap %"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}%")
+            for mc in ["Share %"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: f"{x:.1f}%")
+            for mc in ["Productivity ROI %"]:
+                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+            st.dataframe(svdf_, use_container_width=True)
 
-# =============================================================================
-# Download
-# =============================================================================
-
-with result_stack("Download export", "Export the country summary for offline review.", "⬇️", "#64748b", "Export", expanded=False):
-    export_country = country_df.copy()
-    combined_csv = export_country.to_csv(index=False).encode("utf-8")
+# ── Download ──────────────────────────────────────────────────────────────────
+with stack("Export", "Download country summary CSV.", "⬇️", "#64748b", "Export"):
     st.download_button(
-        label="Download country summary CSV",
-        data=combined_csv,
-        file_name="executive_procurement_tco_country_summary.csv",
+        label="⬇️ Download country summary CSV",
+        data=country_df.to_csv(index=False).encode("utf-8"),
+        file_name="procurement_tco_v46_country_summary.csv",
         mime="text/csv",
     )
 
 st.markdown(
-    """
-    <div class="small-note">
-        Note: Gross financial cost is intentionally separated from treasury return offset. Net Financial Saving / Impact is the correct finance view after working-capital carry is considered.
-        Finance/Treasury should validate financial and treasury-return assumptions before any official saving recognition.
-    </div>
-    """,
+    """<div class="v46-note" style="margin-top:32px;padding:12px 16px;border-radius:10px;background:rgba(15,23,42,.5);border:1px solid rgba(148,163,184,.12)">
+    Gross financial cost is separated from treasury return offset. Net Financial Delta is the correct finance view after working-capital carry is considered.
+    Finance / Treasury must validate all rate and term assumptions before official saving recognition.
+    </div>""",
     unsafe_allow_html=True,
 )
