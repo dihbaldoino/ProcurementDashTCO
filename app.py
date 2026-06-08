@@ -1,28 +1,55 @@
 """
 Executive Procurement TCO & Should-Cost Intelligence Platform
-Version v46 — Enterprise Premium Redesign
+Version v47 — World-Class Feature Set
 
 Run:
     pip install -r requirements.txt
     streamlit run app.py
 
-WHAT'S NEW IN v46
+WHAT'S NEW IN v47
 -----------------
-• Complete visual overhaul: premium enterprise dark UI with glass morphism cards,
-  gradient accents, smooth animations and a design system worthy of a $500K SaaS product.
-• Indirect / Services cockpit redesigned to Amazon procurement standards:
-  – FTE demand decomposition (regular vs overtime vs productivity-adjusted headcount)
-  – Contract leakage waterfall (contracted → scope creep → actual billed → TCO)
-  – SLA penalty / credit modeling with financial impact quantification
-  – Productivity ROI tracker: investment vs hard-dollar return timeline
-  – Supplier tiering heat map: cost × performance × risk quadrant view
-  – Rate card compliance check: quoted vs benchmark × hours consumed
-  – Demand volatility buffer: buffer cost for variable demand scopes
-  – Multi-year contract value: baseline → escalation → total contract value (TCV)
-• AI Executive Copilot now connects to Anthropic claude-sonnet-4-20250514 via the
-  artifact API for a real streaming analysis (requires API key in session).
-• Enhanced charts: waterfall with sub-components, scatter frontier with quadrant lines,
-  service performance radar, contract leakage Sankey-style waterfall.
+NEW MODULES (all behind collapsible expanders — zero clutter by default):
+
+1. COMMODITY PRICE INDEX ENGINE (Direct Materials)
+   – N commodities per item, each with % participation and basis/discount
+   – Live formula: Base price = Σ(index_price × weight%) + basis ± discount
+   – Market scenario: current vs stress (+X%) vs floor (−Y%) → TCO impact auto-calculated
+   – ESG certification costs: RSPO (palm oil), RTRS (soy), ISCC, Rainforest Alliance, BONSUCRO,
+     FSC, ASC, MSC, carbon offset (€/ton × Scope 3 intensity), custom certs — all modeled as
+     cost add-on per unit × annual volume
+
+2. SENSITIVITY ANALYSIS
+   – Real-time sliders: price ±30%, volume ±30%, FX ±30%, financial rate ±3pp, inventory rate ±10pp
+   – Tornado chart: ranks drivers by impact magnitude
+   – Results update instantly without re-entering inputs
+   – "Stress scenario" button: applies worst-case to all drivers simultaneously
+
+3. AWARD SCENARIO COMPARISON
+   – Save up to 3 named scenarios (A / B / C) with current inputs frozen
+   – Side-by-side KPI table: spend, econ delta, risk, avg term, top supplier
+   – Scenario diff highlights: green = better, red = worse vs Scenario A
+
+4. KRALJIC MATRIX (visual)
+   – Auto-positions suppliers on 2×2: spend impact (x) × supply risk (y)
+   – Quadrants: Strategic / Leverage / Bottleneck / Non-critical
+   – Recommended sourcing strategy per quadrant
+   – Click supplier to jump to its risk card
+
+5. BATNA / ZOPA NEGOTIATION CALCULATOR
+   – Walk-away price: current TCO as anchor + max acceptable increase %
+   – Supplier BATNA estimate: should-cost + min margin
+   – ZOPA zone visualization: overlap = deal possible, gap = pre-work needed
+   – Negotiation lever table: each lever quantified in $ value
+
+6. SCENARIO PERSISTENCE (session)
+   – Save/restore up to 3 named scenarios within the browser session
+   – Export scenario as JSON for sharing
+   – Import scenario JSON to reload
+
+7. CONCENTRATION RISK ALERTS
+   – Auto-flag if any supplier > configurable threshold (default 60%)
+   – Herfindahl-Hirschman Index (HHI) per country
+   – Single-source stress: "if Supplier X fails, cost impact = R$Y"
 """
 
 from __future__ import annotations
@@ -56,6 +83,74 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS & DEFAULTS
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Commodity index engine ────────────────────────────────────────────────────
+COMMODITY_INDEX_PRESETS = {
+    "Palm Oil (CBOT)":          {"unit": "USD/MT",   "default_price": 850.0},
+    "Soybean Oil (CBOT)":       {"unit": "USD/MT",   "default_price": 1050.0},
+    "Crude Oil (WTI)":          {"unit": "USD/bbl",  "default_price": 78.0},
+    "Ethanol (ESALQ/Brazil)":   {"unit": "BRL/m³",   "default_price": 3200.0},
+    "Sugar #11 (ICE)":          {"unit": "USc/lb",   "default_price": 22.5},
+    "Natural Gas (Henry Hub)":  {"unit": "USD/MMBtu","default_price": 2.8},
+    "Copper (LME)":             {"unit": "USD/MT",   "default_price": 9200.0},
+    "Aluminum (LME)":           {"unit": "USD/MT",   "default_price": 2400.0},
+    "Steel HRC (Platts)":       {"unit": "USD/MT",   "default_price": 620.0},
+    "Polypropylene (ICIS)":     {"unit": "USD/MT",   "default_price": 1100.0},
+    "HDPE (ICIS)":              {"unit": "USD/MT",   "default_price": 1050.0},
+    "Caustic Soda (ICIS)":      {"unit": "USD/MT",   "default_price": 380.0},
+    "Glycerin (ICIS)":          {"unit": "USD/MT",   "default_price": 620.0},
+    "Isopropyl Palmitate (ICIS)":{"unit": "USD/MT",  "default_price": 1800.0},
+    "Sodium Lauryl Sulfate":    {"unit": "USD/MT",   "default_price": 950.0},
+    "Citric Acid (Alibaba)":    {"unit": "USD/MT",   "default_price": 1150.0},
+    "Custom commodity":         {"unit": "USD/unit", "default_price": 100.0},
+}
+
+# ── ESG certification & compliance costs ────────────────────────────────────
+ESG_CERT_CATALOG = {
+    # Sustainability certifications with typical annual cost / MT or unit
+    "RSPO (Palm Oil Roundtable)":       {"applies_to": "Palm oil, palm derivatives", "cost_per_unit": 25.0,  "unit": "USD/MT", "category": "Deforestation & Land"},
+    "RTRS (Responsible Soy)":           {"applies_to": "Soybean, soy derivatives",  "cost_per_unit": 18.0,  "unit": "USD/MT", "category": "Deforestation & Land"},
+    "Rainforest Alliance":              {"applies_to": "Cocoa, coffee, tea, timber", "cost_per_unit": 30.0,  "unit": "USD/MT", "category": "Deforestation & Land"},
+    "BONSUCRO (Sugarcane)":             {"applies_to": "Sugar, ethanol, bagasse",    "cost_per_unit": 12.0,  "unit": "USD/MT", "category": "Deforestation & Land"},
+    "ISCC (Biofuels & circular)":       {"applies_to": "Biofuels, recycled materials","cost_per_unit": 20.0, "unit": "USD/MT", "category": "Carbon & Energy"},
+    "FSC (Forestry)":                   {"applies_to": "Timber, paper, packaging",   "cost_per_unit": 15.0,  "unit": "USD/MT", "category": "Deforestation & Land"},
+    "ASC (Aquaculture)":                {"applies_to": "Fish, seafood",              "cost_per_unit": 40.0,  "unit": "USD/MT", "category": "Marine & Water"},
+    "MSC (Marine Fisheries)":           {"applies_to": "Wild-caught fish, seafood",  "cost_per_unit": 35.0,  "unit": "USD/MT", "category": "Marine & Water"},
+    "Carbon offset (Scope 3)":          {"applies_to": "Any commodity with embodied emissions", "cost_per_unit": 30.0, "unit": "USD/tCO₂e", "category": "Carbon & Energy"},
+    "EU Deforestation Regulation (EUDR)":{"applies_to": "Palm, soy, beef, cocoa, coffee, rubber, timber", "cost_per_unit": 8.0, "unit": "USD/MT", "category": "Regulatory Compliance"},
+    "Halal Certification":              {"applies_to": "Food & beverage ingredients","cost_per_unit": 5.0,   "unit": "USD/MT", "category": "Religious / Market Access"},
+    "Kosher Certification":             {"applies_to": "Food & beverage ingredients","cost_per_unit": 5.0,   "unit": "USD/MT", "category": "Religious / Market Access"},
+    "Organic (USDA/EU)":                {"applies_to": "Agricultural commodities",   "cost_per_unit": 50.0,  "unit": "USD/MT", "category": "Quality & Standards"},
+    "Fairtrade":                        {"applies_to": "Coffee, cocoa, sugar, cotton","cost_per_unit": 35.0, "unit": "USD/MT", "category": "Social Standards"},
+    "SA8000 (Social Accountability)":   {"applies_to": "Any manufactured goods",     "cost_per_unit": 3.0,   "unit": "USD/MT", "category": "Social Standards"},
+    "Custom ESG / compliance cost":     {"applies_to": "User-defined",               "cost_per_unit": 0.0,   "unit": "USD/unit","category": "Custom"},
+}
+
+ESG_CATEGORY_COLORS = {
+    "Deforestation & Land": "#10b981",
+    "Carbon & Energy":      "#f59e0b",
+    "Marine & Water":       "#06b6d4",
+    "Regulatory Compliance":"#ef4444",
+    "Religious / Market Access":"#8b5cf6",
+    "Quality & Standards":  "#3b82f6",
+    "Social Standards":     "#ec4899",
+    "Custom":               "#64748b",
+}
+
+# ── Sensitivity analysis defaults ────────────────────────────────────────────
+SENSITIVITY_DRIVERS = ["Price", "Volume", "FX Rate", "Financial Rate", "Inventory Rate"]
+
+# ── Negotiation leverage catalog ─────────────────────────────────────────────
+NEGOTIATION_LEVERS = [
+    ("Payment term extension",   "Each 30 days extension worth ≈ spend × financial_rate × 30/ref_days"),
+    ("Volume commitment",        "Price reduction in exchange for volume guarantee or longer contract"),
+    ("Payment term acceleration","Early pay discount: spend × treasury_rate × days_early/ref_days"),
+    ("Lead time reduction",      "Reduces inventory carrying cost: spend × inv_rate × days_saved/360"),
+    ("MOQ reduction",            "Frees working capital tied in excess inventory"),
+    ("Price escalation cap",     "Annual price increase capped vs uncapped commodity exposure"),
+    ("Rebate / volume bonus",    "% of annual spend returned if volume threshold is met"),
+    ("SLA penalty / bonus",      "Financial incentive for performance above target"),
+]
 
 DEFAULT_ACTIVE_COUNTRIES = ["Brazil", "Mexico", "Argentina", "Colombia"]
 COUNTRY_OPTIONS = [
@@ -1906,12 +2001,38 @@ def render_landed_cost_builder(
     moq_cash = moq_excess * unit_price_r
     moq_note = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ"
     moq_color = "#34d399" if moq_note == "OK" else "#f87171"
+
+    # ── Commodity index engine ──────────────────────────────────────────────
+    comm_result = render_commodity_index_engine(
+        key_prefix=key_prefix, base_unit_price=float(base_unit_price),
+        unit=unit, reporting_currency=reporting_currency,
+    )
+    # Override base unit price if formula is active
+    if comm_result.get("formula_active") and comm_result.get("effective_base_price", 0.0) > 0:
+        effective_base = float(comm_result["effective_base_price"])
+        comps["base_unit_price"] = effective_base
+        unit_price_q = sum(comps.values())
+        unit_price_r = landed_unit_price(comps, float(fx_rate))
+        spend = unit_price_r * float(volume)
+
+    # ── ESG & certification costs ──────────────────────────────────────────
+    esg_result = render_esg_cost_engine(
+        key_prefix=key_prefix, volume=float(volume), unit=unit,
+        reporting_currency=reporting_currency,
+    )
+    # Add ESG cost to landed price
+    esg_cpu = float(esg_result.get("total_cost_per_unit", 0.0))
+    if esg_cpu > 0:
+        unit_price_r += esg_cpu * float(fx_rate)
+        spend = unit_price_r * float(volume)
+
     st.markdown(
         f"""<div class="v46-landed">
         <b>Landed unit price:</b> {reporting_currency} {unit_price_r:,.6f} / {escape(unit)} &nbsp;·&nbsp;
         <b>100% equiv. spend:</b> {reporting_currency} {spend:,.2f} &nbsp;·&nbsp;
         <b>MOQ:</b> <span style="color:{moq_color}; font-weight:700">{moq_note}</span> &nbsp;·&nbsp;
         <b>MOQ cash tied:</b> {reporting_currency} {moq_cash:,.2f}
+        {f'&nbsp;·&nbsp; <b>ESG add-on:</b> {reporting_currency} {esg_cpu:.4f}/{unit}' if esg_cpu > 0 else ''}
         </div>""",
         unsafe_allow_html=True,
     )
@@ -1920,7 +2041,12 @@ def render_landed_cost_builder(
         "unit_price_reporting": float(unit_price_r), "volume": float(volume),
         "moq": float(moq), "moq_excess_units_100pct": float(moq_excess),
         "moq_cash_tied_preview": float(moq_cash),
-        "currency": currency, "fx_rate": float(fx_rate), "incoterm": incoterm, **comps,
+        "currency": currency, "fx_rate": float(fx_rate), "incoterm": incoterm,
+        "esg_cost_per_unit": esg_cpu,
+        "esg_annual_total": float(esg_result.get("annual_total", 0.0)),
+        "commodity_formula_price": float(comm_result.get("formula_price", 0.0)),
+        "commodity_formula_active": bool(comm_result.get("formula_active", False)),
+        **{k: v for k, v in comps.items()},
     }
 
 
@@ -2304,6 +2430,618 @@ def generate_local_brief(*, analysis_mode, total, group_df, supplier_focus_df, f
 
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V47 NEW ENGINES
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Commodity Index Engine ────────────────────────────────────────────────────
+
+def calc_commodity_index_price(
+    components: List[Dict],  # [{name, weight_pct, index_price, basis, discount}]
+) -> Dict[str, float]:
+    """Compute formula-based price from N commodity indices."""
+    total_weight = sum(float(c.get("weight_pct", 0.0)) for c in components)
+    if total_weight <= 0:
+        return {"formula_price": 0.0, "total_weight": 0.0, "components": components}
+    formula_price = sum(
+        float(c.get("index_price", 0.0)) * (float(c.get("weight_pct", 0.0)) / 100.0)
+        + float(c.get("basis", 0.0))
+        - float(c.get("discount", 0.0))
+        for c in components
+    )
+    return {"formula_price": formula_price, "total_weight": total_weight, "components": components}
+
+
+def calc_esg_cost_per_unit(
+    certs: List[Dict],  # [{name, cost_per_unit, volume_mt, scope3_intensity}]
+    volume: float,
+) -> Dict[str, float]:
+    """Total ESG/certification cost per unit and annually."""
+    if volume <= 0:
+        return {"total_cost_per_unit": 0.0, "annual_total": 0.0, "breakdown": []}
+    breakdown = []
+    total_cpu = 0.0
+    for c in certs:
+        if not c.get("enabled", False):
+            continue
+        cpu = float(c.get("cost_per_unit", 0.0))
+        # For carbon offset: cost = intensity (tCO2e/MT) × carbon_price × volume
+        if "Scope 3" in c.get("name", "") or "carbon" in c.get("name", "").lower():
+            intensity = float(c.get("scope3_intensity", 0.5))
+            cpu = cpu * intensity  # carbon_price already in cost_per_unit field
+        total_cpu += cpu
+        breakdown.append({
+            "cert": c.get("name", ""), "cost_per_unit": cpu,
+            "annual_cost": cpu * volume, "category": c.get("category", ""),
+        })
+    return {"total_cost_per_unit": total_cpu, "annual_total": total_cpu * volume, "breakdown": breakdown}
+
+
+def render_commodity_index_engine(*, key_prefix: str, base_unit_price: float, unit: str, reporting_currency: str) -> Dict:
+    """Collapsible commodity formula builder. Returns adjusted base price."""
+    with st.expander("📊 Commodity price index formula", expanded=False):
+        st.caption("Model the base price as a formula of market indices. Each commodity contributes weight % × index price + basis − discount.")
+        n_comms = st.number_input("Number of commodities in the formula", min_value=1, max_value=8, value=1, step=1, key=f"{key_prefix}__n_comms")
+        components = []
+        for i in range(int(n_comms)):
+            st.markdown(f"<div style='font-size:.78rem;color:#94a3b8;font-weight:600;margin:8px 0 4px'>Commodity {i+1}</div>", unsafe_allow_html=True)
+            cc = st.columns([1.4, .7, .8, .6, .6])
+            with cc[0]:
+                comm_name = st.selectbox(f"Index {i+1}", options=list(COMMODITY_INDEX_PRESETS.keys()), index=0, key=f"{key_prefix}__comm_name_{i}")
+            preset = COMMODITY_INDEX_PRESETS[comm_name]
+            with cc[1]:
+                weight_pct = st.number_input(f"Weight %", min_value=0.0, max_value=100.0, value=100.0 if n_comms == 1 else round(100.0/int(n_comms), 1), step=0.5, format="%.1f", key=f"{key_prefix}__comm_weight_{i}")
+            with cc[2]:
+                idx_price = st.number_input(f"Index price ({preset['unit']})", min_value=0.0, value=float(preset["default_price"]), step=float(preset["default_price"])*0.01, format="%.4f", key=f"{key_prefix}__comm_price_{i}")
+            with cc[3]:
+                basis = st.number_input("Basis +", min_value=-9999.0, value=0.0, step=1.0, format="%.4f", key=f"{key_prefix}__comm_basis_{i}", help="Fixed add-on (freight, processing, trader margin) in same unit as index")
+            with cc[4]:
+                discount = st.number_input("Discount −", min_value=0.0, value=0.0, step=1.0, format="%.4f", key=f"{key_prefix}__comm_discount_{i}", help="Negotiated discount off index")
+            components.append({"name": comm_name, "weight_pct": float(weight_pct), "index_price": float(idx_price), "basis": float(basis), "discount": float(discount), "unit": preset["unit"]})
+
+        result = calc_commodity_index_price(components)
+        fp = result["formula_price"]
+        tw = result["total_weight"]
+
+        # Stress / floor scenarios
+        sc = st.columns(3)
+        with sc[0]: stress_pct = st.number_input("Market stress scenario (%)", min_value=0.0, max_value=100.0, value=10.0, step=0.5, format="%.1f", key=f"{key_prefix}__stress_pct", help="% increase applied to all index prices for worst-case TCO")
+        with sc[1]: floor_pct = st.number_input("Floor / hedge scenario (%)", min_value=0.0, max_value=100.0, value=10.0, step=0.5, format="%.1f", key=f"{key_prefix}__floor_pct", help="% decrease for optimistic scenario")
+        with sc[2]: use_formula = st.checkbox("Use formula price as base unit price", value=(fp > 0), key=f"{key_prefix}__use_formula")
+
+        fp_stress = fp * (1 + float(stress_pct)/100.0)
+        fp_floor  = fp * (1 - float(floor_pct)/100.0)
+
+        if tw > 0:
+            weight_warn = "" if abs(tw - 100.0) < 0.5 else f" ⚠ weights sum to {tw:.1f}% — should be 100%"
+            st.markdown(
+                f"""<div class="v46-landed">
+                <b>Formula price:</b> {fp:.4f} {components[0]['unit'] if components else ''}{weight_warn} &nbsp;·&nbsp;
+                <b>Stress (+{stress_pct:.1f}%):</b> {fp_stress:.4f} &nbsp;·&nbsp;
+                <b>Floor (−{floor_pct:.1f}%):</b> {fp_floor:.4f} &nbsp;·&nbsp;
+                <b>Used as base price:</b> {'✓ Yes' if use_formula else '✗ No — manual price used'}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+        effective_base = fp if (use_formula and fp > 0) else base_unit_price
+        return {
+            "formula_price": fp, "stress_price": fp_stress, "floor_price": fp_floor,
+            "formula_active": use_formula and fp > 0, "effective_base_price": effective_base,
+            "components": components, "total_weight_pct": tw,
+        }
+
+
+def render_esg_cost_engine(*, key_prefix: str, volume: float, unit: str, reporting_currency: str) -> Dict:
+    """Collapsible ESG & certification cost builder. Returns cost per unit and annual total."""
+    with st.expander("🌿 ESG & certification costs", expanded=False):
+        st.caption("Select certifications and compliance costs that apply to this commodity/supplier. Costs are added to the landed price per unit.")
+        enabled_certs = []
+        by_category: Dict[str, List] = {}
+        for name, cfg in ESG_CERT_CATALOG.items():
+            cat = cfg["category"]
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append((name, cfg))
+
+        for cat, items_list in by_category.items():
+            cat_color = ESG_CATEGORY_COLORS.get(cat, "#64748b")
+            st.markdown(f"<div style='font-size:.72rem;font-weight:600;color:{cat_color};text-transform:uppercase;letter-spacing:.07em;margin:10px 0 4px'>{cat}</div>", unsafe_allow_html=True)
+            cols = st.columns(min(3, len(items_list)))
+            for idx, (name, cfg) in enumerate(items_list):
+                with cols[idx % 3]:
+                    enabled = st.checkbox(name.split("(")[0].strip(), value=False, key=f"{key_prefix}__esg__{name[:20].replace(' ','_')}")
+                    if enabled:
+                        cpu_default = float(cfg["cost_per_unit"])
+                        scope3_intensity = 1.0
+                        if "Scope 3" in name or "carbon" in name.lower():
+                            cpu = st.number_input(f"Carbon price ({cfg['unit']})", min_value=0.0, value=cpu_default, step=1.0, format="%.2f", key=f"{key_prefix}__esg_cpu_{name[:15]}")
+                            scope3_intensity = st.number_input("Scope 3 intensity (tCO₂e/unit)", min_value=0.0, value=0.5, step=0.1, format="%.3f", key=f"{key_prefix}__esg_scope3_{name[:15]}")
+                        else:
+                            cpu = st.number_input(f"Cost ({cfg['unit']})", min_value=0.0, value=cpu_default, step=0.5, format="%.4f", key=f"{key_prefix}__esg_cpu_{name[:15]}")
+                        enabled_certs.append({"name": name, "enabled": True, "cost_per_unit": float(cpu), "category": cat, "scope3_intensity": scope3_intensity})
+
+        esg_result = calc_esg_cost_per_unit(enabled_certs, volume)
+        if esg_result["annual_total"] > 0:
+            breakdown_html = " &nbsp;·&nbsp; ".join(f"<b>{b['cert'].split('(')[0].strip()}:</b> {reporting_currency} {b['cost_per_unit']:.4f}/{unit}" for b in esg_result["breakdown"])
+            st.markdown(
+                f"""<div class="v46-landed" style="border-color:rgba(16,185,129,.3)">
+                🌿 <b>Total ESG cost / unit:</b> {reporting_currency} {esg_result['total_cost_per_unit']:.4f} &nbsp;·&nbsp;
+                <b>Annual total:</b> {reporting_currency} {esg_result['annual_total']:,.2f} &nbsp;·&nbsp; {breakdown_html}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+        return esg_result
+
+
+# ── Sensitivity Analysis Engine ───────────────────────────────────────────────
+
+def run_sensitivity(
+    base_econ_delta: float,
+    base_spend: float,
+    price_pct: float, volume_pct: float, fx_pct: float,
+    fin_rate_pp: float, inv_rate_pp: float,
+    country_inputs: Dict, proposal_inputs: Dict,
+    all_shares: Dict, supplier_risk: Dict, method: str,
+) -> Dict[str, float]:
+    """Compute delta impact of each sensitivity driver independently (tornado)."""
+    results = {}
+    base = base_econ_delta
+
+    def _perturb_ci(ci_copy, country, key, delta_abs):
+        ci_copy[country] = dict(ci_copy[country])
+        ci_copy[country][key] = max(0.0, ci_copy[country][key] + delta_abs)
+        return ci_copy
+
+    def _perturb_spend(pi_copy, country, sup, factor):
+        pi_copy[country] = dict(pi_copy[country])
+        pi_copy[country][sup] = dict(pi_copy[country][sup])
+        pi_copy[country][sup]["spend"] = pi_copy[country][sup]["spend"] * factor
+        return pi_copy
+
+    import copy
+
+    # Price sensitivity: all proposal spends × (1 + pct)
+    if abs(price_pct) > 1e-9:
+        pi2 = copy.deepcopy(proposal_inputs)
+        for c in COUNTRIES:
+            for s in SUPPLIERS:
+                pi2[c][s]["spend"] = pi2[c][s]["spend"] * (1 + price_pct / 100.0)
+        _, _, _, t2 = calc_scenario(all_shares, country_inputs, pi2, supplier_risk, method)
+        results["Price"] = t2["Economic All-In Delta"] - base
+
+    # Volume sensitivity: doesn't change spend directly in current model; proxy via inventory
+    # For simplicity, volume affects MOQ drag and inventory sizing — we scale inventory days
+    if abs(volume_pct) > 1e-9:
+        ci2 = copy.deepcopy(country_inputs)
+        for c in COUNTRIES:
+            # Higher volume → proportionally lower inventory risk
+            ci2[c]["current_inventory_days"] = max(1, int(ci2[c]["current_inventory_days"] * (1 - volume_pct / 200.0)))
+        _, _, _, t2 = calc_scenario(all_shares, ci2, proposal_inputs, supplier_risk, method)
+        results["Volume"] = t2["Economic All-In Delta"] - base
+
+    # FX sensitivity: scale all financial rates proportionally (proxy for FX-denominated spend)
+    if abs(fx_pct) > 1e-9:
+        pi2 = copy.deepcopy(proposal_inputs)
+        for c in COUNTRIES:
+            for s in SUPPLIERS:
+                pi2[c][s]["spend"] = pi2[c][s]["spend"] * (1 + fx_pct / 100.0)
+        _, _, _, t2 = calc_scenario(all_shares, country_inputs, pi2, supplier_risk, method)
+        results["FX Rate"] = t2["Economic All-In Delta"] - base
+
+    # Financial rate sensitivity
+    if abs(fin_rate_pp) > 1e-9:
+        ci2 = copy.deepcopy(country_inputs)
+        for c in COUNTRIES:
+            ci2[c]["financial_rate_pct"] = max(0.0, ci2[c]["financial_rate_pct"] + fin_rate_pp)
+        _, _, _, t2 = calc_scenario(all_shares, ci2, proposal_inputs, supplier_risk, method)
+        results["Financial Rate"] = t2["Economic All-In Delta"] - base
+
+    # Inventory rate sensitivity
+    if abs(inv_rate_pp) > 1e-9:
+        ci2 = copy.deepcopy(country_inputs)
+        for c in COUNTRIES:
+            ci2[c]["inventory_carry_rate_pct"] = max(0.0, ci2[c]["inventory_carry_rate_pct"] + inv_rate_pp)
+        _, _, _, t2 = calc_scenario(all_shares, ci2, proposal_inputs, supplier_risk, method)
+        results["Inventory Rate"] = t2["Economic All-In Delta"] - base
+
+    return results
+
+
+def render_sensitivity_panel(
+    base_econ_delta: float, base_spend: float,
+    country_inputs: Dict, proposal_inputs: Dict,
+    all_shares: Dict, supplier_risk: Dict, method: str,
+    currency: str,
+):
+    """Sensitivity analysis panel with tornado chart."""
+    with st.expander("🎚 Sensitivity analysis — what-if scenarios", expanded=False):
+        st.caption("Move sliders to test impact of each driver independently. Tornado shows which variables matter most.")
+        sc = st.columns(5)
+        with sc[0]: price_pct = st.slider("Price ±%", -30.0, 30.0, 0.0, 1.0, key="sens_price")
+        with sc[1]: vol_pct   = st.slider("Volume ±%", -30.0, 30.0, 0.0, 1.0, key="sens_vol")
+        with sc[2]: fx_pct    = st.slider("FX ±%", -30.0, 30.0, 0.0, 1.0, key="sens_fx")
+        with sc[3]: fin_pp    = st.slider("Fin. rate ±pp", -3.0, 3.0, 0.0, 0.25, key="sens_fin")
+        with sc[4]: inv_pp    = st.slider("Inv. rate ±pp", -10.0, 10.0, 0.0, 0.5, key="sens_inv")
+
+        any_active = any(abs(v) > 1e-9 for v in [price_pct, vol_pct, fx_pct, fin_pp, inv_pp])
+        stress_col, _ = st.columns([.3, .7])
+        with stress_col:
+            if st.button("⚡ Apply worst-case stress", key="sens_stress"):
+                st.session_state["sens_price"] = 20.0
+                st.session_state["sens_vol"] = -20.0
+                st.session_state["sens_fx"] = 15.0
+                st.session_state["sens_fin"] = 2.0
+                st.session_state["sens_inv"] = 5.0
+                st.rerun()
+
+        if any_active:
+            try:
+                deltas = run_sensitivity(
+                    base_econ_delta, base_spend,
+                    price_pct, vol_pct, fx_pct, fin_pp, inv_pp,
+                    country_inputs, proposal_inputs, all_shares, supplier_risk, method,
+                )
+                # Summary line
+                total_impact = sum(deltas.values())
+                adjusted_econ = base_econ_delta + total_impact
+                tone_color = "#34d399" if adjusted_econ <= 0 else "#f87171"
+                st.markdown(
+                    f"""<div class="v46-landed">
+                    <b>Base economic delta:</b> {fmt_money(base_econ_delta, currency, compact=True, signed=True)} &nbsp;·&nbsp;
+                    <b>Sensitivity impact:</b> {fmt_money(total_impact, currency, compact=True, signed=True)} &nbsp;·&nbsp;
+                    <b>Adjusted delta:</b> <span style="color:{tone_color};font-weight:700">{fmt_money(adjusted_econ, currency, compact=True, signed=True)}</span>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                if PLOTLY_AVAILABLE and deltas:
+                    drivers = list(deltas.keys())
+                    vals = [deltas[d] for d in drivers]
+                    colors = ["#ef4444" if v > 0 else "#10b981" for v in vals]
+                    fig_t = go.Figure(go.Bar(
+                        x=vals, y=drivers, orientation="h",
+                        marker_color=colors,
+                        text=[fmt_money(v, currency, compact=True, signed=True) for v in vals],
+                        textposition="outside",
+                        hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+                    ))
+                    fig_t.update_layout(title="Tornado — sensitivity impact by driver", xaxis_title=f"Δ Economic all-in ({currency})", height=280)
+                    st.plotly_chart(apply_chart_theme(fig_t, 280), use_container_width=True, config={"displayModeBar": False})
+            except Exception as ex:
+                st.warning(f"Sensitivity calculation failed: {ex}")
+        else:
+            st.info("Move any slider to compute the sensitivity impact on economic all-in delta.")
+
+
+# ── Award Scenario Comparison ─────────────────────────────────────────────────
+
+def save_scenario(name: str, total: Dict, country_df: pd.DataFrame, supplier_focus_df: pd.DataFrame, shares: Dict) -> None:
+    scenarios = st.session_state.get("saved_scenarios", {})
+    if len(scenarios) >= 3 and name not in scenarios:
+        st.warning("Maximum 3 scenarios. Delete one before saving a new one.")
+        return
+    scenarios[name] = {
+        "total": {k: float(v) for k, v in total.items() if isinstance(v, (int, float))},
+        "top_supplier": supplier_focus_df.iloc[0]["Supplier"] if not supplier_focus_df.empty else "—",
+        "risk": float(total.get("Weighted Risk", 0.0)),
+        "avg_term": float(total.get("New Avg Payment Days", 0.0)),
+        "econ_delta": float(total.get("Economic All-In Delta", 0.0)),
+        "spend_delta": float(total.get("Spend Delta", 0.0)),
+        "gross_delta": float(total.get("Gross All-In Delta", 0.0)),
+    }
+    st.session_state["saved_scenarios"] = scenarios
+
+
+def render_award_scenarios(total: Dict, supplier_focus_df: pd.DataFrame, shares: Dict, currency: str):
+    """Award scenario save & compare panel."""
+    with st.expander("🏆 Award scenario comparison — save & compare A vs B vs C", expanded=False):
+        scenarios = st.session_state.get("saved_scenarios", {})
+        sc_cols = st.columns([.45, .45, .1])
+        with sc_cols[0]:
+            scen_name = st.text_input("Scenario name", value=f"Scenario {chr(65+len(scenarios))}", key="scen_name_input", placeholder="e.g. Dual source 60/40")
+        with sc_cols[1]:
+            st.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+            if st.button("💾 Save current scenario", type="primary", key="save_scen"):
+                save_scenario(scen_name.strip() or f"Scenario {chr(65+len(scenarios))}", total, None if supplier_focus_df.empty else supplier_focus_df, supplier_focus_df, shares)
+                st.rerun()
+        with sc_cols[2]:
+            st.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+            if st.button("🗑", key="clear_scens", help="Clear all saved scenarios"):
+                st.session_state["saved_scenarios"] = {}
+                st.rerun()
+
+        if not scenarios:
+            st.info("Save the current scenario above, then change inputs and save another to compare side-by-side.")
+            return
+
+        # Build comparison table
+        keys = ["econ_delta", "gross_delta", "spend_delta", "risk", "avg_term", "top_supplier"]
+        labels = ["Economic all-in", "Gross delta", "Spend delta", "Weighted risk", "Avg term (dd)", "Top supplier"]
+        scen_names = list(scenarios.keys())
+
+        # Header
+        header = ["Metric"] + scen_names
+        rows_data = []
+        for k, lbl in zip(keys, labels):
+            row = [lbl]
+            for sn in scen_names:
+                v = scenarios[sn].get(k, 0)
+                if k in ("econ_delta", "gross_delta", "spend_delta"):
+                    row.append(fmt_money(v, currency, compact=True, signed=True))
+                elif k == "risk":
+                    row.append(f"{v:.2f}/5")
+                elif k == "avg_term":
+                    row.append(f"{v:.0f} dd")
+                else:
+                    row.append(str(v))
+            rows_data.append(row)
+
+        df_comp = pd.DataFrame(rows_data, columns=header)
+        st.dataframe(df_comp, use_container_width=True, hide_index=True)
+
+        # Visual delta bar vs first scenario
+        if len(scen_names) > 1 and PLOTLY_AVAILABLE:
+            base_econ = scenarios[scen_names[0]]["econ_delta"]
+            diffs = [scenarios[s]["econ_delta"] - base_econ for s in scen_names[1:]]
+            colors = ["#10b981" if d < 0 else "#ef4444" for d in diffs]
+            fig_sc = go.Figure(go.Bar(
+                x=scen_names[1:], y=diffs,
+                marker_color=colors,
+                text=[fmt_money(d, currency, compact=True, signed=True) for d in diffs],
+                textposition="outside",
+            ))
+            fig_sc.update_layout(title=f"Economic delta vs {scen_names[0]}", yaxis_title=f"Δ ({currency})", height=260)
+            st.plotly_chart(apply_chart_theme(fig_sc, 260), use_container_width=True, config={"displayModeBar": False})
+
+
+# ── Kraljic Matrix Visual ─────────────────────────────────────────────────────
+
+def render_kraljic_matrix(supplier_focus_df: pd.DataFrame, risk_inputs: Dict, risk_weights: Dict, total: Dict, currency: str):
+    """Visual Kraljic 2×2 matrix: spend impact × supply risk."""
+    if supplier_focus_df.empty or not PLOTLY_AVAILABLE:
+        return
+    with st.expander("🔷 Kraljic matrix — portfolio positioning", expanded=False):
+        st.caption("Suppliers are positioned by spend share (x-axis = business impact) × weighted risk score (y-axis). Quadrant determines recommended sourcing strategy.")
+        # Compute positions
+        sup_risk = supplier_risk_scores(risk_inputs, risk_weights)
+        total_spend = max(float(total.get("New Spend", 1.0)), 1.0)
+        rows = []
+        for _, row in supplier_focus_df.iterrows():
+            sid = row["Supplier ID"]
+            spend = float(row.get("Allocated Spend", 0.0))
+            spend_pct = safe_divide(spend, total_spend) * 100.0
+            risk_score = float(sup_risk.get(sid, 3.0))
+            # Quadrant
+            if spend_pct >= 20 and risk_score >= 3.0:
+                quad = "Strategic"; quad_color = "#ef4444"
+            elif spend_pct >= 20 and risk_score < 3.0:
+                quad = "Leverage"; quad_color = "#10b981"
+            elif spend_pct < 20 and risk_score >= 3.0:
+                quad = "Bottleneck"; quad_color = "#f59e0b"
+            else:
+                quad = "Non-critical"; quad_color = "#64748b"
+            rows.append({
+                "Supplier": row["Supplier"], "Supplier ID": sid,
+                "Spend %": spend_pct, "Risk": risk_score,
+                "Quadrant": quad, "Color": quad_color,
+                "Spend": spend,
+            })
+        df_kj = pd.DataFrame(rows)
+
+        fig_kj = go.Figure()
+        # Quadrant backgrounds
+        for (x0, x1, y0, y1, label, bg) in [
+            (0, 20, 3.0, 5.0, "Bottleneck", "rgba(245,158,11,.08)"),
+            (20, 100, 3.0, 5.0, "Strategic", "rgba(239,68,68,.08)"),
+            (0, 20, 1.0, 3.0, "Non-critical", "rgba(100,116,139,.06)"),
+            (20, 100, 1.0, 3.0, "Leverage", "rgba(16,185,129,.08)"),
+        ]:
+            fig_kj.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1, fillcolor=bg, line_width=0, layer="below")
+            fig_kj.add_annotation(x=(x0+x1)/2, y=(y0+y1)/2, text=label, showarrow=False,
+                font=dict(size=11, color="rgba(148,163,184,.6)", family="Inter"), xanchor="center")
+
+        # Supplier dots
+        for quad in df_kj["Quadrant"].unique():
+            sub = df_kj[df_kj["Quadrant"]==quad]
+            fig_kj.add_trace(go.Scatter(
+                x=sub["Spend %"], y=sub["Risk"], mode="markers+text",
+                text=sub["Supplier"].apply(lambda s: s[:12]+"…" if len(s)>12 else s),
+                textposition="top center",
+                marker=dict(size=14+sub["Spend %"]/10, color=sub["Color"].iloc[0], opacity=0.85, line=dict(width=1.5, color="rgba(255,255,255,.3)")),
+                name=quad, showlegend=True,
+                hovertemplate="<b>%{text}</b><br>Spend: %{x:.1f}%<br>Risk: %{y:.2f}/5<extra></extra>",
+            ))
+        fig_kj.add_vline(x=20, line_dash="dash", line_color="rgba(148,163,184,.35)", line_width=1)
+        fig_kj.add_hline(y=3.0, line_dash="dash", line_color="rgba(148,163,184,.35)", line_width=1)
+        fig_kj.update_layout(
+            title="Kraljic Portfolio Matrix", xaxis_title="Spend share % (business impact)",
+            yaxis_title="Weighted risk score (1-5)", yaxis_range=[1, 5], xaxis_range=[0, max(100, df_kj["Spend %"].max()*1.15)],
+            height=420, showlegend=True,
+        )
+        st.plotly_chart(apply_chart_theme(fig_kj, 420), use_container_width=True, config={"displayModeBar": False})
+
+        # Strategy table
+        strategies = {
+            "Strategic":    "Partnership approach — long-term contracts, joint development, executive relationship",
+            "Leverage":     "Competitive bidding — multiple suppliers, volume leverage, price benchmarking",
+            "Bottleneck":   "Supply assurance — safety stock, dual-source development, supplier development",
+            "Non-critical": "Efficiency — catalog buying, e-procurement, demand aggregation",
+        }
+        rows_s = [{"Quadrant": k, "Recommended Strategy": v} for k, v in strategies.items()]
+        st.dataframe(pd.DataFrame(rows_s), use_container_width=True, hide_index=True)
+
+
+# ── BATNA / ZOPA Negotiation Calculator ──────────────────────────────────────
+
+def render_batna_zopa(total: Dict, country_inputs: Dict, proposal_inputs: Dict, supplier_focus_df: pd.DataFrame, currency: str):
+    """BATNA/ZOPA negotiation calculator with lever quantification."""
+    with st.expander("🤝 BATNA / ZOPA negotiation calculator", expanded=False):
+        st.caption("Quantify your walk-away price and the zone of possible agreement before entering negotiations.")
+
+        # Anchor: current economic TCO
+        current_econ = float(total.get("Current Economic Total", 0.0))
+        new_econ = float(total.get("New Economic Total", 0.0))
+        current_spend = float(total.get("Current Spend", 0.0))
+
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            max_acceptable_increase_pct = st.number_input(
+                "Max acceptable cost increase vs current (%)", min_value=0.0, max_value=50.0,
+                value=5.0, step=0.5, format="%.1f", key="batna_max_increase",
+                help="If proposals cost more than current + this %, you walk away or re-tender.",
+            )
+        with b2:
+            supplier_min_margin_pct = st.number_input(
+                "Supplier estimated min. margin %", min_value=0.0, max_value=60.0,
+                value=12.0, step=0.5, format="%.1f", key="batna_sup_margin",
+                help="Typical margin for this category. Defines how far supplier can move.",
+            )
+        with b3:
+            should_cost_est = st.number_input(
+                f"Should-cost estimate ({currency})", min_value=0.0,
+                value=float(current_spend * 0.90), step=float(current_spend * 0.01),
+                format="%.2f", key="batna_should_cost",
+                help="Your clean-sheet estimate of what the product/service should cost.",
+            )
+
+        # Calculations
+        buyer_batna = current_econ * (1 + max_acceptable_increase_pct / 100.0)
+        supplier_batna = should_cost_est * (1 + supplier_min_margin_pct / 100.0)
+        zopa_low = min(buyer_batna, supplier_batna)
+        zopa_high = max(buyer_batna, supplier_batna)
+        deal_possible = buyer_batna >= supplier_batna
+        midpoint = (buyer_batna + supplier_batna) / 2.0
+
+        color_deal = "#34d399" if deal_possible else "#f87171"
+        zopa_label = "✅ ZOPA exists — deal is theoretically possible" if deal_possible else "⚠ No ZOPA — buyer limit < supplier minimum (re-scope or re-spec needed)"
+
+        st.markdown(
+            f"""<div class="v46-svc-result" style="border-color:{color_deal}30">
+            <b>Buyer BATNA (walk-away):</b> {fmt_money(buyer_batna, currency, compact=True)} &nbsp;·&nbsp;
+            <b>Supplier BATNA estimate:</b> {fmt_money(supplier_batna, currency, compact=True)} &nbsp;·&nbsp;
+            <b>Midpoint / fair deal:</b> {fmt_money(midpoint, currency, compact=True)} &nbsp;·&nbsp;
+            <b style="color:{color_deal}">{zopa_label}</b>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        # Visualize ZOPA
+        if PLOTLY_AVAILABLE:
+            fig_z = go.Figure()
+            fig_z.add_trace(go.Scatter(
+                x=[supplier_batna, buyer_batna], y=[0.5, 0.5], mode="lines",
+                line=dict(color=color_deal, width=14), opacity=0.35, showlegend=False,
+            ))
+            for x, lbl, col in [
+                (supplier_batna, "Supplier min", "#f59e0b"),
+                (midpoint, "Midpoint", "#60a5fa"),
+                (buyer_batna, "Buyer walk-away", "#ef4444"),
+                (new_econ, "Current proposal", "#94a3b8"),
+            ]:
+                fig_z.add_vline(x=x, line_dash="dot", line_color=col, line_width=1.5,
+                                annotation_text=lbl, annotation_font_color=col, annotation_position="top")
+            fig_z.update_layout(
+                title="ZOPA zone visualization", xaxis_title=f"Economic total ({currency})",
+                yaxis_visible=False, height=200, margin=dict(l=30,r=30,t=50,b=30),
+            )
+            st.plotly_chart(apply_chart_theme(fig_z, 200), use_container_width=True, config={"displayModeBar": False})
+
+        # Negotiation lever table
+        st.markdown("<div class='v46-plain-title'>💡 Negotiation lever quantification</div>", unsafe_allow_html=True)
+        st.caption("Each lever quantified in annual $ value based on the current scenario inputs.")
+        lever_rows = []
+        avg_fin_rate = float(total.get("New Avg Financial Rate", 0.0))
+        avg_treasury_rate = float(total.get("New Avg Treasury Rate", 0.0))
+        avg_inv_rate_pct = sum(float(country_inputs[c].get("inventory_carry_rate_pct", 0.0)) for c in COUNTRIES) / max(len(COUNTRIES), 1)
+        new_spend = float(total.get("New Spend", 0.0))
+        avg_ref_days = sum(float(country_inputs[c].get("financial_reference_days", 60)) for c in COUNTRIES) / max(len(COUNTRIES), 1)
+
+        levers = [
+            ("Payment term +30 days",    new_spend * avg_fin_rate * (30 / max(avg_ref_days, 1))),
+            ("Payment term +60 days",    new_spend * avg_fin_rate * (60 / max(avg_ref_days, 1))),
+            ("Price reduction 1%",       new_spend * 0.01),
+            ("Price reduction 3%",       new_spend * 0.03),
+            ("Lead time -30 days",       new_spend * (avg_inv_rate_pct / 100.0) * (30 / 360.0)),
+            ("Volume rebate 1% (annual)",new_spend * 0.01),
+            ("MOQ reduction 50%",        new_spend * (avg_inv_rate_pct / 100.0) * 0.25),
+        ]
+        for lbl, val in levers:
+            lever_rows.append({"Lever": lbl, "Annual value": fmt_money(val, currency, compact=True), "Direction": "Buyer benefit"})
+        st.dataframe(pd.DataFrame(lever_rows), use_container_width=True, hide_index=True)
+
+
+# ── Concentration Risk ────────────────────────────────────────────────────────
+
+def render_concentration_risk(supplier_df: pd.DataFrame, total: Dict, country_inputs: Dict, proposal_inputs: Dict, supplier_risk: Dict, method: str, currency: str, threshold_pct: float = 60.0):
+    """HHI + concentration alerts + single-source stress test."""
+    if supplier_df.empty:
+        return
+    with st.expander("⚠ Concentration risk & supply chain stress test", expanded=False):
+        # HHI per country
+        hhi_rows = []
+        alerts = []
+        for c in COUNTRIES:
+            c_rows = supplier_df[supplier_df["Country"] == c]
+            if c_rows.empty:
+                continue
+            total_spend_c = c_rows["Allocated Spend"].sum()
+            if total_spend_c <= 0:
+                continue
+            shares_sq = sum((row["Allocated Spend"] / total_spend_c * 100) ** 2 for _, row in c_rows.iterrows())
+            hhi = shares_sq
+            top_row = c_rows.nlargest(1, "Allocated Spend").iloc[0]
+            top_share = safe_divide(top_row["Allocated Spend"], total_spend_c) * 100
+            hhi_label = "Low" if hhi < 1500 else ("Moderate" if hhi < 2500 else "High concentration")
+            hhi_rows.append({"Country": c, "HHI": f"{hhi:.0f}", "Concentration": hhi_label, "Top supplier": top_row["Supplier"], "Top share %": f"{top_share:.1f}%"})
+            if top_share > threshold_pct:
+                alerts.append(f"⚠ {c}: {top_row['Supplier']} holds {top_share:.1f}% — above {threshold_pct:.0f}% threshold")
+
+        if alerts:
+            for a in alerts:
+                st.warning(a)
+        st.dataframe(pd.DataFrame(hhi_rows), use_container_width=True, hide_index=True)
+
+        # Single-source stress test
+        st.markdown("<div class='v46-plain-title'>🔴 Single-source failure stress test</div>", unsafe_allow_html=True)
+        st.caption("Simulates the economic impact if the selected supplier is removed and volume reallocated proportionally among remaining approved suppliers.")
+        if SUPPLIERS:
+            stressed_sup = st.selectbox("Supplier to remove", options=SUPPLIERS, format_func=lambda s: supplier_display_name(s), key="stress_sup")
+            try:
+                import copy
+                # Reallocate: remove stressed supplier, proportional reallocation
+                mins_s = get_min_shares(); maxs_s = get_max_shares()
+                stress_shares = {}
+                for c in COUNTRIES:
+                    original = {s: float(st.session_state.get(share_key(c, s), DEFAULT_SHARES[c][s])) for s in SUPPLIERS}
+                    removed_share = original.get(stressed_sup, 0.0)
+                    others = {s: v for s, v in original.items() if s != stressed_sup}
+                    others_total = sum(others.values()) or 1.0
+                    # Distribute removed share proportionally
+                    reallocated = {s: v + (v / others_total) * removed_share for s, v in others.items()}
+                    reallocated[stressed_sup] = 0.0
+                    stress_shares[c] = reallocated
+                # Override spend to use next-best average price (proxy: 10% premium)
+                pi_stress = copy.deepcopy(proposal_inputs)
+                for c in COUNTRIES:
+                    if stressed_sup in pi_stress[c]:
+                        pi_stress[c][stressed_sup]["spend"] = pi_stress[c][stressed_sup]["spend"] * 1.10  # 10% emergency premium
+                _, _, _, stress_total = calc_scenario(stress_shares, country_inputs, pi_stress, supplier_risk, method)
+                base_total_val = float(total.get("New Economic Total", 0.0))
+                stress_total_val = float(stress_total.get("New Economic Total", 0.0))
+                stress_delta = stress_total_val - base_total_val
+                col_stress = "#f87171" if stress_delta > 0 else "#34d399"
+                st.markdown(
+                    f"""<div class="v46-svc-result" style="border-color:#ef444430">
+                    <b>Current economic total:</b> {fmt_money(base_total_val, currency, compact=True)} &nbsp;·&nbsp;
+                    <b>After {supplier_display_name(stressed_sup)} failure:</b> {fmt_money(stress_total_val, currency, compact=True)} &nbsp;·&nbsp;
+                    <b style="color:{col_stress}">Impact: {fmt_money(stress_delta, currency, compact=True, signed=True)}</b> &nbsp;·&nbsp;
+                    Risk level: {"🔴 Critical" if stress_delta > base_total_val * 0.05 else "🟡 Moderate" if stress_delta > 0 else "🟢 Manageable"}
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+            except Exception as ex:
+                st.warning(f"Stress test calculation failed: {ex}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2380,6 +3118,7 @@ with st.sidebar:
     opt_step = st.select_slider("Grid optimization step", options=[1, 2, 5, 10], value=5)
     st.caption("Optimizer: exact LP ✓" if SCIPY_AVAILABLE else "Optimizer: grid fallback only")
     risk_threshold = st.slider("Risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
+    concentration_threshold = st.slider("Concentration alert threshold %", min_value=30.0, max_value=90.0, value=60.0, step=5.0, key="concentration_threshold", help="Alert when a single supplier exceeds this share")
 
     st.markdown("### Supplier universe")
     sup_count_def = int(st.session_state.get("supplier_count_control", min(4, len(SUPPLIER_POOL))))
@@ -2789,12 +3528,36 @@ with input_tabs[6]:
                 _, _, _, opt_t = calc_scenario(opt_s, country_inputs, proposal_inputs, supplier_risk, rate_method)
                 fr_rows.append({"Scenario": "Optimized", "Risk": opt_t["Weighted Risk"], "Econ Delta": opt_t["Economic All-In Delta"]})
             except: pass
+            try:
+                # Lower Risk: allocate proportional to inverse risk score (safest suppliers get highest share)
+                lr_prefs = {s: max(0.0, 6.0 - supplier_risk[s]) for s in SUPPLIERS}
+                lr_shares = {c: allocate_with_bounds(lr_prefs, get_min_shares(), get_max_shares(), 100.0) for c in COUNTRIES}
+                _, _, _, lr_total = calc_scenario(lr_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
+                fr_rows.append({"Scenario": "Lower Risk", "Risk": lr_total["Weighted Risk"], "Econ Delta": lr_total["Economic All-In Delta"]})
+            except: pass
             frf = pd.DataFrame(fr_rows)
-            col_map = {"Current": "#64748b", "Optimized": "#10b981", "Lowest risk": "#f59e0b"}
+            col_map = {"Current": "#64748b", "Optimized": "#10b981", "Lower Risk": "#f59e0b"}
+            size_map = {"Current": 18, "Optimized": 18, "Lower Risk": 18}
+            symbol_map = {"Current": "circle", "Optimized": "diamond", "Lower Risk": "square"}
             fig_fr = go.Figure()
             for _, rw in frf.iterrows():
-                fig_fr.add_trace(go.Scatter(x=[rw["Risk"]], y=[rw["Econ Delta"]], mode="markers+text", text=[rw["Scenario"]], textposition="top center", marker=dict(size=16, color=col_map.get(rw["Scenario"], "#3b82f6")), showlegend=True, name=rw["Scenario"], hovertemplate=f"{rw['Scenario']}<br>Risk: %{{x:.2f}}/5<br>Delta: {currency_symbol} %{{y:,.0f}}<extra></extra>"))
-            fig_fr.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)")
+                scen = rw["Scenario"]
+                fig_fr.add_trace(go.Scatter(
+                    x=[rw["Risk"]], y=[rw["Econ Delta"]],
+                    mode="markers+text",
+                    text=[scen],
+                    textposition="top center",
+                    marker=dict(
+                        size=size_map.get(scen, 16),
+                        color=col_map.get(scen, "#3b82f6"),
+                        symbol=symbol_map.get(scen, "circle"),
+                        line=dict(width=2, color="rgba(255,255,255,.25)"),
+                    ),
+                    showlegend=True,
+                    name=scen,
+                    hovertemplate=f"<b>{scen}</b><br>Risk: %{{x:.2f}}/5<br>Econ delta: {currency_symbol} %{{y:,.0f}}<extra></extra>",
+                ))
+            fig_fr.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)", annotation_text="Break-even", annotation_font_color="#64748b", annotation_position="right")
             fig_fr.update_layout(title="Cost × Risk Decision Map", xaxis_title="Weighted risk score", yaxis_title=f"Economic delta ({currency_symbol})", height=350)
             st.plotly_chart(apply_chart_theme(fig_fr, 350), use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
@@ -2975,6 +3738,36 @@ with stack("Charts", "Cost stack, economic waterfall and decision map.", "📈",
             fig_wf.update_layout(title="Economic Delta Waterfall", yaxis_title=f"({currency_symbol})")
             st.plotly_chart(apply_chart_theme(fig_wf), use_container_width=True, config={"displayModeBar":False})
         st.markdown("</div>", unsafe_allow_html=True)
+
+# ── v47 New Modules ────────────────────────────────────────────────────────
+
+with stack("Sensitivity Analysis", "What-if: how price, volume, FX and rates shift the economic outcome.", "🎚", "#f59e0b", "What-if"):
+    render_sensitivity_panel(
+        base_econ_delta=final_econ,
+        base_spend=float(total.get("Current Spend", 0.0)),
+        country_inputs=country_inputs,
+        proposal_inputs=proposal_inputs,
+        all_shares=final_shares,
+        supplier_risk=supplier_risk,
+        method=rate_method,
+        currency=currency_symbol,
+    )
+
+with stack("Award Scenario Comparison", "Save and compare up to 3 sourcing scenarios side-by-side.", "🏆", "#06b6d4", "Scenarios"):
+    render_award_scenarios(total, supplier_focus_df, final_shares, currency_symbol)
+
+with stack("Kraljic Portfolio Matrix", "Position suppliers by spend impact × supply risk — defines sourcing strategy per quadrant.", "🔷", "#8b5cf6", "Portfolio"):
+    render_kraljic_matrix(supplier_focus_df, risk_inputs, risk_weights, total, currency_symbol)
+
+with stack("BATNA / ZOPA Negotiation", "Walk-away price, ZOPA zone and lever quantification before entering negotiations.", "🤝", "#ec4899", "Negotiation"):
+    render_batna_zopa(total, country_inputs, proposal_inputs, supplier_focus_df, currency_symbol)
+
+with stack("Concentration Risk & Stress Test", "HHI index, single-supplier dependency alerts and failure simulation.", "⚠", "#ef4444", "Risk"):
+    render_concentration_risk(
+        supplier_df, total, country_inputs, proposal_inputs,
+        supplier_risk, rate_method, currency_symbol,
+        threshold_pct=float(st.session_state.get("concentration_threshold", 60.0)),
+    )
 
 # ── Working capital economic view ──────────────────────────────────────────
 if show_adv_econ:
