@@ -506,7 +506,7 @@ st.set_page_config(
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -515,7 +515,7 @@ st.markdown("""
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body, [data-testid="stApp"] {
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
     background: #050b18 !important;
     color: #e2e8f0;
 }
@@ -529,16 +529,16 @@ html, body, [data-testid="stApp"] {
     background: linear-gradient(180deg, #0a1628 0%, #0d1f3c 100%) !important;
     border-right: 1px solid rgba(59,130,246,.18) !important;
 }
-[data-testid="stSidebar"] * { font-family: 'DM Sans', sans-serif !important; }
+[data-testid="stSidebar"] * { font-family: 'Inter', -apple-system, system-ui, sans-serif !important; }
 [data-testid="stSidebar"] label { color: #94a3b8 !important; font-size: .80rem !important; font-weight: 500 !important; }
 [data-testid="stSidebar"] .stMarkdown h2 {
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important;
     color: #f1f5f9 !important; font-size: 1.05rem !important;
     border-bottom: 1px solid rgba(59,130,246,.25) !important;
     padding-bottom: .5rem !important; margin-bottom: .75rem !important;
 }
 [data-testid="stSidebar"] .stMarkdown h3 {
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important;
     color: #7dd3fc !important; font-size: .82rem !important; letter-spacing: .07em !important;
     text-transform: uppercase !important; margin-top: 1.2rem !important;
 }
@@ -562,7 +562,7 @@ html, body, [data-testid="stApp"] {
 [data-testid="stTabs"] [data-baseweb="tab"] {
     background: transparent !important;
     border-radius: 10px !important;
-    font-family: 'DM Sans', sans-serif !important;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
     font-weight: 600 !important; font-size: .82rem !important;
     color: #94a3b8 !important; letter-spacing: .03em !important;
     padding: 8px 16px !important; transition: all .2s ease !important;
@@ -590,7 +590,7 @@ html, body, [data-testid="stApp"] {
 [data-testid="stExpander"] details summary {
     background: linear-gradient(135deg, rgba(15,23,42,.95) 0%, rgba(30,41,59,.9) 100%) !important;
     padding: 16px 20px !important; min-height: 64px !important;
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important;
     font-weight: 700 !important; font-size: .95rem !important;
     color: #f1f5f9 !important;
     border-left: 4px solid var(--exp-accent, #3b82f6) !important;
@@ -610,7 +610,7 @@ html, body, [data-testid="stApp"] {
     background: rgba(15,23,42,.7) !important;
     border: 1px solid rgba(148,163,184,.20) !important;
     border-radius: 8px !important; color: #e2e8f0 !important;
-    font-family: 'DM Sans', sans-serif !important;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
     transition: border-color .15s ease !important;
 }
 [data-testid="stNumberInput"] input:focus,
@@ -632,7 +632,7 @@ label {
 [data-testid="stButton"] > button[kind="primary"] {
     background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%) !important;
     border: none !important; border-radius: 10px !important;
-    color: #ffffff !important; font-family: 'Syne', sans-serif !important;
+    color: #ffffff !important; font-family: 'Libre Baskerville', Georgia, serif !important;
     font-weight: 700 !important; font-size: .88rem !important;
     letter-spacing: .04em !important; padding: 10px 20px !important;
     box-shadow: 0 4px 15px rgba(59,130,246,.35) !important;
@@ -647,13 +647,13 @@ label {
     background: rgba(30,41,59,.6) !important;
     border: 1px solid rgba(148,163,184,.25) !important;
     border-radius: 10px !important; color: #cbd5e1 !important;
-    font-family: 'DM Sans', sans-serif !important; font-weight: 600 !important;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif !important; font-weight: 600 !important;
 }
 .stDownloadButton > button {
     background: linear-gradient(135deg, #064e3b 0%, #065f46 100%) !important;
     border: 1px solid rgba(16,185,129,.3) !important;
     border-radius: 10px !important; color: #d1fae5 !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important; font-weight: 700 !important;
 }
 
 /* ── DATAFRAMES ─────────────────────────────────────────────────────────────── */
@@ -663,7 +663,7 @@ label {
 }
 [data-testid="stDataFrame"] thead th {
     background: rgba(15,23,42,.9) !important;
-    font-family: 'Syne', sans-serif !important; font-weight: 700 !important;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif !important; font-weight: 600 !important;
     color: #7dd3fc !important; font-size: .75rem !important;
     letter-spacing: .06em !important; text-transform: uppercase !important;
 }
@@ -672,12 +672,13 @@ label {
 }
 [data-testid="stDataFrame"] tbody td {
     color: #cbd5e1 !important; font-size: .82rem !important;
-    font-family: 'DM Mono', monospace !important;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
+    font-variant-numeric: tabular-nums !important;
 }
 
 /* ── ALERTS ─────────────────────────────────────────────────────────────────── */
 [data-testid="stAlert"] {
-    border-radius: 12px !important; font-family: 'DM Sans', sans-serif !important;
+    border-radius: 12px !important; font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
 }
 [data-testid="stAlert"][data-baseweb="notification"] {
     background: rgba(30,58,138,.25) !important;
@@ -743,14 +744,14 @@ label {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 6px 14px; border-radius: 999px;
     background: rgba(99,102,241,.18); border: 1px solid rgba(99,102,241,.35);
-    color: #a5b4fc; font-family: 'DM Mono', monospace; font-size: .72rem;
+    color: #a5b4fc; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: .72rem;
     font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
     margin-bottom: 16px;
 }
 .v46-hero-mode-chip::before { content: '▶'; font-size: .6rem; opacity: .7; }
 .v46-hero h1 {
-    font-family: 'Syne', sans-serif !important;
-    font-size: 2.6rem; font-weight: 800; line-height: 1.05;
+    font-family: 'Libre Baskerville', Georgia, serif !important;
+    font-size: 2.2rem; font-weight: 700; line-height: 1.12;
     background: linear-gradient(135deg, #f8fafc 30%, #a5b4fc 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text; margin-bottom: 12px;
@@ -762,7 +763,7 @@ label {
 }
 .v46-hero-stat { display: flex; flex-direction: column; gap: 3px; }
 .v46-hero-stat-label { font-size: .68rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
-.v46-hero-stat-value { font-family: 'DM Mono', monospace; font-size: 1.05rem; font-weight: 500; color: #7dd3fc; }
+.v46-hero-stat-value { font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: .95rem; font-weight: 500; color: #7dd3fc; letter-spacing: .02em; }
 
 /* Section headers */
 .v46-section {
@@ -773,7 +774,7 @@ label {
     backdrop-filter: blur(8px);
 }
 .v46-section-title {
-    font-family: 'Syne', sans-serif; font-size: 1.0rem; font-weight: 700;
+    font-family: 'Libre Baskerville', Georgia, serif; font-size: 1.0rem; font-weight: 700;
     color: #f1f5f9; margin-bottom: 2px;
 }
 .v46-section-subtitle { font-size: .82rem; color: #94a3b8; line-height: 1.4; }
@@ -801,13 +802,15 @@ label {
     opacity: .7;
 }
 .v46-kpi-label {
-    font-size: .68rem; font-weight: 700; color: #64748b;
-    text-transform: uppercase; letter-spacing: .1em; margin-bottom: 10px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: .68rem; font-weight: 600; color: #64748b;
+    text-transform: uppercase; letter-spacing: .09em; margin-bottom: 10px;
     min-height: 30px; display: flex; align-items: flex-start;
 }
 .v46-kpi-value {
-    font-family: 'Syne', sans-serif; font-size: 1.55rem; font-weight: 800;
-    line-height: 1.1; margin-bottom: 8px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif; font-size: 1.38rem; font-weight: 600;
+    line-height: 1.15; margin-bottom: 8px; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums;
     animation: countUp .4s ease-out both;
 }
 .v46-kpi-helper { font-size: .76rem; color: #475569; line-height: 1.35; }
@@ -833,7 +836,7 @@ label {
     border: 1px solid rgba(239,68,68,.25);
 }
 .v46-decision-title {
-    font-family: 'Syne', sans-serif; font-size: 1.3rem; font-weight: 800;
+    font-family: 'Libre Baskerville', Georgia, serif; font-size: 1.2rem; font-weight: 700;
     color: #f1f5f9; margin-bottom: 8px;
 }
 .v46-decision-body { font-size: .95rem; color: #cbd5e1; line-height: 1.55; }
@@ -842,7 +845,7 @@ label {
 .v46-score-badge {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 5px 12px; border-radius: 999px;
-    font-family: 'DM Mono', monospace; font-weight: 600; font-size: .80rem;
+    font-family: 'IBM Plex Mono', 'Courier New', monospace; font-weight: 600; font-size: .80rem;
     border: 1px solid currentColor;
 }
 
@@ -871,7 +874,7 @@ label {
     animation: fadeSlideUp .5s ease-out both;
 }
 .v46-chart h4 {
-    font-family: 'Syne', sans-serif !important; font-size: .95rem !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important; font-size: .95rem !important;
     font-weight: 700 !important; color: #e2e8f0 !important;
     margin: 0 0 14px 0 !important;
 }
@@ -885,8 +888,8 @@ label {
     animation: fadeSlideUp .4s ease-out both;
 }
 .v46-ai-card h4 {
-    font-family: 'Syne', sans-serif !important;
-    color: #a5b4fc !important; font-size: 1.05rem !important; font-weight: 800 !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important;
+    color: #a5b4fc !important; font-size: 1.0rem !important; font-weight: 700 !important;
     margin: 0 0 12px 0 !important;
 }
 .v46-ai-card ul { margin: 8px 0 0 0; padding-left: 18px; }
@@ -900,7 +903,7 @@ label {
     padding: 14px 16px; margin: 10px 0 14px 0;
     box-shadow: 0 8px 24px rgba(0,0,0,.2);
 }
-.v46-mode-card-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: .92rem; margin-bottom: 4px; }
+.v46-mode-card-title { font-family: 'Libre Baskerville', Georgia, serif; font-weight: 700; color: #f1f5f9; font-size: .92rem; margin-bottom: 4px; }
 .v46-mode-card-sub { font-size: .76rem; color: #94a3b8; line-height: 1.3; }
 
 /* Market scope card */
@@ -909,7 +912,7 @@ label {
     border: 1px solid rgba(14,165,233,.2); border-radius: 14px;
     padding: 14px 16px; margin: 10px 0 16px 0;
 }
-.v46-market-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: .88rem; margin-bottom: 5px; }
+.v46-market-title { font-family: 'Libre Baskerville', Georgia, serif; font-weight: 700; color: #f1f5f9; font-size: .88rem; margin-bottom: 5px; }
 .v46-market-meta { font-size: .75rem; color: #7dd3fc; margin-bottom: 8px; }
 .v46-chip {
     display: inline-block; padding: 3px 9px; margin: 3px 3px 0 0;
@@ -932,7 +935,7 @@ label {
 .v46-pill {
     display: inline-block; padding: 4px 12px; border-radius: 999px;
     background: rgba(59,130,246,.15); border: 1px solid rgba(59,130,246,.25);
-    color: #93c5fd; font-size: .76rem; font-weight: 700; font-family: 'DM Mono', monospace;
+    color: #93c5fd; font-size: .76rem; font-weight: 700; font-family: 'IBM Plex Mono', 'Courier New', monospace;
 }
 
 /* Landed result */
@@ -965,25 +968,25 @@ label {
     background: rgba(120,53,15,.12); border: 1px solid rgba(245,158,11,.2);
     border-radius: 14px; padding: 14px 18px; margin: 12px 0;
 }
-.v46-leakage-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #fcd34d; font-size: .88rem; margin-bottom: 10px; }
+.v46-leakage-title { font-family: 'Libre Baskerville', Georgia, serif; font-weight: 700; color: #fcd34d; font-size: .88rem; margin-bottom: 10px; }
 .v46-leakage-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,.08); }
 .v46-leakage-row:last-child { border: none; font-weight: 700; color: #f59e0b; }
 .v46-leakage-item { font-size: .82rem; color: #d1d5db; }
-.v46-leakage-val { font-family: 'DM Mono', monospace; font-size: .82rem; color: #fbbf24; }
+.v46-leakage-val { font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: .82rem; color: #fbbf24; }
 
 /* Productivity ROI */
 .v46-roi-badge {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 8px 16px; border-radius: 12px;
     background: rgba(6,78,59,.25); border: 1px solid rgba(16,185,129,.25);
-    color: #6ee7b7; font-family: 'DM Mono', monospace; font-size: .84rem; font-weight: 600;
+    color: #6ee7b7; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: .84rem; font-weight: 600;
     margin: 8px 0;
 }
 
 /* Supply chain heat chip */
 .v46-heat-chip {
     display: inline-block; padding: 5px 12px; border-radius: 8px;
-    font-family: 'DM Mono', monospace; font-size: .76rem; font-weight: 600;
+    font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: .76rem; font-weight: 600;
     margin: 3px;
 }
 .v46-heat-green { background: rgba(6,78,59,.4); border: 1px solid rgba(16,185,129,.3); color: #6ee7b7; }
@@ -1021,7 +1024,7 @@ label {
     border: 1px solid var(--br-border, rgba(59,130,246,.25));
     flex-shrink: 0;
 }
-.v46-breaker-title { font-family: 'Syne', sans-serif; font-weight: 700; color: #f1f5f9; font-size: 1.0rem; margin-bottom: 2px; }
+.v46-breaker-title { font-family: 'Libre Baskerville', Georgia, serif; font-weight: 700; color: #f1f5f9; font-size: 1.0rem; margin-bottom: 2px; }
 .v46-breaker-sub { font-size: .82rem; color: #94a3b8; line-height: 1.3; }
 .v46-breaker-tag {
     margin-left: auto; padding: 5px 12px; border-radius: 999px;
@@ -1033,7 +1036,7 @@ label {
 
 /* Plain title */
 .v46-plain-title {
-    font-family: 'Syne', sans-serif; font-size: .95rem; font-weight: 700;
+    font-family: 'Libre Baskerville', Georgia, serif; font-size: .95rem; font-weight: 700;
     color: #e2e8f0; margin: 18px 0 10px 0;
     padding-bottom: 6px; border-bottom: 1px solid rgba(148,163,184,.12);
 }
@@ -1047,7 +1050,7 @@ label {
 ::-webkit-scrollbar-thumb { background: rgba(59,130,246,.3); border-radius: 3px; }
 
 /* Metrics override */
-div[data-testid="stMetricValue"] { font-family: 'Syne', sans-serif !important; font-weight: 800 !important; color: #60a5fa !important; }
+div[data-testid="stMetricValue"] { font-family: 'IBM Plex Mono', monospace !important; font-weight: 600 !important; color: #60a5fa !important; }
 div[data-testid="stMetricLabel"] { color: #64748b !important; font-size: .75rem !important; }
 
 /* Caption */
