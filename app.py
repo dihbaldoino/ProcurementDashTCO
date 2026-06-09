@@ -345,13 +345,74 @@ SERVICE_SCOPE_CONFIG = {
     },
     "Logistics / Transport Services": {
         "icon": "🚚", "color": "#10b981",
-        "pricing_models": ["Rate per shipment", "Dedicated route / vehicle", "Cost plus fee", "SLA-based logistics service", "Dynamic/spot pricing"],
-        "driver_label": "shipments, km, routes, pallets or dedicated vehicles",
-        "productivity_label": "load factor improvement, route optimization, fewer expedites or warehouse throughput gain",
-        "field_labels": ["Shipments / month", "Average km or routes", "Dedicated vehicles / lanes"],
+        "pricing_models": [
+            "Rate per shipment (tarifa por embarque)",
+            "Rate per km (tarifa por km)",
+            "Dedicated route / vehicle (veículo dedicado mensal)",
+            "Cost plus fee (custo aberto + margem)",
+            "Per pallet (tarifa por pallet)",
+            "Per kg / ton (tarifa por peso)",
+            "Per m³ (tarifa por cubagem)",
+            "Milk run (rota multi-parada)",
+            "Spot / dynamic pricing (spot sob demanda)",
+            "Minimum freight + variable",
+        ],
+        "driver_label": "shipments/mês · km/rota · pallets · kg · m³ · orders",
+        "productivity_label": "load factor ↑ · empty km ↓ · dwell time ↓ · tender acceptance ↑ · backhaul capture · intermodal migration",
+        "field_labels": ["Shipments / mês", "Distância km (one-way)", "Pallets por embarque"],
         "benchmark_fte_cost": 42_000.0,
-        "sla_kpis": ["OTIF %", "Damage rate %", "Cost per pallet/km vs budget", "Expedite frequency", "Driver / asset utilization %"],
-        "leakage_drivers": ["Expedite / emergency freight", "Detention and demurrage", "Damage / claims cost", "Fuel surcharge overruns", "Dead mileage / empty runs"],
+        "sla_kpis": ["OTIF %", "On-time pickup %", "Damage rate %", "Tender acceptance %", "Dwell time (min)", "Cost per shipment vs budget"],
+        "leakage_drivers": [
+            "Detention & demurrage (doca parada)",
+            "Empty miles / km vazio (retorno sem carga)",
+            "Spot overflow (baixo tender acceptance)",
+            "Fuel surcharge overruns (fórmula sem teto)",
+            "Accessorial leakage (taxas extras)",
+            "Damage & claims cost",
+            "Failed pickup / no-show",
+            "Redelivery cost",
+        ],
+        # Route-specific sub-config
+        "route_types": [
+            "Inbound to Warehouse (fornecedor → armazém)",
+            "Middle Mile / Transfer (FC → CD / cross-dock)",
+            "Outbound B2B (armazém → lojas / hubs)",
+            "Last Mile Injection (armazém → delivery station)",
+            "Reverse Logistics (devoluções → armazém)",
+            "Shuttle / Yard Movement (transferências internas)",
+            "Dedicated Lane (rota fixa recorrente)",
+            "Spot / On-demand (frete sob demanda)",
+        ],
+        "vehicle_types": [
+            "Van / Sprinter (até 3,5t)",
+            "VUC (até 6t — restrição urbana)",
+            "Toco (até 13t)",
+            "Truck (até 23t)",
+            "Carreta LS (até 33t)",
+            "Bitrem (até 57t)",
+            "Rodotrem (até 74t)",
+            "Refrigerado / temperatura controlada",
+            "Sider / Grade aberta",
+            "Baú (fechado)",
+            "Container 20' / 40'",
+            "Semi-reboque tanque",
+        ],
+        "cargo_risk_levels": [
+            "Padrão / Geral (baixo valor)",
+            "Médio valor (R$50K–R$300K por embarque)",
+            "Alto valor (R$300K–R$1M por embarque)",
+            "Muito alto valor / eletrônicos (>R$1M)",
+            "Frágil / perecível",
+            "Perigoso (IMDG / ADR)",
+            "Farmacêutico / GDP",
+        ],
+        "escort_triggers": {
+            "RJ / ES (rotas de risco)":          True,
+            "Alto valor >R$500K":                True,
+            "Eletrônicos / smartphones":         True,
+            "Carga perigosa":                    False,
+            "Padrão":                            False,
+        },
     },
     "BPO / Call Center": {
         "icon": "🎧", "color": "#06b6d4",
@@ -375,16 +436,35 @@ SERVICE_SCOPE_CONFIG = {
     },
 }
 SERVICE_SCORECARD_WEIGHTS = {
-    "Cost competitiveness": 18.0, "SLA / Delivery": 18.0, "Quality of service": 14.0,
-    "Stakeholder satisfaction": 12.0, "Contract compliance": 10.0,
-    "Productivity / Innovation": 10.0, "Overtime control": 8.0,
-    "Risk & compliance": 5.0, "ESG / diversity": 5.0,
+    "Cost competitiveness":    20.0,  # Is the rate card benchmarked? Formula-based? Open-book?
+    "SLA / Delivery":          18.0,  # On-time, quality of delivery, OTIF
+    "Quality of service":      14.0,  # First-time right, defect rate, rework frequency
+    "Stakeholder satisfaction":10.0,  # NPS / CSAT from internal customers
+    "Contract compliance":     10.0,  # Adherence to agreed scope, rates, terms
+    "Productivity / Innovation": 8.0, # Measurable efficiency gains delivered
+    "Overtime control":         7.0,  # OT as % of total hours — proxy for capacity planning
+    "Risk & compliance":        7.0,  # Regulatory, labor, HSE, cyber incidents
+    "ESG / diversity":          6.0,  # Carbon footprint, social compliance, diversity KPIs
 }
 SUPPLIER_GOVERNANCE_WEIGHTS = {
-    "OTIF / SLA delivery": 18.0, "Quality / NCR performance": 15.0,
-    "Financial health": 12.0, "Compliance / due diligence": 15.0,
-    "ESG / ethics": 10.0, "Cyber / data security": 8.0,
-    "Labor / HSE": 10.0, "Stakeholder satisfaction": 12.0,
+    "OTIF / SLA delivery":        18.0,  # Operational delivery track record
+    "Quality / NCR performance":  15.0,  # Non-conformance rate, corrective action speed
+    "Financial health":           12.0,  # Z-score proxy, credit rating, cash flow signals
+    "Compliance / due diligence": 15.0,  # Legal, sanctions, anti-bribery, FCPA/LGPD/GDPR
+    "ESG / ethics":               10.0,  # Deforestation, modern slavery, carbon
+    "Cyber / data security":       8.0,  # SOC2, ISO27001, incident history
+    "Labor / HSE":                10.0,  # Accident rate, labor conditions, union relations
+    "Stakeholder satisfaction":   12.0,  # Internal NPS from business partners
+}
+# Extended risk dimensions — McKinsey SCM standard
+DEFAULT_RISK_WEIGHTS = {
+    "Supply":        25.0,  # Lead time, single-source exposure, capacity
+    "Quality":       18.0,  # NCR rate, spec compliance, recalls
+    "Financial":     15.0,  # Supplier financial health, dependency
+    "Compliance":    15.0,  # Regulatory, sanctions, FCPA, LGPD
+    "ESG":           12.0,  # Deforestation, carbon, social
+    "Logistics":      8.0,  # Freight reliability, port risk, customs
+    "Geopolitical":   7.0,  # Country risk, tariff exposure, currency
 }
 DUE_DILIGENCE_STATUS_OPTIONS = ["Clear", "Minor gaps", "Material gaps", "Not approved"]
 CUSTOM_FACTOR_TYPES = [
@@ -538,12 +618,12 @@ DEFAULT_MIN_SHARE = {"ChemPrime": 40.0, "OleoGlobal": 0.0, "Oleo Overseas Tradin
 DEFAULT_MAX_SHARE = {s: 100.0 for s in SUPPLIERS}
 DEFAULT_APPROVED = {s: True for s in SUPPLIERS}
 DEFAULT_RISK = {
-    "ChemPrime": {"Supply": 2.0, "Quality": 2.0, "Financial": 2.0, "Compliance": 1.5, "ESG": 2.0, "Logistics": 2.0},
-    "OleoGlobal": {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5},
-    "Oleo Overseas Trading Co.": {"Supply": 4.0, "Quality": 3.0, "Financial": 3.5, "Compliance": 3.0, "ESG": 3.0, "Logistics": 4.5},
-    "Comercio de Oleos Nacional Distribuicao": {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5},
+    "ChemPrime":    {"Supply": 2.0, "Quality": 2.0, "Financial": 2.0, "Compliance": 1.5, "ESG": 2.0, "Logistics": 2.0, "Geopolitical": 1.5},
+    "OleoGlobal":   {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5, "Geopolitical": 2.5},
+    "Oleo Overseas Trading Co.": {"Supply": 4.0, "Quality": 3.0, "Financial": 3.5, "Compliance": 3.0, "ESG": 3.0, "Logistics": 4.5, "Geopolitical": 4.0},
+    "Comercio de Oleos Nacional Distribuicao": {"Supply": 3.0, "Quality": 2.5, "Financial": 2.5, "Compliance": 2.0, "ESG": 2.5, "Logistics": 2.5, "Geopolitical": 2.0},
 }
-DEFAULT_RISK_WEIGHTS = {"Supply": 30.0, "Quality": 20.0, "Financial": 15.0, "Compliance": 15.0, "ESG": 10.0, "Logistics": 10.0}
+DEFAULT_RISK_WEIGHTS_OLD_PLACEHOLDER = {}  # moved to SERVICE_SCORECARD section above
 
 for _s in SUPPLIER_POOL:
     DEFAULT_SUPPLIER_DISPLAY_NAME.setdefault(_s, _s)
@@ -1351,13 +1431,20 @@ def due_diligence_penalty(status: str) -> float:
 def governance_risk_defaults(gov_inputs: Dict, supplier: str) -> Dict[str, float]:
     data = gov_inputs.get(supplier, {}) or {}
     sp = due_diligence_penalty(str(data.get("Due diligence status", "Clear")))
+    # Geopolitical risk derived from compliance + ESG scores as proxy
+    geo_risk = max(1.0, min(5.0,
+        (score_to_risk(float(data.get("Compliance / due diligence", 75.0))) * 0.5
+         + score_to_risk(float(data.get("ESG / ethics", 75.0))) * 0.5)
+        + sp * 0.5
+    ))
     return {
-        "Supply": max(1.0, min(5.0, score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + 0.15 * sp)),
-        "Quality": max(1.0, min(5.0, score_to_risk(float(data.get("Quality / NCR performance", 75.0))))),
-        "Financial": max(1.0, min(5.0, score_to_risk(float(data.get("Financial health", 75.0))) + 0.25 * sp)),
-        "Compliance": max(1.0, min(5.0, score_to_risk(float(data.get("Compliance / due diligence", 75.0))) + sp)),
-        "ESG": max(1.0, min(5.0, score_to_risk(float(data.get("ESG / ethics", 75.0))) + 0.35 * sp)),
-        "Logistics": max(1.0, min(5.0, (score_to_risk(float(data.get("OTIF / SLA delivery", 75.0))) + score_to_risk(float(data.get("Labor / HSE", 75.0)))) / 2.0)),
+        "Supply":       max(1.0, min(5.0, score_to_risk(float(data.get("OTIF / SLA delivery",        75.0))) + 0.15 * sp)),
+        "Quality":      max(1.0, min(5.0, score_to_risk(float(data.get("Quality / NCR performance",  75.0))))),
+        "Financial":    max(1.0, min(5.0, score_to_risk(float(data.get("Financial health",           75.0))) + 0.25 * sp)),
+        "Compliance":   max(1.0, min(5.0, score_to_risk(float(data.get("Compliance / due diligence", 75.0))) + sp)),
+        "ESG":          max(1.0, min(5.0, score_to_risk(float(data.get("ESG / ethics",               75.0))) + 0.35 * sp)),
+        "Logistics":    max(1.0, min(5.0, (score_to_risk(float(data.get("OTIF / SLA delivery",       75.0))) + score_to_risk(float(data.get("Labor / HSE", 75.0)))) / 2.0)),
+        "Geopolitical": geo_risk,
     }
 
 
@@ -1895,15 +1982,43 @@ def render_service_supplier_builder(
     scope_creep_pct = safe_divide(float(change_order_reserve), float(proposed_value))
     tcv = calc_multi_year_contract_value(service_tco, int(contract_years), 3.0)
 
+    # ── Service TCO waterfall (mirrors Direct Materials price build-up) ──────
+    svc_wf_rows = [
+        ("Proposed contract / service value",    float(proposed_value),          True),
+        ("Transition / implementation cost",     float(transition_cost),          float(transition_cost) > 0),
+        ("Change order reserve",                 float(change_order_reserve),     float(change_order_reserve) > 0),
+        ("Internal management cost",             float(internal_mgmt),            float(internal_mgmt) > 0),
+        ("Rework / quality cost",                float(rework_cost_sup),          float(rework_cost_sup) > 0),
+        ("Annual overtime cost",                 float(ot_cost_input),            float(ot_cost_input) > 0),
+        ("SLA risk cost (quantified exposure)",  sla_risk_cost,                   sla_risk_cost > 0),
+        ("Expected risk cost (prob × impact)",   expected_risk_cost,              expected_risk_cost > 0),
+        ("− SLA credits / rebates",              -float(sla_credits_rebates),     float(sla_credits_rebates) > 0),
+        ("− Productivity gain committed",        -float(productivity_gain),       float(productivity_gain) > 0),
+    ]
+    wf_html_svc = "".join(
+        f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+        f"<span style='font-size:.77rem;color:{'#94a3b8' if val>=0 else '#34d399'}'>{lbl}</span>"
+        f"<span style='font-family:IBM Plex Mono,monospace;font-size:.77rem;color:{'#e2e8f0' if val>=0 else '#34d399'}'>"
+        f"{'+' if val>0 else ''}{reporting_currency} {val:,.0f}</span></div>"
+        for lbl, val, show in svc_wf_rows if show
+    )
+    roi_str = f"{roi['three_year_roi_pct']:.0f}% ROI · {roi['payback_months']:.1f}mo payback · {reporting_currency} {roi['net_three_year_value']:,.0f} net 3yr" if float(productivity_gain) > 0 else "no productivity commitment entered"
     st.markdown(
-        f"""<div class="v46-svc-result">
-        <b>Service TCO (proposal spend):</b> {reporting_currency} {service_tco:,.0f} &nbsp;·&nbsp;
-        <b>Productivity gain:</b> {reporting_currency} {productivity_gain:,.0f} &nbsp;·&nbsp;
-        <b>SLA risk cost:</b> {reporting_currency} {sla_risk_cost:,.0f} &nbsp;·&nbsp;
-        <b>Expected risk cost:</b> {reporting_currency} {expected_risk_cost:,.0f} &nbsp;·&nbsp;
-        <b>Perf-adj cost:</b> {reporting_currency} {perf_adj_cost:,.0f} &nbsp;·&nbsp;
-        <b>Should-cost gap:</b> {reporting_currency} {should_cost_gap:,.0f} &nbsp;·&nbsp;
-        <b>{int(contract_years)}-yr TCV:</b> {reporting_currency} {tcv['total_contract_value']:,.0f}
+        f"""<div class="v46-svc-result" style="padding:14px 18px">
+            <div style='margin-bottom:8px;font-size:.82rem;font-weight:600;color:#c4b5fd'>
+                📐 Service TCO waterfall — all components included
+            </div>
+            {wf_html_svc}
+            <div style='display:flex;justify-content:space-between;padding:7px 0 0 0;margin-top:4px;border-top:1px solid rgba(139,92,246,.3)'>
+                <span style='font-size:.84rem;font-weight:700;color:#f1f5f9'>Final Service TCO (proposal spend)</span>
+                <span style='font-family:IBM Plex Mono,monospace;font-size:.96rem;font-weight:700;color:#a78bfa'>{reporting_currency} {service_tco:,.0f}</span>
+            </div>
+            <div style='margin-top:8px;display:flex;gap:18px;flex-wrap:wrap;font-size:.78rem;color:#94a3b8'>
+                <span><b style='color:#e2e8f0'>Perf-adj cost:</b> {reporting_currency} {perf_adj_cost:,.0f}</span>
+                <span><b style='color:#e2e8f0'>Should-cost gap:</b> <span style='color:{"#f87171" if should_cost_gap>0 else "#34d399"}'>{reporting_currency} {should_cost_gap:,.0f}</span></span>
+                <span><b style='color:#e2e8f0'>{int(contract_years)}-yr TCV:</b> {reporting_currency} {tcv["total_contract_value"]:,.0f}</span>
+                <span><b style='color:#e2e8f0'>Productivity:</b> {roi_str}</span>
+            </div>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -1948,105 +2063,169 @@ def render_landed_cost_builder(
     *, key_prefix: str, default_spend: float, default_volume: float, unit: str,
     reporting_currency: str, currency_default: str = "BRL", supplier_label: str = "Supplier",
 ) -> Dict:
+    """
+    Unified price waterfall. Final price = EVERYTHING the user defines:
+      commodity formula OR manual base price
+      + conversion cost + fixed margin
+      + international freight + insurance + customs + import duties
+      + domestic freight + local taxes
+      + ESG / certification costs
+    All in quote currency → converted to reporting currency via FX.
+    spend = final_unit_price_reporting × volume
+    """
     if currency_default not in CURRENCY_OPTIONS:
         currency_default = "BRL"
     default_fx = float(DEFAULT_FX_TO_REPORTING.get(currency_default, 1.0))
     base_default = default_unit_price_from_spend(default_spend, max(default_volume * default_fx, 1e-9))
 
-    r1 = st.columns([1.0, .82, .78, .78, .72])
-    with r1[0]:
-        base_unit_price = st.number_input(f"{supplier_label} | Base / quoted unit price", min_value=0.0, value=float(base_default), step=0.01, format="%.6f", key=f"{key_prefix}__base_unit_price")
-    with r1[1]:
+    # ── Row 1: volume, currency, FX, MOQ ─────────────────────────────────
+    r0 = st.columns([1.0, .82, .78, .78, .72])
+    with r0[0]:
+        base_unit_price = st.number_input(
+            f"{supplier_label} | Base / quoted unit price ({currency_default})",
+            min_value=0.0, value=float(base_default), step=0.01, format="%.6f",
+            key=f"{key_prefix}__base_unit_price",
+            help="Manual price. Will be overridden if commodity formula is active below.",
+        )
+    with r0[1]:
         currency = st.selectbox(f"{supplier_label} | Quote currency", options=CURRENCY_OPTIONS, index=CURRENCY_OPTIONS.index(currency_default), key=f"{key_prefix}__currency")
-    with r1[2]:
-        fx_rate = st.number_input(f"{supplier_label} | FX to {reporting_currency}", min_value=0.000001, value=default_fx, step=0.01, format="%.6f", key=f"{key_prefix}__fx_rate")
-    with r1[3]:
+    with r0[2]:
+        fx_rate = st.number_input(f"{supplier_label} | FX → {reporting_currency}", min_value=0.000001, value=default_fx, step=0.01, format="%.6f", key=f"{key_prefix}__fx_rate")
+    with r0[3]:
         volume = st.number_input(f"{supplier_label} | 100% volume ({unit})", min_value=0.0, value=float(default_volume), step=max(float(default_volume) * 0.05, 1.0), format="%.4f", key=f"{key_prefix}__volume")
-    with r1[4]:
+    with r0[4]:
         moq = st.number_input(f"{supplier_label} | MOQ ({unit})", min_value=0.0, value=0.0, step=max(float(default_volume) * 0.05, 1.0), format="%.4f", key=f"{key_prefix}__moq")
-
-    r2 = st.columns(5)
-    with r2[0]:
-        conversion_cost = st.number_input(f"{supplier_label} | Conversion / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__conversion_cost")
-    with r2[1]:
-        fixed_margin = st.number_input(f"{supplier_label} | Fixed margin / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__fixed_margin")
-    with r2[2]:
-        intl_freight = st.number_input(f"{supplier_label} | Intl freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__international_freight")
-    with r2[3]:
-        insurance = st.number_input(f"{supplier_label} | Insurance / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__insurance")
-    with r2[4]:
         incoterm = st.selectbox(f"{supplier_label} | Incoterm", options=INCOTERM_OPTIONS, index=INCOTERM_OPTIONS.index("FOB"), key=f"{key_prefix}__incoterm")
 
-    r3 = st.columns(4)
-    with r3[0]:
-        customs = st.number_input(f"{supplier_label} | Customs / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__customs_fees")
-    with r3[1]:
-        import_duties = st.number_input(f"{supplier_label} | Import duties / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__import_duties_taxes")
-    with r3[2]:
-        dom_freight = st.number_input(f"{supplier_label} | Domestic freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__domestic_freight")
-    with r3[3]:
-        local_taxes = st.number_input(f"{supplier_label} | Local taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__local_taxes")
+    # ── Row 2: processing & trade cost components (in quote currency / unit) ─
+    r2 = st.columns(6)
+    with r2[0]: conversion_cost  = st.number_input(f"{supplier_label} | Conversion / {unit}",      min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__conversion_cost")
+    with r2[1]: fixed_margin     = st.number_input(f"{supplier_label} | Fixed margin / {unit}",     min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__fixed_margin")
+    with r2[2]: intl_freight     = st.number_input(f"{supplier_label} | Intl freight / {unit}",     min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__international_freight")
+    with r2[3]: insurance        = st.number_input(f"{supplier_label} | Insurance / {unit}",        min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__insurance")
+    with r2[4]: customs          = st.number_input(f"{supplier_label} | Customs / brokerage / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__customs_fees")
+    with r2[5]: import_duties    = st.number_input(f"{supplier_label} | Import duties / taxes / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__import_duties_taxes")
 
-    comps = {
-        "base_unit_price": float(base_unit_price), "conversion_cost": float(conversion_cost),
-        "fixed_margin": float(fixed_margin), "international_freight": float(intl_freight),
-        "insurance": float(insurance), "customs_fees": float(customs),
-        "import_duties_taxes": float(import_duties), "domestic_freight": float(dom_freight),
-        "local_taxes": float(local_taxes),
-    }
-    unit_price_q = sum(comps.values())
-    unit_price_r = landed_unit_price(comps, float(fx_rate))
-    spend = unit_price_r * float(volume)
-    moq_excess = max(float(moq) - float(volume), 0.0) if float(moq) > 0 else 0.0
-    moq_cash = moq_excess * unit_price_r
-    moq_note = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ"
-    moq_color = "#34d399" if moq_note == "OK" else "#f87171"
+    r3 = st.columns(6)
+    with r3[0]: dom_freight      = st.number_input(f"{supplier_label} | Domestic freight / {unit}", min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__domestic_freight")
+    with r3[1]: local_taxes      = st.number_input(f"{supplier_label} | Local taxes / {unit}",      min_value=0.0, value=0.0, step=0.01, format="%.6f", key=f"{key_prefix}__local_taxes")
+    # remaining cells left intentionally empty for future components
 
-    # ── Commodity index engine ──────────────────────────────────────────────
+    # ── Commodity index formula (optional — overrides base price if active) ─
     comm_result = render_commodity_index_engine(
         key_prefix=key_prefix, base_unit_price=float(base_unit_price),
         unit=unit, reporting_currency=reporting_currency,
     )
-    # Override base unit price if formula is active
-    if comm_result.get("formula_active") and comm_result.get("effective_base_price", 0.0) > 0:
-        effective_base = float(comm_result["effective_base_price"])
-        comps["base_unit_price"] = effective_base
-        unit_price_q = sum(comps.values())
-        unit_price_r = landed_unit_price(comps, float(fx_rate))
-        spend = unit_price_r * float(volume)
+    effective_base = (
+        float(comm_result["effective_base_price"])
+        if comm_result.get("formula_active") and comm_result.get("effective_base_price", 0.0) > 0
+        else float(base_unit_price)
+    )
 
-    # ── ESG & certification costs ──────────────────────────────────────────
+    # ── ESG / certification costs (in reporting currency / unit) ─────────
     esg_result = render_esg_cost_engine(
         key_prefix=key_prefix, volume=float(volume), unit=unit,
         reporting_currency=reporting_currency,
     )
-    # Add ESG cost to landed price
-    esg_cpu = float(esg_result.get("total_cost_per_unit", 0.0))
-    if esg_cpu > 0:
-        unit_price_r += esg_cpu * float(fx_rate)
-        spend = unit_price_r * float(volume)
+    esg_cpu_reporting = float(esg_result.get("total_cost_per_unit", 0.0))
+
+    # ── UNIFIED PRICE WATERFALL ───────────────────────────────────────────
+    # All quote-currency components × FX, then + ESG (already in reporting currency)
+    comps_quote = {
+        "base_unit_price":     effective_base,
+        "conversion_cost":     float(conversion_cost),
+        "fixed_margin":        float(fixed_margin),
+        "international_freight": float(intl_freight),
+        "insurance":           float(insurance),
+        "customs_fees":        float(customs),
+        "import_duties_taxes": float(import_duties),
+        "domestic_freight":    float(dom_freight),
+        "local_taxes":         float(local_taxes),
+    }
+    # Sum all components in quote currency, then convert to reporting
+    total_quote_cpu = sum(comps_quote.values())
+    total_reporting_cpu_before_esg = total_quote_cpu * float(fx_rate)
+    final_unit_price_reporting = total_reporting_cpu_before_esg + esg_cpu_reporting
+    spend = final_unit_price_reporting * float(volume)
+
+    # MOQ economics
+    moq_excess = max(float(moq) - float(volume), 0.0) if float(moq) > 0 else 0.0
+    moq_cash   = moq_excess * final_unit_price_reporting
+    moq_note   = "OK" if float(moq) <= 0 or float(volume) >= float(moq) else "Volume below MOQ ⚠"
+    moq_color  = "#34d399" if "OK" in moq_note else "#f87171"
+
+    # ── Price build-up summary card ───────────────────────────────────────
+    waterfall_rows = [
+        ("Base / commodity price",   effective_base * float(fx_rate),     comm_result.get("formula_active", False)),
+        ("Conversion cost",          float(conversion_cost) * float(fx_rate), float(conversion_cost) > 0),
+        ("Fixed margin",             float(fixed_margin) * float(fx_rate),    float(fixed_margin) > 0),
+        ("International freight",    float(intl_freight) * float(fx_rate),    float(intl_freight) > 0),
+        ("Insurance",                float(insurance) * float(fx_rate),        float(insurance) > 0),
+        ("Customs / brokerage",      float(customs) * float(fx_rate),          float(customs) > 0),
+        ("Import duties / taxes",    float(import_duties) * float(fx_rate),    float(import_duties) > 0),
+        ("Domestic freight",         float(dom_freight) * float(fx_rate),      float(dom_freight) > 0),
+        ("Local taxes",              float(local_taxes) * float(fx_rate),      float(local_taxes) > 0),
+        ("ESG / certification costs",esg_cpu_reporting,                        esg_cpu_reporting > 0),
+    ]
+    active_rows = [(lbl, val) for lbl, val, active in waterfall_rows if active or lbl == "Base / commodity price"]
+    wf_html = "".join(
+        f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.08)'>"
+        f"<span style='font-size:.78rem;color:#94a3b8'>{lbl}</span>"
+        f"<span style='font-family:\"IBM Plex Mono\",monospace;font-size:.78rem;color:#e2e8f0'>{reporting_currency} {val:,.6f}</span>"
+        f"</div>"
+        for lbl, val in active_rows
+    )
+    commodity_tag = " <span style='color:#f59e0b;font-size:.72rem'>[formula]</span>" if comm_result.get("formula_active") else ""
+    esg_tag = f" <span style='color:#10b981;font-size:.72rem'>[+{reporting_currency} {esg_cpu_reporting:.4f} ESG]</span>" if esg_cpu_reporting > 0 else ""
+    moq_tag = f"<span style='color:{moq_color};font-weight:700'>{moq_note}</span>"
 
     st.markdown(
-        f"""<div class="v46-landed">
-        <b>Landed unit price:</b> {reporting_currency} {unit_price_r:,.6f} / {escape(unit)} &nbsp;·&nbsp;
-        <b>100% equiv. spend:</b> {reporting_currency} {spend:,.2f} &nbsp;·&nbsp;
-        <b>MOQ:</b> <span style="color:{moq_color}; font-weight:700">{moq_note}</span> &nbsp;·&nbsp;
-        <b>MOQ cash tied:</b> {reporting_currency} {moq_cash:,.2f}
-        {f'&nbsp;·&nbsp; <b>ESG add-on:</b> {reporting_currency} {esg_cpu:.4f}/{unit}' if esg_cpu > 0 else ''}
+        f"""<div class="v46-landed" style="padding:14px 18px">
+            <div style='margin-bottom:8px;font-size:.82rem;font-weight:600;color:#e2e8f0'>
+                📐 Price build-up — all components included{commodity_tag}{esg_tag}
+            </div>
+            {wf_html}
+            <div style='display:flex;justify-content:space-between;padding:7px 0 0 0;margin-top:4px;border-top:1px solid rgba(148,163,184,.25)'>
+                <span style='font-size:.84rem;font-weight:700;color:#f1f5f9'>Final landed unit price</span>
+                <span style='font-family:"IBM Plex Mono",monospace;font-size:.96rem;font-weight:700;color:#60a5fa'>{reporting_currency} {final_unit_price_reporting:,.6f} / {escape(unit)}</span>
+            </div>
+            <div style='margin-top:8px;display:flex;gap:18px;flex-wrap:wrap;font-size:.78rem;color:#94a3b8'>
+                <span><b style='color:#e2e8f0'>100% spend:</b> {reporting_currency} {spend:,.2f}</span>
+                <span><b style='color:#e2e8f0'>MOQ:</b> {moq_tag}</span>
+                <span><b style='color:#e2e8f0'>MOQ cash tied:</b> {reporting_currency} {moq_cash:,.2f}</span>
+                <span><b style='color:#e2e8f0'>FX used:</b> {float(fx_rate):.4f} {currency}→{reporting_currency}</span>
+                <span><b style='color:#e2e8f0'>Incoterm:</b> {incoterm}</span>
+            </div>
         </div>""",
         unsafe_allow_html=True,
     )
+
     return {
-        "spend": float(spend), "unit_price_quote": float(unit_price_q),
-        "unit_price_reporting": float(unit_price_r), "volume": float(volume),
-        "moq": float(moq), "moq_excess_units_100pct": float(moq_excess),
-        "moq_cash_tied_preview": float(moq_cash),
-        "currency": currency, "fx_rate": float(fx_rate), "incoterm": incoterm,
-        "esg_cost_per_unit": esg_cpu,
-        "esg_annual_total": float(esg_result.get("annual_total", 0.0)),
-        "commodity_formula_price": float(comm_result.get("formula_price", 0.0)),
-        "commodity_formula_active": bool(comm_result.get("formula_active", False)),
-        **{k: v for k, v in comps.items()},
+        "spend":                     float(spend),
+        "unit_price_quote":          float(total_quote_cpu),
+        "unit_price_reporting":      float(final_unit_price_reporting),
+        "unit_price_before_esg":     float(total_reporting_cpu_before_esg),
+        "esg_cost_per_unit":         float(esg_cpu_reporting),
+        "esg_annual_total":          float(esg_result.get("annual_total", 0.0)),
+        "commodity_formula_price":   float(comm_result.get("formula_price", 0.0)),
+        "commodity_formula_active":  bool(comm_result.get("formula_active", False)),
+        "volume":                    float(volume),
+        "moq":                       float(moq),
+        "moq_excess_units_100pct":   float(moq_excess),
+        "moq_cash_tied_preview":     float(moq_cash),
+        "currency":                  currency,
+        "fx_rate":                   float(fx_rate),
+        "incoterm":                  incoterm,
+        # Individual components (all in reporting currency for downstream use)
+        "base_unit_price":           effective_base,
+        "conversion_cost":           float(conversion_cost),
+        "fixed_margin":              float(fixed_margin),
+        "international_freight":     float(intl_freight),
+        "insurance":                 float(insurance),
+        "customs_fees":              float(customs),
+        "import_duties_taxes":       float(import_duties),
+        "domestic_freight":          float(dom_freight),
+        "local_taxes":               float(local_taxes),
     }
 
 
@@ -3042,6 +3221,910 @@ def render_concentration_risk(supplier_df: pd.DataFrame, total: Dict, country_in
             except Exception as ex:
                 st.warning(f"Stress test calculation failed: {ex}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGISTICS ROUTE TCO ENGINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Brazilian road risk zones (for escort/security cost) ─────────────────────
+ROAD_RISK_ZONES = {
+    "Alto Risco — RJ / Grande Rio":           {"escort_required": True,  "gris_min_pct": 0.40, "insurance_multiplier": 1.8, "risk_score": 4.5},
+    "Alto Risco — ES (Serra / Vitória)":      {"escort_required": True,  "gris_min_pct": 0.35, "insurance_multiplier": 1.6, "risk_score": 4.2},
+    "Médio Risco — SP Interior / rodovias":   {"escort_required": False, "gris_min_pct": 0.20, "insurance_multiplier": 1.2, "risk_score": 2.8},
+    "Médio Risco — MG / BR-381":              {"escort_required": False, "gris_min_pct": 0.25, "insurance_multiplier": 1.3, "risk_score": 3.0},
+    "Médio Risco — NE (BA / PE / CE)":        {"escort_required": False, "gris_min_pct": 0.25, "insurance_multiplier": 1.3, "risk_score": 3.2},
+    "Médio Risco — Norte / AM / PA":          {"escort_required": False, "gris_min_pct": 0.30, "insurance_multiplier": 1.4, "risk_score": 3.5},
+    "Baixo Risco — SP Capital / SPTV":        {"escort_required": False, "gris_min_pct": 0.15, "insurance_multiplier": 1.1, "risk_score": 2.2},
+    "Baixo Risco — Sul / PR / SC / RS":       {"escort_required": False, "gris_min_pct": 0.12, "insurance_multiplier": 1.0, "risk_score": 1.8},
+    "Baixo Risco — GO / DF / agro corridors": {"escort_required": False, "gris_min_pct": 0.12, "insurance_multiplier": 1.0, "risk_score": 1.9},
+    "Internacional / cross-border":           {"escort_required": False, "gris_min_pct": 0.30, "insurance_multiplier": 1.5, "risk_score": 3.0},
+}
+
+# ── Brazilian state toll references (R$/100km average) ───────────────────────
+TOLL_BENCHMARK_PER_100KM = {
+    "SP — Autoban / CCR":    18.50, "SP — Ecopistas / Ecovias": 16.80,
+    "PR — Ecorodovias":      14.20, "RS — DAER":                 8.50,
+    "SC — SC Rodovias":       9.00, "MG — Autopistas":          12.00,
+    "RJ — CCR RJO":          22.00, "ES — rodovias estaduais":  10.00,
+    "GO / DF — BR federais":  7.50, "NE — rodovias federais":    6.00,
+    "Norte / CO (AM/PA/MT)":  4.00, "Internacional":            15.00,
+    "Personalizado":           0.0,
+}
+
+# ── Emission factors kg CO2e per km by vehicle type ─────────────────────────
+EMISSION_FACTORS_KG_CO2E_KM = {
+    "Van / Sprinter (até 3,5t)":        0.21,
+    "VUC (até 6t — restrição urbana)":  0.28,
+    "Toco (até 13t)":                   0.55,
+    "Truck (até 23t)":                  0.75,
+    "Carreta LS (até 33t)":             0.92,
+    "Bitrem (até 57t)":                 1.15,
+    "Rodotrem (até 74t)":               1.30,
+    "Refrigerado / temperatura controlada": 1.05,
+    "Container 20' / 40'":              0.95,
+}
+
+# ── Route optimizer: Brazilian main logistics hubs (lat/lon) ─────────────────
+BR_LOGISTICS_HUBS = {
+    # Grandes centros
+    "São Paulo - SP (capital)":        (-23.5505, -46.6333),
+    "Guarulhos - SP (Aeroporto GRU)":  (-23.4543, -46.5337),
+    "Campinas - SP":                   (-22.9068, -47.0626),
+    "São José dos Campos - SP":        (-23.1791, -45.8869),
+    "Sorocaba - SP":                   (-23.5015, -47.4580),
+    "Ribeirão Preto - SP":             (-21.1767, -47.8208),
+    "Rio de Janeiro - RJ":             (-22.9068, -43.1729),
+    "Duque de Caxias - RJ":            (-22.7856, -43.3117),
+    "Belo Horizonte - MG":             (-19.9167, -43.9345),
+    "Contagem - MG":                   (-19.9314, -44.0535),
+    "Curitiba - PR":                   (-25.4284, -49.2733),
+    "Porto Alegre - RS":               (-30.0346, -51.2177),
+    "Novo Hamburgo - RS":              (-29.6783, -51.1333),
+    "Florianópolis - SC":              (-27.5954, -48.5480),
+    "Joinville - SC":                  (-26.3045, -48.8487),
+    "Salvador - BA":                   (-12.9777, -38.5016),
+    "Recife - PE":                     (-8.0476,  -34.8770),
+    "Fortaleza - CE":                  (-3.7172,  -38.5431),
+    "Manaus - AM":                     (-3.1190,  -60.0217),
+    "Belém - PA":                      (-1.4558,  -48.4902),
+    "Brasília - DF":                   (-15.7942, -47.8825),
+    "Goiânia - GO":                    (-16.6869, -49.2648),
+    "Uberlândia - MG":                 (-18.9186, -48.2772),
+    "Vitória - ES":                    (-20.3155, -40.3128),
+    "Porto Velho - RO":                (-8.7612,  -63.9004),
+    "Palmas - TO":                     (-10.2491, -48.3243),
+    # Hubs logísticos / CD importantes
+    "Extrema - MG (hub logístico)":    (-22.8562, -46.3183),
+    "Cajamar - SP (CD)":               (-23.3560, -46.8773),
+    "Embu das Artes - SP":             (-23.6533, -46.8510),
+    "Cariacica - ES (hub)":            (-20.2636, -40.4167),
+    "Esteio - RS (hub)":               (-29.8605, -51.1807),
+    "Maracanaú - CE (hub)":            (-3.8769,  -38.6268),
+    # Internacional
+    "Buenos Aires - AR":               (-34.6037, -58.3816),
+    "Montevidéu - UY":                 (-34.9011, -56.1645),
+    "Assunção - PY":                   (-25.2867, -57.6470),
+    "Santiago - CL":                   (-33.4489, -70.6693),
+    "Bogotá - CO":                     (4.7110,   -74.0721),
+    "Lima - PE":                       (-12.0464, -77.0428),
+    "Cidade do México - MX":           (19.4326,  -99.1332),
+    "Miami - USA":                     (25.7617,  -80.1918),
+    "Personalizado (lat/lon manual)":  (0.0,       0.0),
+}
+
+# ── Security cost model ───────────────────────────────────────────────────────
+ESCORT_COST_PER_KM = {
+    "Motocicleta (1 moto)":      3.50,
+    "Carro de escolta (1 veículo)": 8.00,
+    "Escolta armada dupla":      16.00,
+    "Escolta armada + moto":     18.00,
+}
+
+CARGO_RISK_AD_VALOREM = {
+    "Padrão / Geral (baixo valor)":         0.10,
+    "Médio valor (R$50K–R$300K por embarque)": 0.20,
+    "Alto valor (R$300K–R$1M por embarque)":   0.35,
+    "Muito alto valor / eletrônicos (>R$1M)":  0.60,
+    "Frágil / perecível":                   0.25,
+    "Perigoso (IMDG / ADR)":                0.30,
+    "Farmacêutico / GDP":                   0.28,
+}
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two lat/lon points."""
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def road_distance_factor(route_type: str) -> float:
+    """Multiply straight-line distance by this factor to estimate road km."""
+    return {"Inbound to Warehouse (fornecedor → armazém)": 1.30,
+            "Middle Mile / Transfer (FC → CD / cross-dock)": 1.20,
+            "Outbound B2B (armazém → lojas / hubs)": 1.35,
+            "Last Mile Injection (armazém → delivery station)": 1.40,
+            "Reverse Logistics (devoluções → armazém)": 1.30,
+            "Shuttle / Yard Movement (transferências internas)": 1.10,
+            "Dedicated Lane (rota fixa recorrente)": 1.25,
+            "Spot / On-demand (frete sob demanda)": 1.35,
+            }.get(route_type, 1.30)
+
+
+def calc_route_tco(params: Dict) -> Dict:
+    """
+    Full Route TCO calculation.
+    Returns every cost component + unit economics + risk-adjusted total.
+    """
+    # ── Unpack ────────────────────────────────────────────────────────────
+    dist_one_way        = float(params.get("distance_km", 0.0))
+    empty_pct           = float(params.get("empty_km_pct", 20.0)) / 100.0
+    round_trip          = bool(params.get("round_trip", True))
+    shipments_month     = float(params.get("shipments_month", 0.0))
+    pallets_per_ship    = float(params.get("pallets_per_shipment", 0.0))
+    kg_per_ship         = float(params.get("kg_per_shipment", 0.0))
+    m3_per_ship         = float(params.get("m3_per_shipment", 0.0))
+    orders_per_ship     = float(params.get("orders_per_shipment", 1.0))
+    vehicle_kg_cap      = float(params.get("vehicle_kg_capacity", 23_000.0))
+    vehicle_pallet_cap  = float(params.get("vehicle_pallet_capacity", 26.0))
+    vehicle_m3_cap      = float(params.get("vehicle_m3_capacity", 90.0))
+    # Fixed costs / month
+    vehicle_fixed_month = float(params.get("vehicle_fixed_monthly", 0.0))
+    driver_monthly      = float(params.get("driver_monthly_cost", 0.0))
+    driver_benefits_pct = float(params.get("driver_benefits_pct", 70.0)) / 100.0
+    helper_monthly      = float(params.get("helper_monthly_cost", 0.0))
+    tracking_monthly    = float(params.get("tracking_monthly", 0.0))
+    overhead_pct        = float(params.get("carrier_overhead_pct", 12.0)) / 100.0
+    margin_pct          = float(params.get("carrier_margin_pct", 10.0)) / 100.0
+    # Variable costs / km
+    fuel_consump_kml    = float(params.get("fuel_consumption_kml", 3.5))
+    diesel_price        = float(params.get("diesel_price_per_l", 6.50))
+    maintenance_km      = float(params.get("maintenance_cost_per_km", 0.18))
+    tire_km             = float(params.get("tire_cost_per_km", 0.08))
+    toll_per_100km      = float(params.get("toll_per_100km", 10.0))
+    # Cargo / insurance
+    cargo_value_per_ship = float(params.get("cargo_value_per_shipment", 0.0))
+    ad_valorem_pct      = float(params.get("ad_valorem_pct", 0.20)) / 100.0
+    gris_pct            = float(params.get("gris_pct", 0.20)) / 100.0
+    # Accessorials
+    detention_rate_hr   = float(params.get("detention_rate_per_hour", 0.0))
+    avg_dwell_hrs       = float(params.get("avg_dwell_hours", 1.5))
+    free_dwell_hrs      = float(params.get("free_dwell_hours", 2.0))
+    redelivery_pct      = float(params.get("redelivery_rate_pct", 2.0)) / 100.0
+    redelivery_cost     = float(params.get("redelivery_cost_per_event", 0.0))
+    failed_pickup_pct   = float(params.get("failed_pickup_pct", 1.0)) / 100.0
+    failed_pickup_cost  = float(params.get("failed_pickup_cost", 0.0))
+    extra_stop_cost     = float(params.get("extra_stop_cost", 0.0))
+    weekend_night_pct   = float(params.get("weekend_night_pct", 10.0)) / 100.0
+    weekend_surcharge   = float(params.get("weekend_night_surcharge_pct", 25.0)) / 100.0
+    lumper_per_ship     = float(params.get("lumper_cost_per_shipment", 0.0))
+    # Security / escort
+    escort_required     = bool(params.get("escort_required", False))
+    escort_cost_km      = float(params.get("escort_cost_per_km", 8.0))
+    escort_trips_pct    = float(params.get("escort_pct_of_trips", 100.0)) / 100.0
+    # Warehouse interface
+    dock_cost_per_hr    = float(params.get("dock_cost_per_hour", 0.0))
+    loading_hrs         = float(params.get("loading_hours_per_trip", 1.0))
+    unloading_hrs       = float(params.get("unloading_hours_per_trip", 1.0))
+    warehouse_labor     = float(params.get("warehouse_labor_per_shipment", 0.0))
+    # Risk
+    otif_pct            = float(params.get("otif_pct", 95.0)) / 100.0
+    tender_acc_pct      = float(params.get("tender_acceptance_pct", 90.0)) / 100.0
+    backup_rate_premium = float(params.get("backup_rate_premium_pct", 22.0)) / 100.0
+    damage_rate_pct     = float(params.get("damage_rate_pct", 0.3)) / 100.0
+    no_show_pct         = float(params.get("no_show_pct", 1.5)) / 100.0
+    spot_premium        = float(params.get("spot_emergency_premium_pct", 35.0)) / 100.0
+    # Inventory / lead time
+    lead_time_days      = float(params.get("transit_time_days", 1.0))
+    lead_time_sigma     = float(params.get("lead_time_sigma_days", 0.3))
+    daily_demand_value  = float(params.get("daily_demand_value", 0.0))
+    inv_carry_rate      = float(params.get("inventory_carry_rate_pct", 20.0)) / 100.0
+    z_score             = 1.65  # 95% service level
+    # ESG
+    emission_factor     = float(params.get("emission_factor_kgco2e_km", 0.75))
+    carbon_price_ton    = float(params.get("carbon_price_per_ton", 30.0))
+    # Ramp-up
+    ramp_up_months      = int(params.get("ramp_up_months", 0))
+    ramp_up_volume_pct  = float(params.get("ramp_up_avg_volume_pct", 50.0)) / 100.0
+
+    # ── Distance model ────────────────────────────────────────────────────
+    dist_loaded = dist_one_way * (2.0 if round_trip else 1.0)
+    dist_empty  = dist_loaded * empty_pct
+    dist_total  = dist_loaded + dist_empty
+    annual_shipments = shipments_month * 12.0
+
+    # ── Load factors ──────────────────────────────────────────────────────
+    lf_weight  = safe_divide(kg_per_ship, vehicle_kg_cap) if vehicle_kg_cap > 0 else 0.0
+    lf_pallet  = safe_divide(pallets_per_ship, vehicle_pallet_cap) if vehicle_pallet_cap > 0 else 0.0
+    lf_volume  = safe_divide(m3_per_ship, vehicle_m3_cap) if vehicle_m3_cap > 0 else 0.0
+    load_factor = max(lf_weight, lf_pallet, lf_volume)
+
+    # ── Trip variable cost ────────────────────────────────────────────────
+    fuel_per_trip  = safe_divide(dist_total, fuel_consump_kml) * diesel_price
+    toll_per_trip  = dist_total * toll_per_100km / 100.0
+    maint_per_trip = dist_total * maintenance_km
+    tire_per_trip  = dist_total * tire_km
+
+    # ── Cargo insurance per shipment ──────────────────────────────────────
+    ad_valorem_per_ship = cargo_value_per_ship * ad_valorem_pct
+    gris_per_ship       = cargo_value_per_ship * gris_pct
+
+    # ── Accessorials per shipment ─────────────────────────────────────────
+    detention_cost = max(0.0, avg_dwell_hrs - free_dwell_hrs) * detention_rate_hr
+    redelivery_per_ship = redelivery_pct * redelivery_cost
+    failed_per_ship     = failed_pickup_pct * failed_pickup_cost
+    weekend_cost        = weekend_night_pct * weekend_surcharge  # fraction of base rate
+    accessorial_total   = detention_cost + redelivery_per_ship + failed_per_ship + extra_stop_cost + lumper_per_ship
+    accessorial_pct_of_base = safe_divide(accessorial_total, fuel_per_trip + toll_per_trip + maint_per_trip + tire_per_trip)
+
+    # ── Security / escort per shipment ────────────────────────────────────
+    escort_per_trip = dist_loaded * escort_cost_km * escort_trips_pct if escort_required else 0.0
+
+    # ── Warehouse interface per shipment ──────────────────────────────────
+    dock_cost   = (loading_hrs + unloading_hrs) * dock_cost_per_hr
+    dwell_cost  = dock_cost_per_hr * min(avg_dwell_hrs, free_dwell_hrs) + detention_cost
+    wh_total    = dock_cost + warehouse_labor
+
+    # ── Variable trip cost ─────────────────────────────────────────────────
+    trip_variable = fuel_per_trip + toll_per_trip + maint_per_trip + tire_per_trip + ad_valorem_per_ship + gris_per_ship + escort_per_trip + accessorial_total + wh_total
+
+    # ── Fixed cost allocation per shipment ────────────────────────────────
+    monthly_fixed_total = (
+        vehicle_fixed_month
+        + driver_monthly * (1 + driver_benefits_pct)
+        + helper_monthly
+        + tracking_monthly
+    ) * (1 + overhead_pct)
+    fixed_per_ship = safe_divide(monthly_fixed_total, max(shipments_month, 1.0))
+
+    # ── Should-cost per shipment (before margin) ───────────────────────────
+    should_cost_per_ship = (trip_variable + fixed_per_ship)
+    trip_cost_with_margin = should_cost_per_ship * (1 + margin_pct)
+
+    # ── Risk costs ────────────────────────────────────────────────────────
+    sla_gap = max(0.0, 0.98 - otif_pct)
+    spot_overflow_cost = (1.0 - tender_acc_pct) * trip_cost_with_margin * backup_rate_premium
+    no_show_cost       = no_show_pct * trip_cost_with_margin * spot_premium
+    damage_cost        = damage_rate_pct * cargo_value_per_ship
+    risk_total_per_ship = spot_overflow_cost + no_show_cost + damage_cost
+    risk_annual        = risk_total_per_ship * annual_shipments
+
+    # ── Blended rate (primary × acc% + backup × (1-acc%)) ────────────────
+    blended_rate = trip_cost_with_margin * tender_acc_pct + trip_cost_with_margin * (1 + backup_rate_premium) * (1 - tender_acc_pct)
+
+    # ── Inventory / working capital impact ────────────────────────────────
+    pipeline_inv = daily_demand_value * lead_time_days
+    safety_stock_days = z_score * lead_time_sigma
+    safety_stock_value = daily_demand_value * safety_stock_days
+    inv_carry_cost_annual = (pipeline_inv + safety_stock_value) * inv_carry_rate
+
+    # ── ESG cost ─────────────────────────────────────────────────────────
+    co2e_per_trip_kg = dist_total * emission_factor
+    co2e_annual_ton  = co2e_per_trip_kg * annual_shipments / 1000.0
+    carbon_cost_annual = co2e_annual_ton * carbon_price_ton
+
+    # ── Annual route TCO ─────────────────────────────────────────────────
+    annual_base_tco   = blended_rate * annual_shipments + monthly_fixed_total * 12.0
+    risk_adj_tco      = annual_base_tco + risk_annual + inv_carry_cost_annual + carbon_cost_annual
+
+    # ── Ramp-up adjustment ────────────────────────────────────────────────
+    if ramp_up_months > 0:
+        steady_months = max(0, 12 - ramp_up_months)
+        ramp_annual = (risk_adj_tco / 12.0) * (ramp_up_months * ramp_up_volume_pct + steady_months)
+    else:
+        ramp_annual = risk_adj_tco
+
+    # ── Unit economics ────────────────────────────────────────────────────
+    ann_ship = max(annual_shipments, 1.0)
+    ann_pal  = max(pallets_per_ship * annual_shipments, 1.0)
+    ann_kg   = max(kg_per_ship * annual_shipments, 1.0)
+    ann_m3   = max(m3_per_ship * annual_shipments, 1.0)
+    ann_ord  = max(orders_per_ship * annual_shipments, 1.0)
+
+    # ── Dedicated vs Spot breakeven ───────────────────────────────────────
+    # At what monthly volume does dedicated become cheaper than spot?
+    spot_rate_per_ship = trip_variable * (1 + margin_pct) * (1 + spot_premium)
+    if spot_rate_per_ship > trip_cost_with_margin * 1e-9:
+        breakeven_monthly = safe_divide(monthly_fixed_total, spot_rate_per_ship - (trip_variable * (1 + margin_pct)))
+    else:
+        breakeven_monthly = float("inf")
+
+    return {
+        # Distance
+        "distance_loaded_km": dist_loaded, "distance_empty_km": dist_empty, "distance_total_km": dist_total,
+        # Load factors
+        "load_factor_weight": lf_weight, "load_factor_pallet": lf_pallet, "load_factor_volume": lf_volume, "load_factor_effective": load_factor,
+        # Trip variable cost
+        "fuel_per_trip": fuel_per_trip, "toll_per_trip": toll_per_trip, "maint_per_trip": maint_per_trip,
+        "tire_per_trip": tire_per_trip, "ad_valorem_per_ship": ad_valorem_per_ship, "gris_per_ship": gris_per_ship,
+        "escort_per_trip": escort_per_trip, "accessorial_total_per_trip": accessorial_total,
+        "wh_interface_per_trip": wh_total, "detention_per_trip": detention_cost,
+        "trip_variable_cost": trip_variable,
+        # Fixed
+        "monthly_fixed_total": monthly_fixed_total, "fixed_per_shipment": fixed_per_ship,
+        # Should-cost
+        "should_cost_per_shipment": should_cost_per_ship, "trip_cost_with_margin": trip_cost_with_margin,
+        "blended_rate_per_shipment": blended_rate,
+        # Risk
+        "spot_overflow_cost_per_ship": spot_overflow_cost, "no_show_cost_per_ship": no_show_cost,
+        "damage_cost_per_ship": damage_cost, "risk_cost_per_shipment": risk_total_per_ship,
+        "risk_annual": risk_annual,
+        # Inventory
+        "pipeline_inventory_value": pipeline_inv, "safety_stock_value": safety_stock_value,
+        "safety_stock_days": safety_stock_days, "inv_carry_cost_annual": inv_carry_cost_annual,
+        # ESG
+        "co2e_per_trip_kg": co2e_per_trip_kg, "co2e_annual_ton": co2e_annual_ton, "carbon_cost_annual": carbon_cost_annual,
+        # Annual TCO
+        "annual_base_tco": annual_base_tco, "risk_adj_tco": risk_adj_tco, "ramp_adjusted_tco": ramp_annual,
+        # Accessorials
+        "accessorial_leakage_pct": accessorial_pct_of_base,
+        # Unit economics
+        "cost_per_shipment": risk_adj_tco / ann_ship,
+        "cost_per_pallet":   risk_adj_tco / ann_pal if ann_pal > 1 else 0.0,
+        "cost_per_kg":       risk_adj_tco / ann_kg   if ann_kg > 1 else 0.0,
+        "cost_per_m3":       risk_adj_tco / ann_m3   if ann_m3 > 1 else 0.0,
+        "cost_per_order":    risk_adj_tco / ann_ord,
+        # Breakeven
+        "dedicated_vs_spot_breakeven_monthly": breakeven_monthly,
+        "spot_rate_per_shipment": spot_rate_per_ship,
+        "dedicated_better": shipments_month >= breakeven_monthly if breakeven_monthly != float("inf") else False,
+    }
+
+
+def render_logistics_route_tco(*, key_prefix: str, country: str, supplier_label: str, reporting_currency: str, is_baseline: bool = False) -> Dict:
+    """
+    Full Logistics Route TCO input UI.
+    Returns a dict compatible with service_profile used by the TCO engine.
+    """
+    cfg = SERVICE_SCOPE_CONFIG["Logistics / Transport Services"]
+
+    # ── Block 1: Route & Demand Setup ───────────────────────────────────
+    render_breaker("Route & Demand Setup", "Origem, destino, tipo de rota, distância, volume, veículo", "🗺️", "#10b981", "Route profile")
+    r1 = st.columns([1.2, .9, .9, .8])
+    with r1[0]:
+        route_type = st.selectbox(f"{supplier_label} | Tipo de rota", options=cfg["route_types"], key=f"{key_prefix}__route_type")
+    with r1[1]:
+        vehicle_type = st.selectbox(f"{supplier_label} | Tipo de veículo", options=cfg["vehicle_types"], key=f"{key_prefix}__vehicle_type")
+    with r1[2]:
+        cargo_risk = st.selectbox(f"{supplier_label} | Perfil de carga / risco", options=cfg["cargo_risk_levels"], key=f"{key_prefix}__cargo_risk")
+    with r1[3]:
+        road_zone = st.selectbox(f"{supplier_label} | Zona de risco da rota", options=list(ROAD_RISK_ZONES.keys()), key=f"{key_prefix}__road_zone")
+
+    zone_info = ROAD_RISK_ZONES[road_zone]
+    auto_escort = zone_info["escort_required"] or ("alto valor" in cargo_risk.lower()) or ("eletrônico" in cargo_risk.lower())
+    gris_default = zone_info["gris_min_pct"]
+    ad_val_default = CARGO_RISK_AD_VALOREM.get(cargo_risk, 0.20)
+    ins_mult = zone_info["insurance_multiplier"]
+
+    r2 = st.columns(6)
+    with r2[0]: dist_km = st.number_input(f"{supplier_label} | Distância one-way (km)", min_value=0.0, value=300.0, step=10.0, key=f"{key_prefix}__distance_km")
+    with r2[1]: round_trip = st.checkbox(f"Round-trip?", value=True, key=f"{key_prefix}__round_trip")
+    with r2[2]: empty_pct = st.number_input(f"Empty km %", min_value=0.0, max_value=100.0, value=20.0, step=1.0, key=f"{key_prefix}__empty_pct", help="% da distância rodada sem carga (retorno vazio)")
+    with r2[3]: shipments_month = st.number_input(f"Shipments / mês", min_value=0.0, value=40.0, step=1.0, key=f"{key_prefix}__shipments_month")
+    with r2[4]: transit_time = st.number_input(f"Transit time (dias)", min_value=0.0, value=1.0, step=0.25, key=f"{key_prefix}__transit_time")
+    with r2[5]: transit_sigma = st.number_input(f"Lead time σ (dias)", min_value=0.0, value=0.3, step=0.1, key=f"{key_prefix}__transit_sigma", help="Desvio padrão do lead time — determina safety stock necessário")
+
+    r3 = st.columns(6)
+    with r3[0]: pallets = st.number_input(f"Pallets / embarque", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}__pallets")
+    with r3[1]: kg_ship = st.number_input(f"Kg / embarque", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__kg_ship")
+    with r3[2]: m3_ship = st.number_input(f"m³ / embarque", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}__m3_ship")
+    with r3[3]: orders = st.number_input(f"Orders / embarque", min_value=0.0, value=1.0, step=1.0, key=f"{key_prefix}__orders_ship")
+    with r3[4]: cargo_value = st.number_input(f"Valor da carga / embarque ({reporting_currency})", min_value=0.0, value=0.0, step=10_000.0, key=f"{key_prefix}__cargo_value", help="Valor mercadoria — base para ad valorem, GRIS e seguro")
+    with r3[5]: daily_demand_val = st.number_input(f"Valor demanda diária ({reporting_currency})", min_value=0.0, value=0.0, step=5_000.0, key=f"{key_prefix}__daily_demand_val", help="Para cálculo de pipeline inventory e safety stock")
+
+    veh_cfg = {
+        "Van / Sprinter (até 3,5t)":       (3_500, 8, 12),
+        "VUC (até 6t — restrição urbana)": (6_000, 10, 18),
+        "Toco (até 13t)":                  (13_000, 16, 45),
+        "Truck (até 23t)":                 (23_000, 22, 70),
+        "Carreta LS (até 33t)":            (27_000, 26, 90),
+        "Bitrem (até 57t)":                (50_000, 42, 140),
+        "Rodotrem (até 74t)":              (65_000, 52, 170),
+    }.get(vehicle_type, (23_000, 26, 90))
+    veh_kg_def, veh_pal_def, veh_m3_def = veh_cfg
+
+    # ── Block 2: Carrier Pricing & Open Cost ─────────────────────────────
+    with st.expander("💰 Carrier pricing, open cost & should-cost model", expanded=not is_baseline):
+        st.caption("Rate model + vehicle fixed + fuel + driver + maintenance. Ferramenta calcula should-cost e gap vs cotação.")
+        pr1 = st.columns([1.2, .9, .9, .9])
+        with pr1[0]: pricing_model = st.selectbox(f"{supplier_label} | Pricing model", options=cfg["pricing_models"], key=f"{key_prefix}__pricing_model")
+        with pr1[1]: contracted_rate = st.number_input(f"Rate cotado / embarque ({reporting_currency})", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__contracted_rate")
+        with pr1[2]: fuel_surcharge_pct = st.number_input(f"Fuel surcharge %", min_value=0.0, value=8.0, step=0.5, key=f"{key_prefix}__fuel_surcharge_pct", help="% sobre o frete base para cobertura de diesel")
+        with pr1[3]: contract_years = st.number_input(f"Contract years", min_value=1, max_value=5, value=2, step=1, key=f"{key_prefix}__contract_years")
+
+        st.markdown("<div style='font-size:.78rem;font-weight:600;color:#94a3b8;margin:10px 0 4px'>Open-cost model (should-cost)</div>", unsafe_allow_html=True)
+        oc1 = st.columns(5)
+        with oc1[0]: veh_fixed = st.number_input(f"Custo fixo veículo/mês", min_value=0.0, value=0.0, step=500.0, key=f"{key_prefix}__vehicle_fixed")
+        with oc1[1]: driver_cost = st.number_input(f"Salário motorista/mês", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__driver_cost")
+        with oc1[2]: driver_benefits = st.number_input(f"Encargos/benefícios %", min_value=0.0, value=70.0, step=1.0, key=f"{key_prefix}__driver_benefits")
+        with oc1[3]: helper_cost = st.number_input(f"Ajudante/mês", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__helper_cost")
+        with oc1[4]: tracking_cost = st.number_input(f"Rastreamento/mês", min_value=0.0, value=200.0, step=50.0, key=f"{key_prefix}__tracking_cost")
+
+        oc2 = st.columns(6)
+        fuel_def = {"Van / Sprinter (até 3,5t)": 10.0, "VUC (até 6t — restrição urbana)": 7.0, "Toco (até 13t)": 5.0, "Truck (até 23t)": 4.0, "Carreta LS (até 33t)": 3.5, "Bitrem (até 57t)": 2.8, "Rodotrem (até 74t)": 2.5}.get(vehicle_type, 3.5)
+        with oc2[0]: fuel_consump = st.number_input(f"Consumo km/l", min_value=0.5, value=fuel_def, step=0.1, key=f"{key_prefix}__fuel_consump")
+        with oc2[1]: diesel_price = st.number_input(f"Preço diesel (R$/l)", min_value=0.0, value=6.50, step=0.05, key=f"{key_prefix}__diesel_price")
+        with oc2[2]: maint_km = st.number_input(f"Manutenção (R$/km)", min_value=0.0, value=0.18, step=0.01, key=f"{key_prefix}__maint_km")
+        with oc2[3]: tire_km = st.number_input(f"Pneus (R$/km)", min_value=0.0, value=0.08, step=0.01, key=f"{key_prefix}__tire_km")
+        with oc2[4]: overhead_pct = st.number_input(f"Overhead %", min_value=0.0, value=12.0, step=1.0, key=f"{key_prefix}__overhead_pct")
+        with oc2[5]: margin_pct = st.number_input(f"Margem transportadora %", min_value=0.0, value=10.0, step=1.0, key=f"{key_prefix}__margin_pct")
+
+        toll_zone_default = TOLL_BENCHMARK_PER_100KM.get(list(TOLL_BENCHMARK_PER_100KM.keys())[0], 10.0)
+        tc1 = st.columns(4)
+        with tc1[0]: toll_region = st.selectbox(f"Região de pedágio", options=list(TOLL_BENCHMARK_PER_100KM.keys()), key=f"{key_prefix}__toll_region")
+        with tc1[1]: toll_per_100 = st.number_input(f"Pedágio R$/100km", min_value=0.0, value=TOLL_BENCHMARK_PER_100KM[toll_region], step=0.5, key=f"{key_prefix}__toll_per_100km")
+        with tc1[2]: veh_kg_cap = st.number_input(f"Capacidade kg", min_value=100.0, value=float(veh_kg_def), step=100.0, key=f"{key_prefix}__veh_kg_cap")
+        with tc1[3]: veh_pal_cap = st.number_input(f"Capacidade pallets", min_value=1.0, value=float(veh_pal_def), step=1.0, key=f"{key_prefix}__veh_pal_cap")
+
+    # ── Block 3: Cargo insurance, GRIS & security ─────────────────────────
+    with st.expander("🔒 Seguro de carga, GRIS & escolta (Ad Valorem model)", expanded=False):
+        st.caption(f"Zona: {road_zone} · Risk score: {zone_info['risk_score']}/5 · Escort auto-flag: {'✅ Sim' if auto_escort else '—'}. Ad valorem varia por valor e tipo da carga.")
+        s1 = st.columns(5)
+        with s1[0]: ad_valorem = st.number_input(f"Ad valorem % (seguro carga)", min_value=0.0, value=ad_val_default * ins_mult, step=0.01, format="%.3f", key=f"{key_prefix}__ad_valorem", help="% do valor da mercadoria por embarque")
+        with s1[1]: gris = st.number_input(f"GRIS %", min_value=0.0, value=gris_default, step=0.01, format="%.3f", key=f"{key_prefix}__gris", help="Gerenciamento de Risco — % sobre valor declarado")
+        with s1[2]: escort_req = st.checkbox(f"Escolta obrigatória?", value=auto_escort, key=f"{key_prefix}__escort_req")
+        with s1[3]: escort_type = st.selectbox(f"Tipo de escolta", options=list(ESCORT_COST_PER_KM.keys()), key=f"{key_prefix}__escort_type", disabled=not escort_req)
+        with s1[4]: escort_pct_trips = st.number_input(f"% viagens com escolta", min_value=0.0, max_value=100.0, value=100.0 if auto_escort else 0.0, step=5.0, key=f"{key_prefix}__escort_pct_trips")
+        escort_cost_km_val = ESCORT_COST_PER_KM[escort_type] if escort_req else 0.0
+        if escort_req and cargo_value > 0:
+            escort_annual = dist_km * (2 if round_trip else 1) * escort_cost_km_val * (escort_pct_trips/100) * shipments_month * 12
+            st.markdown(f"<div class='v46-landed'>🔒 <b>Escolta:</b> {reporting_currency} {escort_cost_km_val:.2f}/km · <b>Custo anual estimado:</b> {reporting_currency} {escort_annual:,.0f}</div>", unsafe_allow_html=True)
+
+    # ── Block 4: Accessorials & warehouse interface ───────────────────────
+    with st.expander("🏭 Accessorials, doca & warehouse interface", expanded=False):
+        st.caption("Detention, demurrage, reentrega, parada extra, lumper, doca. Accessorial leakage > 8% = red flag.")
+        a1 = st.columns(5)
+        with a1[0]: detention_rate = st.number_input(f"Detention R$/hora", min_value=0.0, value=0.0, step=25.0, key=f"{key_prefix}__detention_rate")
+        with a1[1]: free_dwell = st.number_input(f"Free dwell time (hrs)", min_value=0.0, value=2.0, step=0.25, key=f"{key_prefix}__free_dwell")
+        with a1[2]: avg_dwell = st.number_input(f"Avg dwell time (hrs)", min_value=0.0, value=1.5, step=0.25, key=f"{key_prefix}__avg_dwell")
+        with a1[3]: redelivery_pct_inp = st.number_input(f"Redelivery rate %", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}__redelivery_pct")
+        with a1[4]: redelivery_cost_inp = st.number_input(f"Custo reentrega", min_value=0.0, value=0.0, step=50.0, key=f"{key_prefix}__redelivery_cost")
+        a2 = st.columns(5)
+        with a2[0]: failed_pct = st.number_input(f"Failed pickup %", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}__failed_pct")
+        with a2[1]: failed_cost = st.number_input(f"Failed pickup cost", min_value=0.0, value=0.0, step=50.0, key=f"{key_prefix}__failed_cost")
+        with a2[2]: extra_stop = st.number_input(f"Extra stop cost", min_value=0.0, value=0.0, step=50.0, key=f"{key_prefix}__extra_stop")
+        with a2[3]: lumper = st.number_input(f"Lumper / embarque", min_value=0.0, value=0.0, step=20.0, key=f"{key_prefix}__lumper")
+        with a2[4]: wh_labor = st.number_input(f"WH labor / embarque", min_value=0.0, value=0.0, step=20.0, key=f"{key_prefix}__wh_labor")
+        a3 = st.columns(4)
+        with a3[0]: dock_cost_hr = st.number_input(f"Doca R$/hora", min_value=0.0, value=0.0, step=25.0, key=f"{key_prefix}__dock_cost_hr")
+        with a3[1]: loading_hrs = st.number_input(f"Tempo carga (hrs)", min_value=0.0, value=1.0, step=0.25, key=f"{key_prefix}__loading_hrs")
+        with a3[2]: unloading_hrs = st.number_input(f"Tempo descarga (hrs)", min_value=0.0, value=1.0, step=0.25, key=f"{key_prefix}__unloading_hrs")
+        with a3[3]: wn_pct = st.number_input(f"Weekend/noite % viagens", min_value=0.0, value=10.0, step=1.0, key=f"{key_prefix}__wn_pct")
+
+    # ── Block 5: SLA, risk & ramp-up ──────────────────────────────────────
+    with st.expander("📊 SLA, risk & ramp-up curve", expanded=False):
+        sr1 = st.columns(5)
+        with sr1[0]: otif = st.number_input(f"OTIF % esperado", min_value=0.0, max_value=100.0, value=95.0, step=0.1, key=f"{key_prefix}__otif")
+        with sr1[1]: tender_acc = st.number_input(f"Tender acceptance %", min_value=0.0, max_value=100.0, value=90.0, step=1.0, key=f"{key_prefix}__tender_acc", help="% das viagens aceitas pela transportadora primária. Restante vai para backup/spot.")
+        with sr1[2]: backup_prem = st.number_input(f"Backup premium %", min_value=0.0, value=22.0, step=1.0, key=f"{key_prefix}__backup_prem", help="Quanto a mais custa a transportadora backup vs primária")
+        with sr1[3]: damage_rate = st.number_input(f"Damage rate %", min_value=0.0, value=0.3, step=0.05, key=f"{key_prefix}__damage_rate")
+        with sr1[4]: no_show = st.number_input(f"No-show %", min_value=0.0, value=1.5, step=0.1, key=f"{key_prefix}__no_show")
+        sr2 = st.columns(4)
+        with sr2[0]: ramp_months = st.number_input(f"Ramp-up months (0=N/A)", min_value=0, max_value=11, value=0, step=1, key=f"{key_prefix}__ramp_months")
+        with sr2[1]: ramp_vol_pct = st.number_input(f"Ramp-up avg volume %", min_value=0.0, max_value=100.0, value=50.0, step=5.0, key=f"{key_prefix}__ramp_vol_pct")
+        with sr2[2]: inv_carry = st.number_input(f"Inventory carry rate %", min_value=0.0, value=20.0, step=0.5, key=f"{key_prefix}__inv_carry")
+        with sr2[3]: carbon_price = st.number_input(f"Carbon price (USD/tCO₂e)", min_value=0.0, value=30.0, step=1.0, key=f"{key_prefix}__carbon_price")
+
+    # ── Compute ───────────────────────────────────────────────────────────
+    emission_factor_val = EMISSION_FACTORS_KG_CO2E_KM.get(vehicle_type, 0.75)
+    tco_params = {
+        "distance_km": float(dist_km), "empty_km_pct": float(empty_pct),
+        "round_trip": bool(round_trip), "shipments_month": float(shipments_month),
+        "pallets_per_shipment": float(pallets), "kg_per_shipment": float(kg_ship),
+        "m3_per_shipment": float(m3_ship), "orders_per_shipment": float(orders),
+        "vehicle_kg_capacity": float(veh_kg_cap), "vehicle_pallet_capacity": float(veh_pal_cap),
+        "vehicle_m3_capacity": float(veh_m3_def),
+        "vehicle_fixed_monthly": float(veh_fixed), "driver_monthly_cost": float(driver_cost),
+        "driver_benefits_pct": float(driver_benefits), "helper_monthly_cost": float(helper_cost),
+        "tracking_monthly": float(tracking_cost), "carrier_overhead_pct": float(overhead_pct),
+        "carrier_margin_pct": float(margin_pct),
+        "fuel_consumption_kml": float(fuel_consump), "diesel_price_per_l": float(diesel_price),
+        "maintenance_cost_per_km": float(maint_km), "tire_cost_per_km": float(tire_km),
+        "toll_per_100km": float(toll_per_100),
+        "cargo_value_per_shipment": float(cargo_value), "ad_valorem_pct": float(ad_valorem),
+        "gris_pct": float(gris),
+        "escort_required": bool(escort_req if "escort_req" in dir() else auto_escort),
+        "escort_cost_per_km": float(escort_cost_km_val),
+        "escort_pct_of_trips": float(escort_pct_trips),
+        "detention_rate_per_hour": float(detention_rate), "avg_dwell_hours": float(avg_dwell),
+        "free_dwell_hours": float(free_dwell), "redelivery_rate_pct": float(redelivery_pct_inp),
+        "redelivery_cost_per_event": float(redelivery_cost_inp), "failed_pickup_pct": float(failed_pct),
+        "failed_pickup_cost": float(failed_cost), "extra_stop_cost": float(extra_stop),
+        "lumper_cost_per_shipment": float(lumper), "warehouse_labor_per_shipment": float(wh_labor),
+        "dock_cost_per_hour": float(dock_cost_hr), "loading_hours_per_trip": float(loading_hrs),
+        "unloading_hours_per_trip": float(unloading_hrs), "weekend_night_pct": float(wn_pct),
+        "otif_pct": float(otif), "tender_acceptance_pct": float(tender_acc),
+        "backup_rate_premium_pct": float(backup_prem), "damage_rate_pct": float(damage_rate),
+        "no_show_pct": float(no_show), "spot_emergency_premium_pct": 35.0,
+        "transit_time_days": float(transit_time), "lead_time_sigma_days": float(transit_sigma),
+        "daily_demand_value": float(daily_demand_val), "inventory_carry_rate_pct": float(inv_carry),
+        "emission_factor_kgco2e_km": float(emission_factor_val), "carbon_price_per_ton": float(carbon_price),
+        "ramp_up_months": int(ramp_months), "ramp_up_avg_volume_pct": float(ramp_vol_pct),
+    }
+    r = calc_route_tco(tco_params)
+
+    # ── TCO result waterfall ───────────────────────────────────────────────
+    wf_rows = [
+        ("Trip variable cost / embarque",          r["trip_variable_cost"],          True),
+        ("  ↳ Combustível",                        r["fuel_per_trip"],               r["fuel_per_trip"]>0),
+        ("  ↳ Pedágios",                           r["toll_per_trip"],               r["toll_per_trip"]>0),
+        ("  ↳ Manutenção + pneus",                 r["maint_per_trip"]+r["tire_per_trip"], (r["maint_per_trip"]+r["tire_per_trip"])>0),
+        ("  ↳ Ad valorem + GRIS",                  r["ad_valorem_per_ship"]+r["gris_per_ship"], (r["ad_valorem_per_ship"]+r["gris_per_ship"])>0),
+        ("  ↳ Escolta / segurança",                r["escort_per_trip"],             r["escort_per_trip"]>0),
+        ("  ↳ Accessorials",                       r["accessorial_total_per_trip"],  r["accessorial_total_per_trip"]>0),
+        ("  ↳ Warehouse interface",                r["wh_interface_per_trip"],       r["wh_interface_per_trip"]>0),
+        ("Fixed cost alocado / embarque",          r["fixed_per_shipment"],          r["fixed_per_shipment"]>0),
+        ("Margem transportadora",                  r["trip_cost_with_margin"]-r["should_cost_per_shipment"], r["trip_cost_with_margin"]>r["should_cost_per_shipment"]),
+        ("Risk cost / embarque (spot overflow + no-show + damage)", r["risk_cost_per_shipment"], r["risk_cost_per_shipment"]>0),
+    ]
+    def _wf_row_color(label): return "#64748b" if "↳" in label else "#94a3b8"
+    wf_html = "".join(
+        f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+        f"<span style='font-size:.77rem;color:{_wf_row_color(lbl)}'>{lbl}</span>"
+        f"<span style='font-family:IBM Plex Mono,monospace;font-size:.77rem;color:#e2e8f0'>{reporting_currency} {val:,.2f}</span></div>"
+        for lbl, val, show in wf_rows if show
+    )
+    lf_color = "#34d399" if r["load_factor_effective"] >= 0.75 else "#f59e0b" if r["load_factor_effective"] >= 0.50 else "#f87171"
+    acc_color = "#f87171" if r["accessorial_leakage_pct"] > 0.08 else "#fbbf24" if r["accessorial_leakage_pct"] > 0.04 else "#34d399"
+    breakeven_txt = f"{r['dedicated_vs_spot_breakeven_monthly']:.0f} ship/mês" if r['dedicated_vs_spot_breakeven_monthly'] < 9999 else "N/A"
+    ded_rec = "✅ Dedicado é melhor" if r["dedicated_better"] else "⚠ Spot/flex pode ser melhor"
+
+    st.markdown(f"""<div class="v46-svc-result" style="padding:14px 18px">
+        <div style='margin-bottom:8px;font-size:.82rem;font-weight:600;color:#6ee7b7'>🚚 Route TCO waterfall</div>
+        {wf_html}
+        <div style='display:flex;justify-content:space-between;padding:7px 0 0 0;margin-top:4px;border-top:1px solid rgba(16,185,129,.3)'>
+            <span style='font-size:.84rem;font-weight:700;color:#f1f5f9'>Risk-adjusted Annual Route TCO</span>
+            <span style='font-family:IBM Plex Mono,monospace;font-size:.96rem;font-weight:700;color:#34d399'>{reporting_currency} {r['risk_adj_tco']:,.0f}</span>
+        </div>
+        <div style='margin-top:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:.75rem;'>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Cost / shipment</div>
+                <div style='color:#e2e8f0;font-family:IBM Plex Mono,monospace;font-weight:600'>{reporting_currency} {r['cost_per_shipment']:,.2f}</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Cost / order</div>
+                <div style='color:#e2e8f0;font-family:IBM Plex Mono,monospace;font-weight:600'>{reporting_currency} {r['cost_per_order']:,.2f}</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Cost / pallet</div>
+                <div style='color:#e2e8f0;font-family:IBM Plex Mono,monospace;font-weight:600'>{reporting_currency} {r['cost_per_pallet']:,.2f}</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Cost / kg</div>
+                <div style='color:#e2e8f0;font-family:IBM Plex Mono,monospace;font-weight:600'>{reporting_currency} {r['cost_per_kg']:,.4f}</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Load factor</div>
+                <div style='color:{lf_color};font-family:IBM Plex Mono,monospace;font-weight:600'>{r['load_factor_effective']*100:.1f}%</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Empty km %</div>
+                <div style='color:#fbbf24;font-family:IBM Plex Mono,monospace;font-weight:600'>{empty_pct:.1f}%</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>Accessorial leakage</div>
+                <div style='color:{acc_color};font-family:IBM Plex Mono,monospace;font-weight:600'>{r['accessorial_leakage_pct']*100:.1f}%</div>
+            </div>
+            <div style='background:rgba(15,23,42,.5);padding:8px 10px;border-radius:8px'>
+                <div style='color:#64748b;margin-bottom:2px'>CO₂e / viagem</div>
+                <div style='color:#34d399;font-family:IBM Plex Mono,monospace;font-weight:600'>{r['co2e_per_trip_kg']:.1f} kg</div>
+            </div>
+        </div>
+        <div style='margin-top:10px;font-size:.78rem;color:#94a3b8'>
+            <b style='color:#e2e8f0'>Dedicado vs Spot breakeven:</b> {breakeven_txt} · {ded_rec} &nbsp;·&nbsp;
+            <b style='color:#e2e8f0'>Safety stock:</b> {r['safety_stock_days']:.1f} dias · {reporting_currency} {r['safety_stock_value']:,.0f} &nbsp;·&nbsp;
+            <b style='color:#e2e8f0'>CO₂e anual:</b> {r['co2e_annual_ton']:.1f} tCO₂e · {reporting_currency} {r['carbon_cost_annual']:,.0f} carbon cost
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Should-cost vs contracted
+    if float(contracted_rate) > 0:
+        sc_gap = float(contracted_rate) * (1 + fuel_surcharge_pct/100) - r["trip_cost_with_margin"]
+        sc_color = "#f87171" if sc_gap > 0 else "#34d399"
+        st.markdown(f"<div class='v46-landed'><b>Cotação total (c/ FSC):</b> {reporting_currency} {float(contracted_rate)*(1+fuel_surcharge_pct/100):,.2f} &nbsp;·&nbsp; <b>Should-cost:</b> {reporting_currency} {r['trip_cost_with_margin']:,.2f} &nbsp;·&nbsp; <b style='color:{sc_color}'>Gap: {reporting_currency} {sc_gap:,.2f} ({'acima' if sc_gap>0 else 'abaixo'} do should-cost)</b></div>", unsafe_allow_html=True)
+
+    return {
+        "scope": "Logistics / Transport Services", "pricing_model": pricing_model if "pricing_model" in dir() else "Rate per shipment",
+        "proposed_contract_value": float(contracted_rate) * float(shipments_month) * 12.0,
+        "service_tco": r["risk_adj_tco"], "service_tco_before_productivity": r["annual_base_tco"],
+        "performance_score": float(otif) * float(tender_acc) / 100.0,
+        "performance_tier": "Good" if otif >= 95 else "Watchlist",
+        "performance_adjusted_cost": r["risk_adj_tco"],
+        "productivity_gain": 0.0, "expected_risk_cost": r["risk_annual"],
+        "sla_risk_cost": 0.0, "sla_attainment": float(otif), "sla_target": 98.0,
+        "sla_gap": max(0.0, 98.0 - float(otif)),
+        "headcount": 0.0, "total_contract_value": r["ramp_adjusted_tco"] * int(contract_years if "contract_years" in dir() else 2),
+        "route_tco_result": r, "route_tco_params": tco_params,
+        "route_type": route_type, "vehicle_type": vehicle_type, "cargo_risk": cargo_risk,
+        "road_zone": road_zone, "escort_required": bool(auto_escort),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTE OPTIMIZER — Multi-criteria best route engine
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calc_route_score(route_data: Dict, weights: Dict) -> float:
+    """
+    Multi-criteria route score. Lower is better.
+    Normalized 0-1 per criterion, then weighted sum.
+    """
+    return (
+        weights.get("distance", 0.25) * route_data.get("norm_distance", 1.0)
+        + weights.get("cost",     0.35) * route_data.get("norm_cost",     1.0)
+        + weights.get("time",     0.15) * route_data.get("norm_time",     1.0)
+        + weights.get("risk",     0.15) * route_data.get("norm_risk",     1.0)
+        + weights.get("esg",      0.10) * route_data.get("norm_esg",      1.0)
+    )
+
+
+def render_route_optimizer(reporting_currency: str):
+    """
+    Route Optimizer tab — multi-stop, multi-criteria best route engine.
+    Pure Python: haversine distances + cost model + risk scoring.
+    No external map API required.
+    """
+    render_section(
+        "Route Optimizer — Multi-criteria Best Route Engine",
+        "Defina origem, waypoints e destino. A ferramenta calcula e rankeia rotas por distância, custo total, risco, segurança e ESG.",
+        "#10b981",
+    )
+    st.info(
+        "**Como funciona:** informe origem, pontos intermediários e destino. "
+        "A ferramenta usa distâncias geodésicas (Haversine × fator de estrada) e o modelo de custo completo para "
+        "calcular e ranquear todas as combinações de rota. **A rota mais curta pode não ser a mais barata** "
+        "— escolta obrigatória, pedágios e risco de carga fazem diferença decisiva."
+    )
+
+    # ── Cargo & vehicle profile ──────────────────────────────────────────
+    with st.expander("🚛 Perfil da carga e veículo", expanded=True):
+        c1 = st.columns([1.2, 1.0, 1.0, 1.0, 1.0])
+        with c1[0]: cargo_risk_opt = st.selectbox("Perfil da carga", options=list(CARGO_RISK_AD_VALOREM.keys()), key="opt__cargo_risk")
+        with c1[1]: vehicle_opt = st.selectbox("Tipo de veículo", options=list(EMISSION_FACTORS_KG_CO2E_KM.keys()), key="opt__vehicle_type")
+        with c1[2]: cargo_value_opt = st.number_input(f"Valor médio da carga ({reporting_currency})", min_value=0.0, value=0.0, step=50_000.0, key="opt__cargo_value")
+        with c1[3]: kg_opt = st.number_input("Kg / embarque", min_value=0.0, value=0.0, step=500.0, key="opt__kg")
+        with c1[4]: shipments_opt = st.number_input("Shipments / mês", min_value=1.0, value=20.0, step=1.0, key="opt__shipments_month")
+        c2 = st.columns([1, 1, 1, 1])
+        with c2[0]: diesel_opt = st.number_input("Preço diesel (R$/l)", min_value=1.0, value=6.50, step=0.05, key="opt__diesel")
+        with c2[1]: fuel_con_opt = st.number_input("Consumo (km/l)", min_value=0.5, value=3.5, step=0.1, key="opt__fuel_consump")
+        with c2[2]: margin_opt = st.number_input("Margem transportadora %", min_value=0.0, value=10.0, step=1.0, key="opt__margin")
+        with c2[3]: carbon_opt = st.number_input("Carbon price (USD/tCO₂e)", min_value=0.0, value=30.0, step=1.0, key="opt__carbon")
+
+    # ── Optimization weights ──────────────────────────────────────────────
+    with st.expander("⚖ Pesos de decisão (o que importa mais para você?)", expanded=True):
+        st.caption("Defina o peso de cada critério. Total deve somar 100. Exemplo: para Amazon eletrônicos, risk e security têm peso alto.")
+        ow = st.columns(5)
+        with ow[0]: w_dist = st.slider("Distância km", 0, 100, 25, 5, key="opt__w_dist")
+        with ow[1]: w_cost = st.slider("Custo total R$", 0, 100, 35, 5, key="opt__w_cost")
+        with ow[2]: w_time = st.slider("Transit time", 0, 100, 15, 5, key="opt__w_time")
+        with ow[3]: w_risk = st.slider("Risco / segurança", 0, 100, 15, 5, key="opt__w_risk")
+        with ow[4]: w_esg  = st.slider("ESG / CO₂", 0, 100, 10, 5, key="opt__w_esg")
+        total_w = w_dist + w_cost + w_time + w_risk + w_esg
+        wc = "#34d399" if abs(total_w - 100) < 1 else "#f87171"
+        st.markdown(f"<span style='font-size:.78rem;color:{wc}'>Total: <b>{total_w}%</b> {'✓' if abs(total_w-100)<1 else '— ajuste para 100%'}</span>", unsafe_allow_html=True)
+
+    # ── Route points ───────────────────────────────────────────────────────
+    with st.expander("📍 Pontos da rota (origem, waypoints, destino)", expanded=True):
+        hub_names = list(BR_LOGISTICS_HUBS.keys())
+        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:8px'>Origem</div>", unsafe_allow_html=True)
+        oc = st.columns([1.5, .7, .7])
+        with oc[0]: origin_name = st.selectbox("Origem", options=hub_names, index=0, key="opt__origin", label_visibility="collapsed")
+        origin_latlon = BR_LOGISTICS_HUBS[origin_name]
+        with oc[1]: origin_lat = st.number_input("Lat", value=float(origin_latlon[0]), format="%.4f", key="opt__origin_lat")
+        with oc[2]: origin_lon = st.number_input("Lon", value=float(origin_latlon[1]), format="%.4f", key="opt__origin_lon")
+
+        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Destino</div>", unsafe_allow_html=True)
+        dc = st.columns([1.5, .7, .7])
+        with dc[0]: dest_name = st.selectbox("Destino", options=hub_names, index=min(5, len(hub_names)-1), key="opt__dest", label_visibility="collapsed")
+        dest_latlon = BR_LOGISTICS_HUBS[dest_name]
+        with dc[1]: dest_lat = st.number_input("Lat", value=float(dest_latlon[0]), format="%.4f", key="opt__dest_lat")
+        with dc[2]: dest_lon = st.number_input("Lon", value=float(dest_latlon[1]), format="%.4f", key="opt__dest_lon")
+
+        n_waypoints = st.number_input("Número de waypoints intermediários", min_value=0, max_value=6, value=0, step=1, key="opt__n_waypoints")
+        waypoints = []
+        if n_waypoints > 0:
+            st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Waypoints</div>", unsafe_allow_html=True)
+            for wi in range(int(n_waypoints)):
+                wc_ = st.columns([1.5, .7, .7, 1.0])
+                with wc_[0]: wp_name = st.selectbox(f"Waypoint {wi+1}", options=hub_names, key=f"opt__wp_name_{wi}")
+                wp_ll = BR_LOGISTICS_HUBS[wp_name]
+                with wc_[1]: wp_lat = st.number_input("Lat", value=float(wp_ll[0]), format="%.4f", key=f"opt__wp_lat_{wi}")
+                with wc_[2]: wp_lon = st.number_input("Lon", value=float(wp_ll[1]), format="%.4f", key=f"opt__wp_lon_{wi}")
+                with wc_[3]: wp_zone = st.selectbox(f"Zona de risco", options=list(ROAD_RISK_ZONES.keys()), key=f"opt__wp_zone_{wi}")
+                waypoints.append({"name": wp_name, "lat": wp_lat, "lon": wp_lon, "zone": wp_zone})
+
+        # Route risk zone per segment
+        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Zona de risco do trecho principal</div>", unsafe_allow_html=True)
+        main_zone = st.selectbox("Zona de risco (trecho origem→destino)", options=list(ROAD_RISK_ZONES.keys()), key="opt__main_zone")
+
+    # ── Build & evaluate route alternatives ──────────────────────────────
+    if st.button("🚀 Calcular & ranquear rotas", type="primary", key="opt__run"):
+
+        from itertools import permutations as iperms
+
+        origin_pt = (float(origin_lat), float(origin_lon))
+        dest_pt   = (float(dest_lat),   float(dest_lon))
+        wp_pts    = [(float(w["lat"]), float(w["lon"]), w["name"], w["zone"]) for w in waypoints]
+
+        # Generate route alternatives:
+        # 1. Direct route (no waypoints)
+        # 2. All waypoint permutations (up to 6! = 720, capped at 24 for UX)
+        route_type_opt = "Dedicated Lane (rota fixa recorrente)"
+        rdf = road_distance_factor(route_type_opt)
+        emission_factor_opt = EMISSION_FACTORS_KG_CO2E_KM.get(vehicle_opt, 0.75)
+        ad_val_opt = CARGO_RISK_AD_VALOREM.get(cargo_risk_opt, 0.20)
+        gris_opt_val = ROAD_RISK_ZONES.get(main_zone, {}).get("gris_min_pct", 0.20)
+        risk_score_main = ROAD_RISK_ZONES.get(main_zone, {}).get("risk_score", 3.0)
+        escort_main = ROAD_RISK_ZONES.get(main_zone, {}).get("escort_required", False) or "eletrônico" in cargo_risk_opt.lower() or "alto valor" in cargo_risk_opt.lower()
+        escort_km_opt = ESCORT_COST_PER_KM["Carro de escolta (1 veículo)"] if escort_main else 0.0
+
+        def compute_route(points_ordered):
+            """Compute total distance, cost, time, risk, esg for a sequence of points."""
+            all_pts = [origin_pt] + [(p[0], p[1]) for p in points_ordered] + [dest_pt]
+            total_dist_gc = sum(haversine_km(all_pts[i][0], all_pts[i][1], all_pts[i+1][0], all_pts[i+1][1]) for i in range(len(all_pts)-1))
+            total_dist_road = total_dist_gc * rdf  # road factor
+            # Segment risk: max of main zone and waypoint zones
+            seg_risk = risk_score_main
+            for p in points_ordered:
+                z = ROAD_RISK_ZONES.get(p[3] if len(p)>3 else main_zone, {})
+                seg_risk = max(seg_risk, z.get("risk_score", 3.0))
+                if z.get("escort_required", False):
+                    escort_km_opt  # already set
+
+            # Variable cost per trip
+            fuel_cost = (total_dist_road * 2) / max(fuel_con_opt, 0.1) * diesel_opt
+            toll_cost = total_dist_road * 2 * 12.0 / 100.0  # avg toll
+            maint_cost = total_dist_road * 2 * 0.18
+            cargo_ins  = float(cargo_value_opt) * ad_val_opt + float(cargo_value_opt) * gris_opt_val
+            esc_cost   = total_dist_road * 2 * escort_km_opt
+            total_variable = fuel_cost + toll_cost + maint_cost + cargo_ins + esc_cost
+            total_with_margin = total_variable * (1 + margin_opt / 100.0)
+            annual_tco = total_with_margin * float(shipments_opt) * 12.0
+
+            # Time (hrs): dist / avg speed 70km/h + 2h loading/unloading
+            avg_speed = 70.0
+            transit_hrs = total_dist_road / avg_speed + 2.0
+            transit_days = transit_hrs / 24.0
+
+            # CO2e
+            co2e_trip = total_dist_road * 2 * emission_factor_opt  # kg
+            carbon_annual = co2e_trip * float(shipments_opt) * 12.0 / 1000.0 * float(carbon_opt)
+
+            return {
+                "distance_gc_km": total_dist_gc, "distance_road_km": total_dist_road * 2,
+                "fuel_per_trip": fuel_cost, "toll_per_trip": toll_cost,
+                "escort_per_trip": esc_cost, "trip_cost": total_with_margin,
+                "annual_tco": annual_tco, "transit_days": transit_days,
+                "risk_score": seg_risk, "escort_required": escort_main or esc_cost > 0,
+                "co2e_per_trip_kg": co2e_trip, "carbon_cost_annual": carbon_annual,
+            }
+
+        # All route alternatives
+        alternatives = []
+        # Direct
+        alt_direct = compute_route([])
+        alt_direct["label"] = f"Direto: {origin_name.split('-')[0].strip()} → {dest_name.split('-')[0].strip()}"
+        alt_direct["waypoints"] = "Nenhum"
+        alternatives.append(alt_direct)
+
+        # With waypoints — all permutations (capped)
+        if wp_pts:
+            perms = list(iperms(wp_pts))[:24]
+            for perm in perms:
+                alt = compute_route(list(perm))
+                wp_labels = " → ".join(p[2].split("-")[0].strip()[:15] for p in perm)
+                alt["label"] = f"Via {wp_labels}"
+                alt["waypoints"] = wp_labels
+                alternatives.append(alt)
+
+        # Normalize per criterion (0-1, lower = better)
+        max_dist = max(a["distance_road_km"] for a in alternatives) or 1
+        max_cost = max(a["annual_tco"] for a in alternatives) or 1
+        max_time = max(a["transit_days"] for a in alternatives) or 1
+        max_risk = max(a["risk_score"] for a in alternatives) or 1
+        max_esg  = max(a["co2e_per_trip_kg"] for a in alternatives) or 1
+
+        weights_dict = {
+            "distance": w_dist / max(total_w, 1),
+            "cost":     w_cost / max(total_w, 1),
+            "time":     w_time / max(total_w, 1),
+            "risk":     w_risk / max(total_w, 1),
+            "esg":      w_esg  / max(total_w, 1),
+        }
+        for alt in alternatives:
+            alt["norm_distance"] = alt["distance_road_km"] / max_dist
+            alt["norm_cost"]     = alt["annual_tco"] / max_cost
+            alt["norm_time"]     = alt["transit_days"] / max_time
+            alt["norm_risk"]     = alt["risk_score"] / max_risk
+            alt["norm_esg"]      = alt["co2e_per_trip_kg"] / max_esg
+            alt["composite_score"] = calc_route_score(alt, weights_dict)
+
+        alternatives.sort(key=lambda x: x["composite_score"])
+        st.session_state["route_optimizer_results"] = alternatives
+        st.session_state["route_optimizer_weights"] = weights_dict
+        st.rerun()
+
+    # ── Show results ──────────────────────────────────────────────────────
+    results = st.session_state.get("route_optimizer_results", [])
+    if not results:
+        st.info("Configure os pontos e clique em 'Calcular & ranquear rotas'.")
+        return
+
+    best = results[0]
+    st.markdown(f"""<div class="v46-decision good" style="margin-top:0">
+        <div class="v46-decision-title">🏆 Melhor rota: {escape(best['label'])}</div>
+        <div class="v46-decision-body">
+        Score composto: <b>{best['composite_score']:.3f}</b> &nbsp;·&nbsp;
+        Distância estrada: <b>{best['distance_road_km']:,.0f} km</b> &nbsp;·&nbsp;
+        Annual TCO: <b>{reporting_currency} {best['annual_tco']:,.0f}</b> &nbsp;·&nbsp;
+        Transit: <b>{best['transit_days']:.2f} dias</b> &nbsp;·&nbsp;
+        Risk score: <b>{best['risk_score']:.1f}/5</b> &nbsp;·&nbsp;
+        CO₂e/viagem: <b>{best['co2e_per_trip_kg']:.1f} kg</b> &nbsp;·&nbsp;
+        Escolta: <b>{'Obrigatória ⚠' if best['escort_required'] else 'Não necessária'}</b>
+        </div></div>""", unsafe_allow_html=True)
+
+    # Results table
+    rows_out = []
+    for i, alt in enumerate(results[:10]):
+        rows_out.append({
+            "Rank": i + 1,
+            "Rota": alt["label"],
+            "Dist. (km)": f"{alt['distance_road_km']:,.0f}",
+            "Annual TCO": fmt_money(alt["annual_tco"], reporting_currency, compact=True),
+            "Cost/trip": fmt_money(alt["trip_cost"], reporting_currency),
+            "Transit (d)": f"{alt['transit_days']:.2f}",
+            "Risk": f"{alt['risk_score']:.1f}/5",
+            "CO₂e/trip": f"{alt['co2e_per_trip_kg']:.1f} kg",
+            "Escolta": "✅" if alt["escort_required"] else "—",
+            "Score": f"{alt['composite_score']:.3f}",
+        })
+    st.markdown("<div class='v46-plain-title'>Ranking de rotas (top 10)</div>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(rows_out), use_container_width=True, hide_index=True)
+
+    # ── Map visualization ─────────────────────────────────────────────────
+    if PLOTLY_AVAILABLE and results:
+        st.markdown("<div class='v46-chart'><h4>Mapa de rotas — top 3 opções</h4>", unsafe_allow_html=True)
+        fig_map = go.Figure()
+        colors = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"]
+        for ri, alt in enumerate(results[:3]):
+            # Reconstruct points sequence
+            pts = [(float(origin_lat), float(origin_lon), origin_name)]
+            # We can't reconstruct waypoint order from label easily — show direct line for now
+            pts.append((float(dest_lat), float(dest_lon), dest_name))
+            lats = [p[0] for p in pts]
+            lons = [p[1] for p in pts]
+            fig_map.add_trace(go.Scattergeo(
+                lat=lats, lon=lons, mode="lines+markers",
+                line=dict(width=3 if ri == 0 else 1.5, color=colors[ri]),
+                marker=dict(size=10, color=colors[ri]),
+                name=f"#{ri+1} {alt['label'][:30]}",
+                hovertemplate=f"{alt['label']}<br>TCO: {reporting_currency} {alt['annual_tco']:,.0f}<br>Score: {alt['composite_score']:.3f}<extra></extra>",
+            ))
+        fig_map.update_geos(visible=True, showcountries=True, showland=True, landcolor="#1e293b", countrycolor="#334155", coastlinecolor="#475569", bgcolor="rgba(15,23,42,0)", fitbounds="locations", projection_type="mercator")
+        fig_map.update_layout(title="Comparativo de rotas", height=420, margin=dict(l=8,r=8,t=44,b=8), paper_bgcolor="rgba(15,23,42,0)", legend=dict(font=dict(color="#94a3b8")))
+        st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Key insight ────────────────────────────────────────────────────────
+    if len(results) > 1:
+        shortest = min(results, key=lambda x: x["distance_road_km"])
+        cheapest = min(results, key=lambda x: x["annual_tco"])
+        safest   = min(results, key=lambda x: x["risk_score"])
+        greenest = min(results, key=lambda x: x["co2e_per_trip_kg"])
+        cost_delta = cheapest["annual_tco"] - best["annual_tco"]
+        dist_delta = shortest["distance_road_km"] - best["distance_road_km"]
+        st.markdown(f"""<div class="v46-insight">
+            <b>💡 Key insight:</b>
+            A rota mais curta ({shortest['label'].split(':')[-1].strip()}) tem <b>{shortest['distance_road_km']:,.0f} km</b>
+            {'(= melhor opção)' if shortest['label']==best['label'] else f'— mas custa <b>{reporting_currency} {abs(cheapest["annual_tco"] - shortest["annual_tco"]):,.0f}</b> {("a mais" if shortest["annual_tco"] > cheapest["annual_tco"] else "a menos")} que a mais barata, e tem score composto {[r for r in results if r["label"]==shortest["label"]][0]["composite_score"]:.3f} vs {best["composite_score"]:.3f} da rota recomendada'}.
+            A rota mais segura é <b>{safest['label'].split(":")[-1].strip()}</b> (risk {safest['risk_score']:.1f}/5).
+            A rota mais verde é <b>{greenest['label'].split(":")[-1].strip()}</b> ({greenest['co2e_per_trip_kg']:.1f} kg CO₂e/viagem).
+        </div>""", unsafe_allow_html=True)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3170,7 +4253,7 @@ input_tabs = st.tabs([
     "1 · Current Baseline", "2 · Supplier Proposals",
     "3 · Supplier Management", "4 · Custom Points",
     "5 · Risk & Constraints", "6 · Share & Optimization",
-    "7 · Executive Dash",
+    "7 · Executive Dash", "🗺️ Route Optimizer",
 ])
 
 # ── TAB 1: Current Baseline ──────────────────────────────────────────────────
@@ -3190,7 +4273,10 @@ with input_tabs[0]:
                 dp_ = render_landed_cost_builder(key_prefix=f"cur_dir__{country}", default_spend=DEFAULT_CURRENT_SPEND[country], default_volume=DEFAULT_DIRECT_VOLUME[country], unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} current")
                 current_spend = float(dp_["spend"])
             else:
-                sp_ = render_service_baseline_builder(key_prefix=f"cur_svc__{country}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, reporting_currency=currency_symbol)
+                if (service_scope or DEFAULT_SERVICE_SCOPE) == "Logistics / Transport Services":
+                    sp_ = render_logistics_route_tco(key_prefix=f"cur_svc__{country}", country=country, supplier_label=f"{country} baseline", reporting_currency=currency_symbol, is_baseline=True)
+                else:
+                    sp_ = render_service_baseline_builder(key_prefix=f"cur_svc__{country}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, reporting_currency=currency_symbol)
                 current_spend = float(sp_["service_tco"])
             st.markdown("<div class='v46-plain-title'>Financial, treasury & inventory parameters</div>", unsafe_allow_html=True)
             c1, c2, c3, c4 = st.columns(4)
@@ -3229,7 +4315,10 @@ with input_tabs[1]:
                         dp_s = render_landed_cost_builder(key_prefix=f"prop_dir__{country}__{sup}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], default_volume=cvd, unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} | {disp}")
                         spend_ = float(dp_s["spend"])
                     else:
-                        sp_s = render_service_supplier_builder(key_prefix=f"prop_svc__{country}__{sup}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, supplier_label=f"{country} | {disp}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], reporting_currency=currency_symbol)
+                        if (service_scope or DEFAULT_SERVICE_SCOPE) == "Logistics / Transport Services":
+                            sp_s = render_logistics_route_tco(key_prefix=f"prop_svc__{country}__{sup}", country=country, supplier_label=f"{country} | {disp}", reporting_currency=currency_symbol, is_baseline=False)
+                        else:
+                            sp_s = render_service_supplier_builder(key_prefix=f"prop_svc__{country}__{sup}", country=country, scope=service_scope or DEFAULT_SERVICE_SCOPE, supplier_label=f"{country} | {disp}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], reporting_currency=currency_symbol)
                         spend_ = float(sp_s["service_tco"])
                     c2_, c3_, c4_, c5_ = st.columns([.75, .75, .75, 1.2])
                     with c2_:
@@ -3311,27 +4400,83 @@ with input_tabs[3]:
 
 # ── TAB 5: Risk & Constraints ─────────────────────────────────────────────────
 with input_tabs[4]:
-    render_section("Supplier Risk & Strategic Constraints", "Kraljic minimums, capacity ceilings and multi-dimensional risk scores → optimization engine.", "#ef4444")
-    rw_cols = st.columns(len(DEFAULT_RISK_WEIGHTS))
-    risk_weights: Dict[str, float] = {}
-    for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
-        with rw_cols[idx_]: risk_weights[dim_] = st.number_input(f"{dim_} weight", min_value=0.0, value=DEFAULT_RISK_WEIGHTS[dim_], step=1.0, key=f"rw__{dim_}")
+    render_section(
+        "Supplier Risk & Strategic Constraints",
+        "7-axis risk scoring (Supply · Quality · Financial · Compliance · ESG · Logistics · Geopolitical) · Spider charts · Governance blend · LP optimization feed",
+        "#ef4444",
+    )
+
+    with st.expander("⚙ Risk dimension weights", expanded=False):
+        st.caption("Weights define relative importance of each axis. McKinsey SCM standard defaults. Total should = 100.")
+        rw_cols = st.columns(len(DEFAULT_RISK_WEIGHTS))
+        risk_weights: Dict[str, float] = {}
+        for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
+            with rw_cols[idx_]:
+                risk_weights[dim_] = st.number_input(
+                    dim_, min_value=0.0, max_value=100.0,
+                    value=DEFAULT_RISK_WEIGHTS[dim_], step=1.0, key=f"rw__{dim_}",
+                    help={"Supply":"Lead time, single-source, capacity","Quality":"NCR rate, spec compliance, recalls","Financial":"Financial health, dependency, concentration","Compliance":"Sanctions, FCPA, LGPD, anti-bribery","ESG":"Deforestation, carbon, modern slavery","Logistics":"Freight reliability, port risk, customs","Geopolitical":"Country risk, tariff, currency instability"}.get(dim_,""),
+                )
+        total_w_d = sum(risk_weights.values())
+        wc = "#34d399" if abs(total_w_d-100)<0.5 else "#f87171"
+        st.markdown(f"<span style='font-size:.78rem;color:{wc}'>Weights total: <b>{total_w_d:.1f}%</b> {'✓' if abs(total_w_d-100)<0.5 else '— adjust to reach 100%'}</span>", unsafe_allow_html=True)
+    if "risk_weights" not in dir():
+        risk_weights = dict(DEFAULT_RISK_WEIGHTS)
+
     risk_inputs: Dict = {s: {} for s in SUPPLIERS}
     for sup in SUPPLIERS:
-        with st.expander(supplier_display_name(sup), expanded=(sup=="ChemPrime")):
-            c1_, c2_, c3_, c4_ = st.columns(4)
-            with c1_: st.checkbox("Approved", value=DEFAULT_APPROVED[sup], key=approved_key(sup)); st.checkbox("Kraljic min required", value=DEFAULT_KRALJIC_REQUIRED[sup], key=kraljic_key(sup))
-            with c2_: st.number_input("Min share %", 0.0, 100.0, DEFAULT_MIN_SHARE[sup], 1.0, key=min_key(sup))
-            with c3_: st.number_input("Max share %", 0.0, 100.0, DEFAULT_MAX_SHARE[sup], 1.0, key=max_key(sup))
-            with c4_: st.caption("1 = low risk · 5 = high risk")
-            gov_risk = governance_risk_defaults(supplier_management_inputs, sup)
-            cust_adj = float(custom_risk_adj.get(sup, 0.0))
-            rc_ = st.columns(len(DEFAULT_RISK_WEIGHTS))
-            for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
-                with rc_[idx_]:
-                    dfr = blend_risk_default(DEFAULT_RISK[sup][dim_], gov_risk.get(dim_, DEFAULT_RISK[sup][dim_]), cust_adj)
-                    risk_inputs[sup][dim_] = st.slider(dim_, 1.0, 5.0, dfr, 0.1, key=f"risk__{sup}__{dim_}")
-            st.caption(f"Gov score: {supplier_management_inputs.get(sup,{}).get('Governance score',0):.1f}/100 | Custom adj: {cust_adj:+.2f}")
+        gov_risk = governance_risk_defaults(supplier_management_inputs, sup)
+        cust_adj = float(custom_risk_adj.get(sup, 0.0))
+        gov_sc = supplier_management_inputs.get(sup, {}).get("Governance score", 75.0)
+        with st.expander(f"{supplier_display_name(sup)}", expanded=(sup == SUPPLIERS[0])):
+            cst = st.columns([1, 1, 1, 1, 2])
+            with cst[0]: st.checkbox("Approved", value=DEFAULT_APPROVED[sup], key=approved_key(sup))
+            with cst[1]: st.checkbox("Kraljic min", value=DEFAULT_KRALJIC_REQUIRED[sup], key=kraljic_key(sup))
+            with cst[2]: st.number_input("Min share %", 0.0, 100.0, DEFAULT_MIN_SHARE[sup], 1.0, key=min_key(sup))
+            with cst[3]: st.number_input("Max share %", 0.0, 100.0, DEFAULT_MAX_SHARE[sup], 1.0, key=max_key(sup))
+            with cst[4]:
+                g_tier = supplier_management_inputs.get(sup,{}).get("Governance tier","—")
+                st.markdown(f"<div style='font-size:.78rem;color:#94a3b8;padding-top:8px'>Gov: <b style='color:{service_score_color(gov_sc)}'>{gov_sc:.0f}/100</b> · {g_tier} · Custom adj: <b>{cust_adj:+.2f}</b> · <i>1=low risk, 5=high risk</i></div>", unsafe_allow_html=True)
+
+            dims_list = list(DEFAULT_RISK_WEIGHTS.keys())
+            half = (len(dims_list)+1)//2
+            for row_dims in [dims_list[:half], dims_list[half:]]:
+                rcols = st.columns(len(row_dims))
+                for ci, dim_ in enumerate(row_dims):
+                    with rcols[ci]:
+                        dfr = blend_risk_default(DEFAULT_RISK.get(sup,{}).get(dim_,3.0), gov_risk.get(dim_,3.0), cust_adj)
+                        risk_inputs[sup][dim_] = st.slider(dim_, 1.0, 5.0, dfr, 0.1, key=f"risk__{sup}__{dim_}")
+
+            if PLOTLY_AVAILABLE:
+                vals_s = [risk_inputs[sup][d] for d in dims_list]
+                ws_score = sum(risk_inputs[sup][d]*risk_weights.get(d,0) for d in dims_list)/max(sum(risk_weights.values()),1)
+                rt_col = {"good":"#34d399","amber":"#fbbf24","bad":"#f87171"}.get(risk_tone(ws_score),"#60a5fa")
+                fig_sp = go.Figure(go.Scatterpolar(
+                    r=vals_s+[vals_s[0]], theta=dims_list+[dims_list[0]],
+                    fill="toself", fillcolor="rgba(239,68,68,.12)",
+                    line=dict(color="#ef4444",width=2),
+                ))
+                fig_sp.update_layout(
+                    polar=dict(radialaxis=dict(visible=True,range=[1,5],tickfont=dict(size=9),gridcolor="rgba(148,163,184,.12)"),angularaxis=dict(tickfont=dict(size=10,color="#94a3b8")),bgcolor="rgba(15,23,42,.4)"),
+                    showlegend=False, height=250, margin=dict(l=55,r=55,t=25,b=25), paper_bgcolor="rgba(0,0,0,0)",
+                )
+                lc, rc_chart = st.columns([.55,.45])
+                with lc:
+                    st.plotly_chart(apply_chart_theme(fig_sp,250), use_container_width=True, config={"displayModeBar":False})
+                with rc_chart:
+                    def _risk_color(v): return "#f87171" if v>=3.5 else "#fbbf24" if v>=2.5 else "#34d399"
+                    dim_rows = "".join(
+                        f"<div style='display:flex;justify-content:space-between;font-size:.74rem;padding:2px 0'>"
+                        f"<span style='color:#94a3b8'>{d}</span>"
+                        f"<span style='color:{_risk_color(risk_inputs[sup][d])};font-family:IBM Plex Mono,monospace'>{risk_inputs[sup][d]:.1f}</span>"
+                        f"</div>"
+                        for d in dims_list
+                    )
+                    st.markdown(f"""<div class="v46-gov-card" style="margin-top:8px">
+                    <div style='font-size:.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px'>Risk Breakdown</div>
+                    <div style='font-size:1.5rem;font-weight:700;color:{rt_col};font-family:"IBM Plex Mono",monospace'>{ws_score:.2f}<span style='font-size:.85rem;color:#64748b'>/5</span></div>
+                    <div style='font-size:.72rem;color:#64748b;margin-bottom:10px'>Weighted risk score</div>
+                    {dim_rows}</div>""", unsafe_allow_html=True)
 
 # ── TAB 6: Share & Optimization ───────────────────────────────────────────────
 with input_tabs[5]:
@@ -3856,6 +5001,10 @@ with stack("Export", "Download country summary CSV.", "⬇️", "#64748b", "Expo
         file_name="procurement_tco_v46_country_summary.csv",
         mime="text/csv",
     )
+
+# ── Tab 8: Route Optimizer ───────────────────────────────────────────────────
+with input_tabs[7]:
+    render_route_optimizer(currency_symbol)
 
 st.markdown(
     """<div class="v46-note" style="margin-top:32px;padding:12px 16px;border-radius:10px;background:rgba(15,23,42,.5);border:1px solid rgba(148,163,184,.12)">
