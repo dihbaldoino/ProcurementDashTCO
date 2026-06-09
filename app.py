@@ -3863,266 +3863,644 @@ def calc_route_score(route_data: Dict, weights: Dict) -> float:
 
 def render_route_optimizer(reporting_currency: str):
     """
-    Route Optimizer tab — multi-stop, multi-criteria best route engine.
-    Pure Python: haversine distances + cost model + risk scoring.
-    No external map API required.
+    Amazon-grade Route Optimizer — multi-criteria, multi-stop, full cost model.
+    Covers: Middle Mile, Last Mile, Inbound, Outbound, Reverse, Milk Run.
+    No external API required — Haversine × road factor + full open-cost model.
     """
+
+    # ── VEHICLE MASTER (Amazon fleet reference) ─────────────────────────
+    VEHICLE_MASTER = {
+        "Van / Sprinter ≤3.5t":  {"kg":3_500, "pal":8,  "m3":12,  "avg_spd_urban":35, "avg_spd_highway":90, "fuel_kml":10.0, "maint_km":0.12, "tire_km":0.04, "requires_helper":False, "hos_drive_h":10, "hos_window_h":14, "monthly_fixed":4_500,  "driver_monthly":3_200, "em_factor":0.21},
+        "VUC ≤6t (urban)":       {"kg":6_000, "pal":10, "m3":18,  "avg_spd_urban":30, "avg_spd_highway":80, "fuel_kml":7.0,  "maint_km":0.15, "tire_km":0.05, "requires_helper":False,"hos_drive_h":10, "hos_window_h":14, "monthly_fixed":6_000,  "driver_monthly":3_800, "em_factor":0.28},
+        "Toco ≤13t":             {"kg":13_000,"pal":16, "m3":45,  "avg_spd_urban":35, "avg_spd_highway":80, "fuel_kml":5.0,  "maint_km":0.18, "tire_km":0.07, "requires_helper":False,"hos_drive_h":11, "hos_window_h":14, "monthly_fixed":9_000,  "driver_monthly":4_500, "em_factor":0.55},
+        "Truck ≤23t":            {"kg":23_000,"pal":22, "m3":70,  "avg_spd_urban":35, "avg_spd_highway":80, "fuel_kml":4.0,  "maint_km":0.20, "tire_km":0.09, "requires_helper":False,"hos_drive_h":11, "hos_window_h":14, "monthly_fixed":12_000, "driver_monthly":5_200, "em_factor":0.75},
+        "Carreta ≤33t":          {"kg":27_000,"pal":26, "m3":90,  "avg_spd_urban":30, "avg_spd_highway":75, "fuel_kml":3.5,  "maint_km":0.22, "tire_km":0.10, "requires_helper":False,"hos_drive_h":11, "hos_window_h":14, "monthly_fixed":16_000, "driver_monthly":6_000, "em_factor":0.92},
+        "Bitrem ≤57t":           {"kg":50_000,"pal":42, "m3":140, "avg_spd_urban":25, "avg_spd_highway":70, "fuel_kml":2.8,  "maint_km":0.28, "tire_km":0.13, "requires_helper":False,"hos_drive_h":11, "hos_window_h":14, "monthly_fixed":22_000, "driver_monthly":7_000, "em_factor":1.15},
+        "Refrigerado ≤23t":      {"kg":18_000,"pal":20, "m3":65,  "avg_spd_urban":35, "avg_spd_highway":78, "fuel_kml":3.2,  "maint_km":0.25, "tire_km":0.09, "requires_helper":False,"hos_drive_h":11, "hos_window_h":14, "monthly_fixed":18_000, "driver_monthly":5_800, "em_factor":1.05},
+        "Van Last Mile ≤1.5t":   {"kg":1_500, "pal":4,  "m3":8,   "avg_spd_urban":28, "avg_spd_highway":80, "fuel_kml":11.0, "maint_km":0.10, "tire_km":0.03, "requires_helper":True, "hos_drive_h":10, "hos_window_h":14, "monthly_fixed":3_500,  "driver_monthly":2_800, "em_factor":0.18},
+        "Moto / Bike (last mile)":{"kg":30,   "pal":0,  "m3":0.2, "avg_spd_urban":25, "avg_spd_highway":60, "fuel_kml":25.0, "maint_km":0.04, "tire_km":0.01, "requires_helper":False,"hos_drive_h":10, "hos_window_h":14, "monthly_fixed":800,   "driver_monthly":2_200, "em_factor":0.05},
+    }
+
+    # ── ROUTE TYPE PROFILES ─────────────────────────────────────────────
+    ROUTE_TYPE_PROFILES = {
+        "Inbound to FC/Warehouse":      {"rdf":1.28, "avg_stops":1,  "urban_pct":0.10, "default_empty_pct":25, "typical_vehicle":"Carreta ≤33t",    "icon":"📦"},
+        "Middle Mile FC→Sort Center":   {"rdf":1.22, "avg_stops":1,  "urban_pct":0.05, "default_empty_pct":20, "typical_vehicle":"Carreta ≤33t",    "icon":"🔁"},
+        "Middle Mile FC→DS (injection)":{"rdf":1.25, "avg_stops":2,  "urban_pct":0.15, "default_empty_pct":30, "typical_vehicle":"Truck ≤23t",      "icon":"🏭"},
+        "Outbound B2B":                 {"rdf":1.30, "avg_stops":3,  "urban_pct":0.20, "default_empty_pct":25, "typical_vehicle":"Truck ≤23t",      "icon":"🏪"},
+        "Last Mile Delivery":           {"rdf":1.45, "avg_stops":20, "urban_pct":0.85, "default_empty_pct":50, "typical_vehicle":"Van Last Mile ≤1.5t","icon":"🏠"},
+        "Reverse Logistics":            {"rdf":1.32, "avg_stops":5,  "urban_pct":0.30, "default_empty_pct":15, "typical_vehicle":"Toco ≤13t",       "icon":"↩️"},
+        "Milk Run (multi-supplier)":    {"rdf":1.35, "avg_stops":5,  "urban_pct":0.20, "default_empty_pct":10, "typical_vehicle":"Truck ≤23t",      "icon":"🥛"},
+        "Dedicated Lane (fixed route)": {"rdf":1.25, "avg_stops":1,  "urban_pct":0.10, "default_empty_pct":20, "typical_vehicle":"Carreta ≤33t",    "icon":"🛣️"},
+        "Cross-border":                 {"rdf":1.40, "avg_stops":2,  "urban_pct":0.05, "default_empty_pct":30, "typical_vehicle":"Carreta ≤33t",    "icon":"🌎"},
+        "Spot / On-demand":             {"rdf":1.30, "avg_stops":1,  "urban_pct":0.15, "default_empty_pct":35, "typical_vehicle":"Truck ≤23t",      "icon":"⚡"},
+    }
+
     render_section(
-        "Route Optimizer — Multi-criteria Best Route Engine",
-        "Defina origem, waypoints e destino. A ferramenta calcula e rankeia rotas por distância, custo total, risco, segurança e ESG.",
+        "Route Optimizer — Amazon Logistics Standard",
+        "Middle Mile · Last Mile · Inbound · Milk Run · Multi-stop cost comparison. Rota mais curta ≠ rota mais barata.",
         "#10b981",
     )
-    st.info(
-        "**Como funciona:** informe origem, pontos intermediários e destino. "
-        "A ferramenta usa distâncias geodésicas (Haversine × fator de estrada) e o modelo de custo completo para "
-        "calcular e ranquear todas as combinações de rota. **A rota mais curta pode não ser a mais barata** "
-        "— escolta obrigatória, pedágios e risco de carga fazem diferença decisiva."
-    )
 
-    # ── Cargo & vehicle profile ──────────────────────────────────────────
-    with st.expander("🚛 Perfil da carga e veículo", expanded=True):
-        c1 = st.columns([1.2, 1.0, 1.0, 1.0, 1.0])
-        with c1[0]: cargo_risk_opt = st.selectbox("Perfil da carga", options=list(CARGO_RISK_AD_VALOREM.keys()), key="opt__cargo_risk")
-        with c1[1]: vehicle_opt = st.selectbox("Tipo de veículo", options=list(EMISSION_FACTORS_KG_CO2E_KM.keys()), key="opt__vehicle_type")
-        with c1[2]: cargo_value_opt = st.number_input(f"Valor médio da carga ({reporting_currency})", min_value=0.0, value=0.0, step=50_000.0, key="opt__cargo_value")
-        with c1[3]: kg_opt = st.number_input("Kg / embarque", min_value=0.0, value=0.0, step=500.0, key="opt__kg")
-        with c1[4]: shipments_opt = st.number_input("Shipments / mês", min_value=1.0, value=20.0, step=1.0, key="opt__shipments_month")
-        c2 = st.columns([1, 1, 1, 1])
-        with c2[0]: diesel_opt = st.number_input("Preço diesel (R$/l)", min_value=1.0, value=6.50, step=0.05, key="opt__diesel")
-        with c2[1]: fuel_con_opt = st.number_input("Consumo (km/l)", min_value=0.5, value=3.5, step=0.1, key="opt__fuel_consump")
-        with c2[2]: margin_opt = st.number_input("Margem transportadora %", min_value=0.0, value=10.0, step=1.0, key="opt__margin")
-        with c2[3]: carbon_opt = st.number_input("Carbon price (USD/tCO₂e)", min_value=0.0, value=30.0, step=1.0, key="opt__carbon")
+    # ── Context card ─────────────────────────────────────────────────────
+    st.markdown("""<div class="v46-insight">
+    <b>Como funciona:</b> Configure o perfil de carga, veículo, waypoints e zona de risco.
+    A ferramenta calcula para <i>cada combinação de rota</i>: distância real de estrada (Haversine × road factor),
+    custo aberto (combustível + pedágio + motorista + ajudante + manutenção + seguro de carga + escolta +
+    acessórios + overhead + margem), tempo de trânsito (velocidade urbana/rodovia + paradas + HoS),
+    risco de rota, e CO₂e. O score composto rankeia tudo.
+    <b>Uma rota pelo interior de SP pode ser 40km mais longa mas R$800 mais barata que a rota pelo RJ com escolta obrigatória.</b>
+    </div>""", unsafe_allow_html=True)
 
-    # ── Optimization weights ──────────────────────────────────────────────
-    with st.expander("⚖ Pesos de decisão (o que importa mais para você?)", expanded=True):
-        st.caption("Defina o peso de cada critério. Total deve somar 100. Exemplo: para Amazon eletrônicos, risk e security têm peso alto.")
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 1 — Cargo & Operation Profile
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander("📦 1 · Perfil da operação, carga e veículo", expanded=True):
+        p1 = st.columns([1.3, 1.0, 1.0])
+        with p1[0]: route_type_opt = st.selectbox("Tipo de rota / operação", options=list(ROUTE_TYPE_PROFILES.keys()), key="opt__route_type")
+        rtp = ROUTE_TYPE_PROFILES[route_type_opt]
+        with p1[1]: vehicle_opt = st.selectbox("Tipo de veículo", options=list(VEHICLE_MASTER.keys()), index=list(VEHICLE_MASTER.keys()).index(rtp["typical_vehicle"]) if rtp["typical_vehicle"] in VEHICLE_MASTER else 0, key="opt__vehicle_type")
+        veh = VEHICLE_MASTER[vehicle_opt]
+        with p1[2]: cargo_risk_opt = st.selectbox("Perfil / risco da carga", options=list(CARGO_RISK_AD_VALOREM.keys()), key="opt__cargo_risk")
+
+        p2 = st.columns(6)
+        with p2[0]: cargo_value_opt = st.number_input(f"Valor da carga / embarque ({reporting_currency})", min_value=0.0, value=50_000.0, step=10_000.0, key="opt__cargo_value", help="Base para ad valorem, GRIS e seguro. Eletrônicos = alto valor = escolta automática.")
+        with p2[1]: kg_opt = st.number_input("Kg / embarque", min_value=0.0, value=float(veh["kg"]*0.8), step=500.0, key="opt__kg")
+        with p2[2]: pal_opt = st.number_input("Pallets / embarque", min_value=0.0, value=float(veh["pal"]*0.8), step=1.0, key="opt__pallets")
+        with p2[3]: orders_opt = st.number_input("Orders / embarque", min_value=1.0, value=1.0, step=1.0, key="opt__orders")
+        with p2[4]: shipments_opt = st.number_input("Embarques / mês", min_value=1.0, value=40.0, step=5.0, key="opt__shipments_month")
+        with p2[5]: empty_pct_opt = st.number_input("Empty km % (retorno vazio)", min_value=0.0, max_value=100.0, value=float(rtp["default_empty_pct"]), step=5.0, key="opt__empty_pct", help="Percentual da distância rodado sem carga. 0% = backhaul 100% aproveitado.")
+
+        # Load factor alert
+        lf_kg  = safe_divide(float(kg_opt),  float(veh["kg"])) * 100
+        lf_pal = safe_divide(float(pal_opt), float(veh["pal"])) * 100 if veh["pal"] > 0 else 0
+        lf_eff = max(lf_kg, lf_pal)
+        lf_color = "#34d399" if lf_eff >= 75 else "#f59e0b" if lf_eff >= 50 else "#f87171"
+        st.markdown(
+            f"<div class='v46-note'>🚛 <b>{vehicle_opt}</b> · Capacidade: {veh['kg']:,}kg / {veh['pal']} pal · "
+            f"<b style='color:{lf_color}'>Load factor: {lf_eff:.1f}%</b> · "
+            f"HoS drive: {veh['hos_drive_h']}h/janela {veh['hos_window_h']}h · "
+            f"Ajudante: {'<b style=\"color:#fbbf24\">Necessário ⚠</b>' if veh['requires_helper'] else 'Não necessário'}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 2 — Open Cost Model
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander("💰 2 · Modelo de custo aberto (should-cost por trecho)", expanded=True):
+        st.caption("Todos os custos por km e por viagem. A ferramenta calcula o should-cost real — não depende só da cotação da transportadora.")
+        oc1 = st.columns(5)
+        with oc1[0]: diesel_opt = st.number_input("Diesel (R$/l)", min_value=1.0, value=6.50, step=0.05, key="opt__diesel")
+        with oc1[1]: fuel_con_opt = st.number_input("Consumo (km/l)", min_value=0.1, value=float(veh["fuel_kml"]), step=0.1, key="opt__fuel_consump", help="Carregado. Vazio consome ~15% menos — calculado automaticamente.")
+        with oc1[2]: maint_km_opt = st.number_input("Manutenção (R$/km)", min_value=0.0, value=float(veh["maint_km"]), step=0.01, key="opt__maint_km")
+        with oc1[3]: tire_km_opt  = st.number_input("Pneus (R$/km)", min_value=0.0, value=float(veh["tire_km"]),  step=0.01, key="opt__tire_km")
+        with oc1[4]: overhead_opt = st.number_input("Overhead %", min_value=0.0, value=12.0, step=1.0, key="opt__overhead")
+
+        oc2 = st.columns(5)
+        with oc2[0]: driver_monthly_opt   = st.number_input("Salário motorista (R$/mês)", min_value=0.0, value=float(veh["driver_monthly"]), step=200.0, key="opt__driver_monthly")
+        with oc2[1]: driver_benefits_opt  = st.number_input("Encargos/benefícios %", min_value=0.0, value=70.0, step=1.0, key="opt__driver_benefits")
+        with oc2[2]:
+            needs_helper_default = bool(veh["requires_helper"])
+            has_helper = st.checkbox("Ajudante necessário?", value=needs_helper_default, key="opt__has_helper",
+                                     help="Automático para Last Mile e cargas de varejo. Moto = sem ajudante.")
+        with oc2[3]: helper_monthly_opt   = st.number_input("Salário ajudante (R$/mês)", min_value=0.0, value=2_500.0 if has_helper else 0.0, step=200.0, key="opt__helper_monthly", disabled=not has_helper)
+        with oc2[4]: margin_opt           = st.number_input("Margem transportadora %", min_value=0.0, value=10.0, step=1.0, key="opt__margin")
+
+        oc3 = st.columns(5)
+        with oc3[0]: tracking_opt         = st.number_input("Rastreamento (R$/mês)", min_value=0.0, value=250.0, step=50.0, key="opt__tracking")
+        with oc3[1]: vehicle_fixed_opt    = st.number_input("Custo fixo veículo (R$/mês)", min_value=0.0, value=float(veh["monthly_fixed"]), step=500.0, key="opt__veh_fixed")
+        with oc3[2]: loading_time_h       = st.number_input("Tempo carga+descarga (h/parada)", min_value=0.0, value=1.5, step=0.25, key="opt__load_time")
+        with oc3[3]: detention_h_opt      = st.number_input("Dwell time médio (h/parada)", min_value=0.0, value=0.5, step=0.25, key="opt__dwell_time")
+        with oc3[4]: detention_rate_opt   = st.number_input("Detention (R$/h extra)", min_value=0.0, value=120.0, step=20.0, key="opt__detention_rate")
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 3 — Cargo Insurance & Security
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander("🔒 3 · Seguro de carga, GRIS, escolta & acessórios", expanded=False):
+        auto_escort = (ROAD_RISK_ZONES.get("Baixo Risco — Sul / PR / SC / RS", {}).get("escort_required", False)
+                      or "eletrônico" in cargo_risk_opt.lower() or "alto valor" in cargo_risk_opt.lower()
+                      or "muito alto" in cargo_risk_opt.lower())
+        ad_val_default = CARGO_RISK_AD_VALOREM.get(cargo_risk_opt, 0.20)
+        s1 = st.columns(5)
+        with s1[0]: ad_valorem_opt  = st.number_input("Ad valorem %", min_value=0.0, value=ad_val_default, step=0.01, format="%.3f", key="opt__ad_valorem", help="% sobre o valor declarado da carga por embarque")
+        with s1[1]: gris_opt        = st.number_input("GRIS % (mín. por zona)", min_value=0.0, value=0.20, step=0.01, format="%.3f", key="opt__gris")
+        with s1[2]: escort_req_opt  = st.checkbox("Escolta obrigatória?", value=auto_escort, key="opt__escort_req")
+        with s1[3]: escort_type_opt = st.selectbox("Tipo de escolta", options=list(ESCORT_COST_PER_KM.keys()), key="opt__escort_type", disabled=not escort_req_opt)
+        with s1[4]: escort_trips_pct_opt = st.number_input("% viagens com escolta", min_value=0.0, max_value=100.0, value=100.0 if auto_escort else 0.0, step=5.0, key="opt__escort_pct_trips")
+
+        s2 = st.columns(4)
+        with s2[0]: tender_acc_opt  = st.number_input("Tender acceptance %", min_value=0.0, max_value=100.0, value=90.0, step=1.0, key="opt__tender_acc")
+        with s2[1]: backup_prem_opt = st.number_input("Backup premium %", min_value=0.0, value=22.0, step=1.0, key="opt__backup_prem")
+        with s2[2]: damage_rate_opt = st.number_input("Damage rate %", min_value=0.0, value=0.3, step=0.05, key="opt__damage_rate")
+        with s2[3]: carbon_opt      = st.number_input("Carbon price (USD/tCO₂e)", min_value=0.0, value=30.0, step=1.0, key="opt__carbon")
+        escort_km_cost_opt = ESCORT_COST_PER_KM.get(escort_type_opt, 0.0) if escort_req_opt else 0.0
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 4 — Decision Weights
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander("⚖ 4 · Pesos de decisão — o que mais importa para esta operação?", expanded=True):
+        st.caption("Adapte para o contexto: Middle Mile prioriza custo. Last Mile eletrônicos prioriza risco+segurança. Perecíveis priorizam tempo.")
+        # Presets
+        preset_col, _, _ = st.columns([1, 1, 2])
+        with preset_col:
+            preset = st.selectbox("Preset de pesos", options=[
+                "Customizado",
+                "Middle Mile — custo primeiro",
+                "Last Mile Eletrônicos — risco primeiro",
+                "Perecíveis — tempo primeiro",
+                "ESG / sustentabilidade primeiro",
+                "Balanceado (Amazon default)",
+            ], key="opt__weight_preset")
+        PRESETS = {
+            "Middle Mile — custo primeiro":          (15, 45, 15, 15, 10),
+            "Last Mile Eletrônicos — risco primeiro":(10, 20, 20, 40, 10),
+            "Perecíveis — tempo primeiro":           (10, 20, 45, 15, 10),
+            "ESG / sustentabilidade primeiro":       (10, 25, 15, 20, 30),
+            "Balanceado (Amazon default)":           (20, 35, 20, 15, 10),
+        }
+        defaults = PRESETS.get(preset, (20, 35, 20, 15, 10))
         ow = st.columns(5)
-        with ow[0]: w_dist = st.slider("Distância km", 0, 100, 25, 5, key="opt__w_dist")
-        with ow[1]: w_cost = st.slider("Custo total R$", 0, 100, 35, 5, key="opt__w_cost")
-        with ow[2]: w_time = st.slider("Transit time", 0, 100, 15, 5, key="opt__w_time")
-        with ow[3]: w_risk = st.slider("Risco / segurança", 0, 100, 15, 5, key="opt__w_risk")
-        with ow[4]: w_esg  = st.slider("ESG / CO₂", 0, 100, 10, 5, key="opt__w_esg")
+        with ow[0]: w_dist = st.slider("📏 Distância", 0, 100, defaults[0], 5, key="opt__w_dist")
+        with ow[1]: w_cost = st.slider("💰 Custo total", 0, 100, defaults[1], 5, key="opt__w_cost")
+        with ow[2]: w_time = st.slider("⏱ Transit time", 0, 100, defaults[2], 5, key="opt__w_time")
+        with ow[3]: w_risk = st.slider("🔒 Risco/segurança", 0, 100, defaults[3], 5, key="opt__w_risk")
+        with ow[4]: w_esg  = st.slider("🌿 ESG / CO₂", 0, 100, defaults[4], 5, key="opt__w_esg")
         total_w = w_dist + w_cost + w_time + w_risk + w_esg
-        wc = "#34d399" if abs(total_w - 100) < 1 else "#f87171"
-        st.markdown(f"<span style='font-size:.78rem;color:{wc}'>Total: <b>{total_w}%</b> {'✓' if abs(total_w-100)<1 else '— ajuste para 100%'}</span>", unsafe_allow_html=True)
+        wc_color = "#34d399" if abs(total_w - 100) < 1 else "#f87171"
+        st.markdown(f"<span style='font-size:.78rem;color:{wc_color}'>Total: <b>{total_w}%</b> {'✓' if abs(total_w-100)<1 else '— ajuste para 100%'}</span>", unsafe_allow_html=True)
 
-    # ── Route points ───────────────────────────────────────────────────────
-    with st.expander("📍 Pontos da rota (origem, waypoints, destino)", expanded=True):
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 5 — Route Points
+    # ════════════════════════════════════════════════════════════════════
+    with st.expander(f"📍 5 · Pontos da rota — {rtp['icon']} {route_type_opt}", expanded=True):
         hub_names = list(BR_LOGISTICS_HUBS.keys())
-        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:8px'>Origem</div>", unsafe_allow_html=True)
-        oc = st.columns([1.5, .7, .7])
-        with oc[0]: origin_name = st.selectbox("Origem", options=hub_names, index=0, key="opt__origin", label_visibility="collapsed")
-        origin_latlon = BR_LOGISTICS_HUBS[origin_name]
-        with oc[1]: origin_lat = st.number_input("Lat", value=float(origin_latlon[0]), format="%.4f", key="opt__origin_lat")
-        with oc[2]: origin_lon = st.number_input("Lon", value=float(origin_latlon[1]), format="%.4f", key="opt__origin_lon")
 
-        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Destino</div>", unsafe_allow_html=True)
-        dc = st.columns([1.5, .7, .7])
-        with dc[0]: dest_name = st.selectbox("Destino", options=hub_names, index=min(5, len(hub_names)-1), key="opt__dest", label_visibility="collapsed")
-        dest_latlon = BR_LOGISTICS_HUBS[dest_name]
-        with dc[1]: dest_lat = st.number_input("Lat", value=float(dest_latlon[0]), format="%.4f", key="opt__dest_lat")
-        with dc[2]: dest_lon = st.number_input("Lon", value=float(dest_latlon[1]), format="%.4f", key="opt__dest_lon")
+        st.markdown("<div style='font-size:.82rem;font-weight:600;color:#e2e8f0;margin:6px 0 4px'>🟢 Origem</div>", unsafe_allow_html=True)
+        oc_ = st.columns([1.8, .6, .6, 1.0])
+        with oc_[0]: origin_name = st.selectbox("Origem", options=hub_names, index=0, key="opt__origin", label_visibility="collapsed")
+        olatlon = BR_LOGISTICS_HUBS[origin_name]
+        with oc_[1]: origin_lat = st.number_input("Lat", value=float(olatlon[0]), format="%.4f", key="opt__origin_lat", label_visibility="collapsed")
+        with oc_[2]: origin_lon = st.number_input("Lon", value=float(olatlon[1]), format="%.4f", key="opt__origin_lon", label_visibility="collapsed")
+        with oc_[3]: origin_zone = st.selectbox("Zona de risco", options=list(ROAD_RISK_ZONES.keys()), key="opt__origin_zone", label_visibility="collapsed")
 
-        n_waypoints = st.number_input("Número de waypoints intermediários", min_value=0, max_value=6, value=0, step=1, key="opt__n_waypoints")
+        st.markdown("<div style='font-size:.82rem;font-weight:600;color:#e2e8f0;margin:8px 0 4px'>🔴 Destino</div>", unsafe_allow_html=True)
+        dc_ = st.columns([1.8, .6, .6, 1.0])
+        with dc_[0]: dest_name = st.selectbox("Destino", options=hub_names, index=min(4, len(hub_names)-1), key="opt__dest", label_visibility="collapsed")
+        dlatlon = BR_LOGISTICS_HUBS[dest_name]
+        with dc_[1]: dest_lat = st.number_input("Lat", value=float(dlatlon[0]), format="%.4f", key="opt__dest_lat", label_visibility="collapsed")
+        with dc_[2]: dest_lon = st.number_input("Lon", value=float(dlatlon[1]), format="%.4f", key="opt__dest_lon", label_visibility="collapsed")
+        with dc_[3]: dest_zone = st.selectbox("Zona de risco", options=list(ROAD_RISK_ZONES.keys()), key="opt__dest_zone", label_visibility="collapsed")
+
+        n_wps = int(st.number_input("Waypoints intermediários (paradas, CDs, clientes, fornecedores)", min_value=0, max_value=8, value=0, step=1, key="opt__n_waypoints"))
         waypoints = []
-        if n_waypoints > 0:
-            st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Waypoints</div>", unsafe_allow_html=True)
-            for wi in range(int(n_waypoints)):
-                wc_ = st.columns([1.5, .7, .7, 1.0])
-                with wc_[0]: wp_name = st.selectbox(f"Waypoint {wi+1}", options=hub_names, key=f"opt__wp_name_{wi}")
+        if n_wps > 0:
+            st.markdown("<div style='font-size:.82rem;font-weight:600;color:#e2e8f0;margin:8px 0 4px'>🔵 Waypoints</div>", unsafe_allow_html=True)
+            for wi in range(n_wps):
+                wc__ = st.columns([1.8, .6, .6, 1.0, .8])
+                with wc__[0]: wp_name = st.selectbox(f"Parada {wi+1}", options=hub_names, key=f"opt__wp_name_{wi}", label_visibility="collapsed")
                 wp_ll = BR_LOGISTICS_HUBS[wp_name]
-                with wc_[1]: wp_lat = st.number_input("Lat", value=float(wp_ll[0]), format="%.4f", key=f"opt__wp_lat_{wi}")
-                with wc_[2]: wp_lon = st.number_input("Lon", value=float(wp_ll[1]), format="%.4f", key=f"opt__wp_lon_{wi}")
-                with wc_[3]: wp_zone = st.selectbox(f"Zona de risco", options=list(ROAD_RISK_ZONES.keys()), key=f"opt__wp_zone_{wi}")
-                waypoints.append({"name": wp_name, "lat": wp_lat, "lon": wp_lon, "zone": wp_zone})
+                with wc__[1]: wp_lat = st.number_input("Lat", value=float(wp_ll[0]), format="%.4f", key=f"opt__wp_lat_{wi}", label_visibility="collapsed")
+                with wc__[2]: wp_lon = st.number_input("Lon", value=float(wp_ll[1]), format="%.4f", key=f"opt__wp_lon_{wi}", label_visibility="collapsed")
+                with wc__[3]: wp_zone = st.selectbox("Zona risco", options=list(ROAD_RISK_ZONES.keys()), key=f"opt__wp_zone_{wi}", label_visibility="collapsed")
+                with wc__[4]: wp_dwell = st.number_input("Dwell h", min_value=0.0, value=1.0, step=0.5, key=f"opt__wp_dwell_{wi}", label_visibility="collapsed")
+                waypoints.append({"name": wp_name, "lat": float(wp_lat), "lon": float(wp_lon), "zone": wp_zone, "dwell_h": float(wp_dwell)})
 
-        # Route risk zone per segment
-        st.markdown("<div style='font-size:.8rem;font-weight:600;color:#94a3b8;margin:8px 0'>Zona de risco do trecho principal</div>", unsafe_allow_html=True)
-        main_zone = st.selectbox("Zona de risco (trecho origem→destino)", options=list(ROAD_RISK_ZONES.keys()), key="opt__main_zone")
-
-    # ── Build & evaluate route alternatives ──────────────────────────────
-    if st.button("🚀 Calcular & ranquear rotas", type="primary", key="opt__run"):
-
+    # ════════════════════════════════════════════════════════════════════
+    # COMPUTE ENGINE
+    # ════════════════════════════════════════════════════════════════════
+    if st.button("🚀 Calcular & ranquear todas as rotas", type="primary", key="opt__run", use_container_width=False):
         from itertools import permutations as iperms
 
-        origin_pt = (float(origin_lat), float(origin_lon))
-        dest_pt   = (float(dest_lat),   float(dest_lon))
-        wp_pts    = [(float(w["lat"]), float(w["lon"]), w["name"], w["zone"]) for w in waypoints]
+        emission_factor_v = float(EMISSION_FACTORS_KG_CO2E_KM.get(vehicle_opt, veh.get("em_factor", 0.75)))
+        rdf = float(rtp["rdf"])
+        urban_pct = float(rtp["urban_pct"])
+        avg_stops_base = int(rtp["avg_stops"])
+        ad_val = float(ad_valorem_opt)
+        gris_v = float(gris_opt)
+        has_helper_v = bool(has_helper)
+        escort_cost_km = float(escort_km_cost_opt)
+        escort_trips_frac = float(escort_trips_pct_opt) / 100.0
 
-        # Generate route alternatives:
-        # 1. Direct route (no waypoints)
-        # 2. All waypoint permutations (up to 6! = 720, capped at 24 for UX)
-        route_type_opt = "Dedicated Lane (rota fixa recorrente)"
-        rdf = road_distance_factor(route_type_opt)
-        emission_factor_opt = EMISSION_FACTORS_KG_CO2E_KM.get(vehicle_opt, 0.75)
-        ad_val_opt = CARGO_RISK_AD_VALOREM.get(cargo_risk_opt, 0.20)
-        gris_opt_val = ROAD_RISK_ZONES.get(main_zone, {}).get("gris_min_pct", 0.20)
-        risk_score_main = ROAD_RISK_ZONES.get(main_zone, {}).get("risk_score", 3.0)
-        escort_main = ROAD_RISK_ZONES.get(main_zone, {}).get("escort_required", False) or "eletrônico" in cargo_risk_opt.lower() or "alto valor" in cargo_risk_opt.lower()
-        escort_km_opt = ESCORT_COST_PER_KM["Carro de escolta (1 veículo)"] if escort_main else 0.0
+        # Monthly fixed cost (fully allocated)
+        helper_adj = (float(helper_monthly_opt) * (1 + float(driver_benefits_opt)/100)) if has_helper_v else 0.0
+        monthly_fixed = (
+            float(vehicle_fixed_opt)
+            + float(driver_monthly_opt) * (1 + float(driver_benefits_opt)/100)
+            + helper_adj
+            + float(tracking_opt)
+        ) * (1 + float(overhead_opt)/100)
+        fixed_per_ship = safe_divide(monthly_fixed, max(float(shipments_opt), 1.0))
 
-        def compute_route(points_ordered):
-            """Compute total distance, cost, time, risk, esg for a sequence of points."""
-            all_pts = [origin_pt] + [(p[0], p[1]) for p in points_ordered] + [dest_pt]
-            total_dist_gc = sum(haversine_km(all_pts[i][0], all_pts[i][1], all_pts[i+1][0], all_pts[i+1][1]) for i in range(len(all_pts)-1))
-            total_dist_road = total_dist_gc * rdf  # road factor
-            # Segment risk: max of main zone and waypoint zones
-            seg_risk = risk_score_main
-            for p in points_ordered:
-                z = ROAD_RISK_ZONES.get(p[3] if len(p)>3 else main_zone, {})
-                seg_risk = max(seg_risk, z.get("risk_score", 3.0))
-                if z.get("escort_required", False):
-                    escort_km_opt  # already set
+        def compute_segment_km(p1_lat, p1_lon, p2_lat, p2_lon) -> float:
+            gc = haversine_km(p1_lat, p1_lon, p2_lat, p2_lon)
+            return gc * rdf
 
-            # Variable cost per trip
-            fuel_cost = (total_dist_road * 2) / max(fuel_con_opt, 0.1) * diesel_opt
-            toll_cost = total_dist_road * 2 * 12.0 / 100.0  # avg toll
-            maint_cost = total_dist_road * 2 * 0.18
-            cargo_ins  = float(cargo_value_opt) * ad_val_opt + float(cargo_value_opt) * gris_opt_val
-            esc_cost   = total_dist_road * 2 * escort_km_opt
-            total_variable = fuel_cost + toll_cost + maint_cost + cargo_ins + esc_cost
-            total_with_margin = total_variable * (1 + margin_opt / 100.0)
-            annual_tco = total_with_margin * float(shipments_opt) * 12.0
+        def get_zone_info(zone_name: str) -> Dict:
+            return ROAD_RISK_ZONES.get(zone_name, {"escort_required": False, "gris_min_pct": 0.20, "insurance_multiplier": 1.0, "risk_score": 2.5})
 
-            # Time (hrs): dist / avg speed 70km/h + 2h loading/unloading
-            avg_speed = 70.0
-            transit_hrs = total_dist_road / avg_speed + 2.0
-            transit_days = transit_hrs / 24.0
+        def compute_route_full(ordered_wps: List[Dict]) -> Dict:
+            """Full cost + time model for one route permutation."""
+            # Build the full point sequence
+            all_points = (
+                [{"lat": float(origin_lat), "lon": float(origin_lon), "name": origin_name, "zone": origin_zone, "dwell_h": 0.5}]
+                + ordered_wps
+                + [{"lat": float(dest_lat),   "lon": float(dest_lon),   "name": dest_name,   "zone": dest_zone,   "dwell_h": 0.0}]
+            )
+            n_segments = len(all_points) - 1
+            n_stops = len(ordered_wps) + 1  # waypoints + destination
 
-            # CO2e
-            co2e_trip = total_dist_road * 2 * emission_factor_opt  # kg
-            carbon_annual = co2e_trip * float(shipments_opt) * 12.0 / 1000.0 * float(carbon_opt)
+            # ── Per-segment distance & cost ──────────────────────────────
+            seg_km_loaded = []
+            seg_risk      = []
+            seg_escort    = []
+            seg_toll      = []
+            seg_fuel_load = []
+            seg_fuel_empt = []
+
+            for i in range(n_segments):
+                p1, p2 = all_points[i], all_points[i+1]
+                km = compute_segment_km(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
+                seg_km_loaded.append(km)
+                zi = get_zone_info(p1["zone"])
+                seg_risk.append(float(zi["risk_score"]))
+
+                # Escort: if required by zone OR cargo forces it
+                seg_esc_required = zi["escort_required"] or bool(escort_req_opt)
+                seg_escort.append(km * escort_cost_km * escort_trips_frac if seg_esc_required else 0.0)
+
+                # Toll: use zone-specific benchmark
+                toll_rate = next(
+                    (v for k, v in TOLL_BENCHMARK_PER_100KM.items()
+                     if any(st_code in k for st_code in ["SP", "PR", "RJ", "MG", "RS", "SC", "ES", "GO", "NE", "Norte"])
+                     and any(st_code in (origin_name + " " + dest_name) for st_code in [k.split("—")[0].strip()[:3]])),
+                    10.0,
+                )
+                seg_toll.append(km * toll_rate / 100.0)
+
+                # Fuel: loaded km (forward) + empty km % return
+                seg_fuel_load.append(km / max(float(fuel_con_opt), 0.1) * float(diesel_opt))
+                empty_km = km * float(empty_pct_opt) / 100.0
+                seg_fuel_empt.append(empty_km / max(float(fuel_con_opt) * 1.15, 0.1) * float(diesel_opt))  # empty = 15% better fuel
+
+            # ── Totals ───────────────────────────────────────────────────
+            total_km_loaded = sum(seg_km_loaded)
+            total_km_empty  = total_km_loaded * float(empty_pct_opt) / 100.0
+            total_km        = total_km_loaded + total_km_empty
+            max_risk_score  = max(seg_risk) if seg_risk else 2.5
+            avg_risk_score  = sum(seg_risk) / len(seg_risk) if seg_risk else 2.5
+            route_risk      = 0.6 * max_risk_score + 0.4 * avg_risk_score  # worst segment weighted
+
+            fuel_total = sum(seg_fuel_load) + sum(seg_fuel_empt)
+            toll_total = sum(seg_toll)
+            escort_total = sum(seg_escort)
+            maint_total = total_km * float(maint_km_opt)
+            tire_total  = total_km * float(tire_km_opt)
+            cargo_ins   = float(cargo_value_opt) * (ad_val + gris_v)
+            accessorial = n_stops * max(0.0, float(detention_h_opt) - 0.5) * float(detention_rate_opt)
+
+            trip_variable = fuel_total + toll_total + escort_total + maint_total + tire_total + cargo_ins + accessorial
+            should_cost   = trip_variable + fixed_per_ship
+            trip_cost_wm  = should_cost * (1 + float(margin_opt) / 100.0)
+
+            # Blended rate (tender acceptance)
+            ta  = float(tender_acc_opt) / 100.0
+            bp  = float(backup_prem_opt) / 100.0
+            blended = trip_cost_wm * ta + trip_cost_wm * (1 + bp) * (1 - ta)
+
+            # Risk cost per trip
+            damage_cost = float(cargo_value_opt) * float(damage_rate_opt) / 100.0
+            spot_ovf    = (1 - ta) * trip_cost_wm * bp
+            risk_cost   = damage_cost + spot_ovf
+
+            annual_tco = (blended + risk_cost) * float(shipments_opt) * 12.0
+
+            # ── Transit time model ─────────────────────────────────────
+            # Weighted speed: urban_pct × urban_speed + highway_pct × highway_speed
+            avg_spd = (urban_pct * float(veh["avg_spd_urban"])
+                       + (1 - urban_pct) * float(veh["avg_spd_highway"]))
+            drive_h = total_km_loaded / max(avg_spd, 1.0)
+
+            # HoS check: does route require driver rest/relay?
+            hos_drive  = float(veh["hos_drive_h"])
+            hos_window = float(veh["hos_window_h"])
+            stop_time_h = n_stops * (float(loading_time_h) + float(detention_h_opt))
+            total_work_h = drive_h + stop_time_h
+            # Required drivers / rest breaks
+            rest_breaks = max(0, int(drive_h / hos_drive))
+            rest_cost_extra = rest_breaks * 100.0  # per diem / hotel estimate
+
+            transit_h = drive_h + stop_time_h + rest_breaks * 10.0  # 10h rest per break
+            transit_days = transit_h / 24.0
+
+            # ── ESG ──────────────────────────────────────────────────
+            co2e_trip_kg    = total_km * emission_factor_v
+            co2e_annual_ton = co2e_trip_kg * float(shipments_opt) * 12.0 / 1000.0
+            carbon_cost_ann = co2e_annual_ton * float(carbon_opt)
+
+            # ── Load factor ───────────────────────────────────────────
+            lf_kg_route  = safe_divide(float(kg_opt),  float(veh["kg"]))
+            lf_pal_route = safe_divide(float(pal_opt), max(float(veh["pal"]), 1))
+            lf_route     = max(lf_kg_route, lf_pal_route)
+
+            # ── Cost breakdown per label ─────────────────────────────
+            waypoint_names = " → ".join(w["name"].split("-")[0].strip()[:14] for w in ordered_wps) if ordered_wps else "Direto"
+            label = (f"{origin_name.split('-')[0].strip()[:12]} → "
+                     + (f"{waypoint_names} → " if ordered_wps else "")
+                     + f"{dest_name.split('-')[0].strip()[:12]}")
 
             return {
-                "distance_gc_km": total_dist_gc, "distance_road_km": total_dist_road * 2,
-                "fuel_per_trip": fuel_cost, "toll_per_trip": toll_cost,
-                "escort_per_trip": esc_cost, "trip_cost": total_with_margin,
-                "annual_tco": annual_tco, "transit_days": transit_days,
-                "risk_score": seg_risk, "escort_required": escort_main or esc_cost > 0,
-                "co2e_per_trip_kg": co2e_trip, "carbon_cost_annual": carbon_annual,
+                "label": label,
+                "waypoints": waypoint_names,
+                "n_stops": n_stops,
+                "distance_road_km": total_km_loaded,
+                "distance_total_km": total_km,
+                "fuel_per_trip": fuel_total,
+                "toll_per_trip": toll_total,
+                "escort_per_trip": escort_total,
+                "maint_tire_per_trip": maint_total + tire_total,
+                "cargo_insurance_per_trip": cargo_ins,
+                "accessorial_per_trip": accessorial,
+                "trip_variable": trip_variable,
+                "fixed_per_shipment": fixed_per_ship,
+                "should_cost_per_trip": should_cost,
+                "trip_cost_with_margin": trip_cost_wm,
+                "blended_rate": blended,
+                "risk_cost_per_trip": risk_cost,
+                "damage_cost": damage_cost,
+                "rest_cost_extra": rest_cost_extra,
+                "annual_tco": annual_tco,
+                "transit_days": transit_days,
+                "drive_hours": drive_h,
+                "rest_breaks_required": rest_breaks,
+                "load_factor": lf_route,
+                "risk_score": route_risk,
+                "max_segment_risk": max_risk_score,
+                "escort_required": escort_req_opt or any(
+                    get_zone_info(w["zone"]).get("escort_required", False) for w in ordered_wps
+                ),
+                "co2e_per_trip_kg": co2e_trip_kg,
+                "co2e_annual_ton": co2e_annual_ton,
+                "carbon_cost_annual": carbon_cost_ann,
+                "has_helper": has_helper_v,
+                "helper_cost_annual": (float(helper_monthly_opt) * (1 + float(driver_benefits_opt)/100) * 12) if has_helper_v else 0.0,
+                # unit economics
+                "cost_per_order": safe_divide(annual_tco, float(orders_opt) * float(shipments_opt) * 12),
+                "cost_per_kg":    safe_divide(annual_tco, max(float(kg_opt),1) * float(shipments_opt) * 12),
+                "cost_per_pallet":safe_divide(annual_tco, max(float(pal_opt),1) * float(shipments_opt) * 12),
             }
 
-        # All route alternatives
+        # Build all alternatives
         alternatives = []
-        # Direct
-        alt_direct = compute_route([])
-        alt_direct["label"] = f"Direto: {origin_name.split('-')[0].strip()} → {dest_name.split('-')[0].strip()}"
-        alt_direct["waypoints"] = "Nenhum"
-        alternatives.append(alt_direct)
+        wp_pts = waypoints  # list of dicts with lat, lon, name, zone, dwell_h
 
-        # With waypoints — all permutations (capped)
+        # 1. Direct
+        alt = compute_route_full([])
+        alternatives.append(alt)
+
+        # 2. Permutations of waypoints (cap at 5040 = 7!)
         if wp_pts:
-            perms = list(iperms(wp_pts))[:24]
+            max_perms = {0:1, 1:1, 2:2, 3:6, 4:24, 5:120, 6:720, 7:5040, 8:40320}.get(len(wp_pts), 120)
+            cap = min(max_perms, 5040)
+            perms = list(iperms(wp_pts))[:cap]
             for perm in perms:
-                alt = compute_route(list(perm))
-                wp_labels = " → ".join(p[2].split("-")[0].strip()[:15] for p in perm)
-                alt["label"] = f"Via {wp_labels}"
-                alt["waypoints"] = wp_labels
+                alt = compute_route_full(list(perm))
                 alternatives.append(alt)
 
-        # Normalize per criterion (0-1, lower = better)
-        max_dist = max(a["distance_road_km"] for a in alternatives) or 1
-        max_cost = max(a["annual_tco"] for a in alternatives) or 1
-        max_time = max(a["transit_days"] for a in alternatives) or 1
-        max_risk = max(a["risk_score"] for a in alternatives) or 1
-        max_esg  = max(a["co2e_per_trip_kg"] for a in alternatives) or 1
+        # Normalize & score
+        def _norm(vals):
+            mn, mx = min(vals), max(vals)
+            return [(v - mn) / (mx - mn) if mx > mn else 0.5 for v in vals]
 
-        weights_dict = {
-            "distance": w_dist / max(total_w, 1),
-            "cost":     w_cost / max(total_w, 1),
-            "time":     w_time / max(total_w, 1),
-            "risk":     w_risk / max(total_w, 1),
-            "esg":      w_esg  / max(total_w, 1),
-        }
-        for alt in alternatives:
-            alt["norm_distance"] = alt["distance_road_km"] / max_dist
-            alt["norm_cost"]     = alt["annual_tco"] / max_cost
-            alt["norm_time"]     = alt["transit_days"] / max_time
-            alt["norm_risk"]     = alt["risk_score"] / max_risk
-            alt["norm_esg"]      = alt["co2e_per_trip_kg"] / max_esg
-            alt["composite_score"] = calc_route_score(alt, weights_dict)
+        dists  = [a["distance_road_km"] for a in alternatives]
+        costs  = [a["annual_tco"]        for a in alternatives]
+        times  = [a["transit_days"]      for a in alternatives]
+        risks  = [a["risk_score"]        for a in alternatives]
+        esgs   = [a["co2e_per_trip_kg"]  for a in alternatives]
+
+        nd = _norm(dists); nc = _norm(costs); nt = _norm(times); nr = _norm(risks); ne = _norm(esgs)
+        tw_safe = max(total_w, 1)
+        for i, alt in enumerate(alternatives):
+            alt["norm_distance"] = nd[i]; alt["norm_cost"] = nc[i]; alt["norm_time"] = nt[i]
+            alt["norm_risk"] = nr[i]; alt["norm_esg"] = ne[i]
+            alt["composite_score"] = (
+                w_dist/tw_safe * nd[i] + w_cost/tw_safe * nc[i] +
+                w_time/tw_safe * nt[i] + w_risk/tw_safe * nr[i] + w_esg/tw_safe * ne[i]
+            )
 
         alternatives.sort(key=lambda x: x["composite_score"])
         st.session_state["route_optimizer_results"] = alternatives
-        st.session_state["route_optimizer_weights"] = weights_dict
         st.rerun()
 
-    # ── Show results ──────────────────────────────────────────────────────
+    # ── RESULTS ───────────────────────────────────────────────────────────
     results = st.session_state.get("route_optimizer_results", [])
     if not results:
-        st.info("Configure os pontos e clique em 'Calcular & ranquear rotas'.")
+        st.markdown("<div class='v46-note'>Configure os parâmetros acima e clique em <b>Calcular & ranquear todas as rotas</b>.</div>", unsafe_allow_html=True)
         return
 
     best = results[0]
-    st.markdown(f"""<div class="v46-decision good" style="margin-top:0">
+
+    # ── Best route hero card ──────────────────────────────────────────────
+    esc_tag = " · <b style='color:#f87171'>🔒 Escolta obrigatória</b>" if best.get("escort_required") else ""
+    helper_tag = " · <b style='color:#fbbf24'>👤 Ajudante incluso</b>" if best.get("has_helper") else ""
+    rest_tag = f" · <b style='color:#f59e0b'>⏸ {best['rest_breaks_required']} parada(s) HoS</b>" if best.get("rest_breaks_required", 0) > 0 else ""
+    st.markdown(f"""<div class="v46-decision good" style="margin-top:8px">
         <div class="v46-decision-title">🏆 Melhor rota: {escape(best['label'])}</div>
-        <div class="v46-decision-body">
-        Score composto: <b>{best['composite_score']:.3f}</b> &nbsp;·&nbsp;
-        Distância estrada: <b>{best['distance_road_km']:,.0f} km</b> &nbsp;·&nbsp;
-        Annual TCO: <b>{reporting_currency} {best['annual_tco']:,.0f}</b> &nbsp;·&nbsp;
-        Transit: <b>{best['transit_days']:.2f} dias</b> &nbsp;·&nbsp;
-        Risk score: <b>{best['risk_score']:.1f}/5</b> &nbsp;·&nbsp;
-        CO₂e/viagem: <b>{best['co2e_per_trip_kg']:.1f} kg</b> &nbsp;·&nbsp;
-        Escolta: <b>{'Obrigatória ⚠' if best['escort_required'] else 'Não necessária'}</b>
-        </div></div>""", unsafe_allow_html=True)
+        <div class="v46-decision-body" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px">
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Score composto</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#34d399;font-weight:700'>{best['composite_score']:.3f}</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Annual TCO</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#60a5fa;font-weight:700'>{reporting_currency} {best['annual_tco']:,.0f}</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Distância estrada</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#e2e8f0;font-weight:600'>{best['distance_road_km']:,.0f} km</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Transit time</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#e2e8f0;font-weight:600'>{best['transit_days']:.2f} dias</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Risk score</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#fbbf24;font-weight:600'>{best['risk_score']:.1f}/5</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>CO₂e / viagem</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#34d399;font-weight:600'>{best['co2e_per_trip_kg']:.1f} kg</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Load factor</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#60a5fa;font-weight:600'>{best['load_factor']*100:.1f}%</div></div>
+            <div><div style='font-size:.7rem;color:#64748b;text-transform:uppercase'>Cost / order</div><div style='font-family:IBM Plex Mono;font-size:1.1rem;color:#e2e8f0;font-weight:600'>{reporting_currency} {best['cost_per_order']:,.2f}</div></div>
+        </div>
+        <div style='margin-top:10px;font-size:.8rem;color:#94a3b8'>{esc_tag}{helper_tag}{rest_tag}</div>
+    </div>""", unsafe_allow_html=True)
 
-    # Results table
-    rows_out = []
-    for i, alt in enumerate(results[:10]):
-        rows_out.append({
-            "Rank": i + 1,
-            "Rota": alt["label"],
-            "Dist. (km)": f"{alt['distance_road_km']:,.0f}",
-            "Annual TCO": fmt_money(alt["annual_tco"], reporting_currency, compact=True),
-            "Cost/trip": fmt_money(alt["trip_cost"], reporting_currency),
-            "Transit (d)": f"{alt['transit_days']:.2f}",
-            "Risk": f"{alt['risk_score']:.1f}/5",
-            "CO₂e/trip": f"{alt['co2e_per_trip_kg']:.1f} kg",
-            "Escolta": "✅" if alt["escort_required"] else "—",
-            "Score": f"{alt['composite_score']:.3f}",
+    # ── Cost waterfall for best route ─────────────────────────────────────
+    wf_items = [
+        ("Combustível (carg.+vazio)",    best["fuel_per_trip"]),
+        ("Pedágios",                     best["toll_per_trip"]),
+        ("Manutenção + pneus",           best["maint_tire_per_trip"]),
+        ("Seguro de carga (ad val+GRIS)",best["cargo_insurance_per_trip"]),
+        ("Escolta / segurança",          best["escort_per_trip"]),
+        ("Accessorials / detention",     best["accessorial_per_trip"]),
+        ("Custo fixo alocado / viagem",  best["fixed_per_shipment"]),
+        ("Margem transportadora",        best["trip_cost_with_margin"] - best["should_cost_per_trip"]),
+        ("Risco (overflow + damage)",    best["risk_cost_per_trip"]),
+    ]
+    wf_html_r = "".join(
+        f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+        f"<span style='font-size:.77rem;color:#94a3b8'>{lbl}</span>"
+        f"<span style='font-family:IBM Plex Mono,monospace;font-size:.77rem;color:#e2e8f0'>{reporting_currency} {val:,.2f}</span></div>"
+        for lbl, val in wf_items if abs(val) > 0.001
+    )
+    st.markdown(f"""<div class="v46-svc-result" style="padding:14px 18px;margin:10px 0">
+        <div style='font-size:.82rem;font-weight:600;color:#6ee7b7;margin-bottom:8px'>📐 Composição de custo — melhor rota</div>
+        {wf_html_r}
+        <div style='display:flex;justify-content:space-between;padding:7px 0 0 0;margin-top:4px;border-top:1px solid rgba(16,185,129,.3)'>
+            <span style='font-size:.84rem;font-weight:700;color:#f1f5f9'>Total / viagem (blended + risco)</span>
+            <span style='font-family:IBM Plex Mono,monospace;font-size:.96rem;font-weight:700;color:#34d399'>{reporting_currency} {best["blended_rate"] + best["risk_cost_per_trip"]:,.2f}</span>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Full ranking table ────────────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>Ranking completo de rotas</div>", unsafe_allow_html=True)
+    table_rows = []
+    for i, alt in enumerate(results[:15]):
+        table_rows.append({
+            "Rank":         i + 1,
+            "Rota":         alt["label"],
+            "Paradas":      alt["n_stops"],
+            "Dist. km":     f"{alt['distance_road_km']:,.0f}",
+            "Annual TCO":   fmt_money(alt["annual_tco"], reporting_currency, compact=True),
+            "Custo/viagem": fmt_money(alt["blended_rate"] + alt["risk_cost_per_trip"], reporting_currency),
+            "Custo/order":  fmt_money(alt["cost_per_order"], reporting_currency),
+            "Transit (d)":  f"{alt['transit_days']:.2f}",
+            "HoS breaks":   str(alt.get("rest_breaks_required", 0)),
+            "Load %":       f"{alt['load_factor']*100:.1f}%",
+            "Risk":         f"{alt['risk_score']:.1f}/5",
+            "Escolta":      "✅" if alt.get("escort_required") else "—",
+            "Ajudante":     "✅" if alt.get("has_helper") else "—",
+            "CO₂e (kg)":    f"{alt['co2e_per_trip_kg']:.1f}",
+            "Score":        f"{alt['composite_score']:.3f}",
         })
-    st.markdown("<div class='v46-plain-title'>Ranking de rotas (top 10)</div>", unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(rows_out), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
-    # ── Map visualization ─────────────────────────────────────────────────
-    if PLOTLY_AVAILABLE and results:
+    # ── Chart: top 5 routes cost breakdown ───────────────────────────────
+    if PLOTLY_AVAILABLE and len(results) > 1:
+        top5 = results[:min(5, len(results))]
+        labels_t5 = [f"#{i+1} {a['label'][:25]}" for i, a in enumerate(top5)]
+        cost_components = {
+            "Combustível":  [a["fuel_per_trip"] for a in top5],
+            "Pedágios":     [a["toll_per_trip"]  for a in top5],
+            "Escolta":      [a["escort_per_trip"] for a in top5],
+            "Seguro carga": [a["cargo_insurance_per_trip"] for a in top5],
+            "Custo fixo":   [a["fixed_per_shipment"] for a in top5],
+            "Risco":        [a["risk_cost_per_trip"] for a in top5],
+        }
+        colors_comp = ["#3b82f6","#f59e0b","#ef4444","#8b5cf6","#64748b","#f87171"]
+        fig_stack = go.Figure()
+        for (comp_name, vals), color in zip(cost_components.items(), colors_comp):
+            if any(v > 0.1 for v in vals):
+                fig_stack.add_trace(go.Bar(name=comp_name, x=labels_t5, y=vals, marker_color=color))
+        fig_stack.update_layout(
+            barmode="stack", title="Composição de custo por viagem — top 5 rotas",
+            yaxis_title=f"{reporting_currency} / viagem", height=340,
+        )
+        fig_c1, fig_c2 = st.columns(2)
+        with fig_c1:
+            st.markdown("<div class='v46-chart'>", unsafe_allow_html=True)
+            st.plotly_chart(apply_chart_theme(fig_stack, 340), use_container_width=True, config={"displayModeBar": False})
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # Scatter: cost vs risk
+        with fig_c2:
+            st.markdown("<div class='v46-chart'>", unsafe_allow_html=True)
+            labels_all = [f"#{i+1}" for i in range(len(results))]
+            costs_all  = [a["annual_tco"] for a in results]
+            risks_all  = [a["risk_score"] for a in results]
+            scores_all = [a["composite_score"] for a in results]
+            fig_sc = go.Figure(go.Scatter(
+                x=risks_all, y=costs_all,
+                mode="markers+text", text=labels_all, textposition="top center",
+                marker=dict(
+                    size=[16 if i == 0 else 10 for i in range(len(results))],
+                    color=scores_all, colorscale="RdYlGn_r", showscale=True,
+                    colorbar=dict(title="Score", thickness=12, len=0.8),
+                    line=dict(width=1, color="rgba(255,255,255,.2)"),
+                ),
+                hovertemplate="<b>%{text}</b><br>Risk: %{x:.1f}<br>TCO: %{y:,.0f}<extra></extra>",
+            ))
+            fig_sc.update_layout(
+                title="Custo × Risco — todas as rotas",
+                xaxis_title="Risk score (1–5)", yaxis_title=f"Annual TCO ({reporting_currency})",
+                height=340,
+            )
+            st.plotly_chart(apply_chart_theme(fig_sc, 340), use_container_width=True, config={"displayModeBar": False})
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Map ───────────────────────────────────────────────────────────────
+    if PLOTLY_AVAILABLE:
         st.markdown("<div class='v46-chart'><h4>Mapa de rotas — top 3 opções</h4>", unsafe_allow_html=True)
         fig_map = go.Figure()
-        colors = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"]
+        map_colors = ["#10b981", "#3b82f6", "#f59e0b"]
         for ri, alt in enumerate(results[:3]):
-            # Reconstruct points sequence
-            pts = [(float(origin_lat), float(origin_lon), origin_name)]
-            # We can't reconstruct waypoint order from label easily — show direct line for now
-            pts.append((float(dest_lat), float(dest_lon), dest_name))
-            lats = [p[0] for p in pts]
-            lons = [p[1] for p in pts]
+            # For the map, show origin → waypoints in the order evaluated → dest
+            # Reconstruct from waypoints field if possible (direct = just O→D)
+            map_lats = [float(origin_lat)]
+            map_lons = [float(origin_lon)]
+            # Can't perfectly reconstruct permutation order from results here, show direct line
+            map_lats.append(float(dest_lat))
+            map_lons.append(float(dest_lon))
             fig_map.add_trace(go.Scattergeo(
-                lat=lats, lon=lons, mode="lines+markers",
-                line=dict(width=3 if ri == 0 else 1.5, color=colors[ri]),
-                marker=dict(size=10, color=colors[ri]),
-                name=f"#{ri+1} {alt['label'][:30]}",
-                hovertemplate=f"{alt['label']}<br>TCO: {reporting_currency} {alt['annual_tco']:,.0f}<br>Score: {alt['composite_score']:.3f}<extra></extra>",
+                lat=map_lats, lon=map_lons, mode="lines+markers",
+                line=dict(width=4 if ri==0 else 2, color=map_colors[ri]),
+                marker=dict(size=12 if ri==0 else 8, color=map_colors[ri]),
+                name=f"#{ri+1} {alt['label'][:28]}",
+                hovertemplate=f"#{ri+1}<br>TCO: {reporting_currency} {alt['annual_tco']:,.0f}<br>Score: {alt['composite_score']:.3f}<extra></extra>",
             ))
-        fig_map.update_geos(visible=True, showcountries=True, showland=True, landcolor="#1e293b", countrycolor="#334155", coastlinecolor="#475569", bgcolor="rgba(15,23,42,0)", fitbounds="locations", projection_type="mercator")
-        fig_map.update_layout(title="Comparativo de rotas", height=420, margin=dict(l=8,r=8,t=44,b=8), paper_bgcolor="rgba(15,23,42,0)", legend=dict(font=dict(color="#94a3b8")))
+        # Add waypoint markers
+        for wp in waypoints:
+            fig_map.add_trace(go.Scattergeo(
+                lat=[wp["lat"]], lon=[wp["lon"]], mode="markers+text",
+                text=[wp["name"].split("-")[0].strip()[:12]],
+                textposition="top right",
+                marker=dict(size=10, color="#60a5fa", symbol="square"),
+                name=wp["name"].split("-")[0].strip(),
+                showlegend=False,
+            ))
+        fig_map.update_geos(
+            visible=True, showcountries=True, showland=True,
+            landcolor="#1e293b", countrycolor="#334155", coastlinecolor="#475569",
+            bgcolor="rgba(15,23,42,0)", fitbounds="locations", projection_type="mercator",
+        )
+        fig_map.update_layout(
+            title="Rotas avaliadas (destaque: melhor opção)", height=460,
+            margin=dict(l=8,r=8,t=44,b=8), paper_bgcolor="rgba(15,23,42,0)",
+            legend=dict(font=dict(color="#94a3b8"), bgcolor="rgba(0,0,0,0)"),
+        )
         st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Key insight ────────────────────────────────────────────────────────
+    # ── Executive insight ─────────────────────────────────────────────────
     if len(results) > 1:
         shortest = min(results, key=lambda x: x["distance_road_km"])
         cheapest = min(results, key=lambda x: x["annual_tco"])
         safest   = min(results, key=lambda x: x["risk_score"])
         greenest = min(results, key=lambda x: x["co2e_per_trip_kg"])
-        cost_delta = cheapest["annual_tco"] - best["annual_tco"]
-        dist_delta = shortest["distance_road_km"] - best["distance_road_km"]
-        st.markdown(f"""<div class="v46-insight">
-            <b>💡 Key insight:</b>
-            A rota mais curta ({shortest['label'].split(':')[-1].strip()}) tem <b>{shortest['distance_road_km']:,.0f} km</b>
-            {'(= melhor opção)' if shortest['label']==best['label'] else f'— mas custa <b>{reporting_currency} {abs(cheapest["annual_tco"] - shortest["annual_tco"]):,.0f}</b> {("a mais" if shortest["annual_tco"] > cheapest["annual_tco"] else "a menos")} que a mais barata, e tem score composto {[r for r in results if r["label"]==shortest["label"]][0]["composite_score"]:.3f} vs {best["composite_score"]:.3f} da rota recomendada'}.
-            A rota mais segura é <b>{safest['label'].split(":")[-1].strip()}</b> (risk {safest['risk_score']:.1f}/5).
-            A rota mais verde é <b>{greenest['label'].split(":")[-1].strip()}</b> ({greenest['co2e_per_trip_kg']:.1f} kg CO₂e/viagem).
-        </div>""", unsafe_allow_html=True)
+        fastest  = min(results, key=lambda x: x["transit_days"])
+
+        cost_diff_shortest_vs_best = shortest["annual_tco"] - best["annual_tco"]
+        is_best_also_shortest = shortest["label"] == best["label"]
+        is_best_also_cheapest = cheapest["label"] == best["label"]
+
+        insight_lines = []
+        if not is_best_also_shortest:
+            insight_lines.append(
+                f"A rota mais curta (<b>{shortest['label'][:30]}</b>, {shortest['distance_road_km']:,.0f}km) "
+                f"{'custa <b style=\"color:#f87171\">' + reporting_currency + f' {cost_diff_shortest_vs_best:,.0f} a mais</b>' if cost_diff_shortest_vs_best > 0 else 'custa menos'} "
+                f"que a rota recomendada — "
+                + ("escolta obrigatória e maior risco eliminam a vantagem de distância." if shortest.get("escort_required") and not best.get("escort_required") else "o modelo de custo completo favorece outra sequência.")
+            )
+        if not is_best_also_cheapest:
+            insight_lines.append(f"A rota de menor custo absoluto é <b>{cheapest['label'][:30]}</b> ({reporting_currency} {cheapest['annual_tco']:,.0f}/ano) mas score de risco é {cheapest['risk_score']:.1f}/5.")
+        if best.get("rest_breaks_required", 0) > 0:
+            insight_lines.append(f"⏸ A rota recomendada exige <b>{best['rest_breaks_required']} parada(s) de descanso</b> por HoS — considere relay driver ou ponto intermediário para otimizar tempo.")
+        if best.get("has_helper"):
+            insight_lines.append(f"👤 Ajudante necessário para este veículo/tipo de carga — custo anual de ajudante: <b>{reporting_currency} {best.get('helper_cost_annual',0):,.0f}</b>. Avaliar automação de carga/descarga.")
+        insight_lines.append(f"🌿 Rota mais verde: <b>{greenest['label'][:28]}</b> ({greenest['co2e_per_trip_kg']:.1f} kg CO₂e/viagem).")
+
+        st.markdown(
+            "<div class='v46-insight'><b>💡 Executive insight:</b><ul style='margin:8px 0 0 0;padding-left:18px'>"
+            + "".join(f"<li style='margin-bottom:6px;color:#94a3b8'>{line}</li>" for line in insight_lines)
+            + "</ul></div>",
+            unsafe_allow_html=True,
+        )
+
+
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4707,300 +5085,300 @@ with input_tabs[6]:
             st.plotly_chart(apply_chart_theme(fig_fr, 350), use_container_width=True, config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # ─────────────────────────────────────────────────────────────────────────────
+    # OPTIMIZATION (always-visible panel)
+    # ─────────────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OPTIMIZATION (always-visible panel)
-# ─────────────────────────────────────────────────────────────────────────────
+    render_section("Cost Optimization", "Run optimizer at any time — respects all constraints and updates share sliders automatically.", "#10b981")
+    opt_iss = constraint_issues(get_min_shares(), get_max_shares()); opt_blocked = bool(opt_iss)
+    for iss in opt_iss: st.error(f"Optimization blocked: {iss}")
+    ocm1, ocm2 = st.columns([.24, .76])
+    with ocm1:
+        run_opt = st.button("⚡ Run Optimization", type="primary", use_container_width=True, key="opt_main", disabled=opt_blocked)
+    with ocm2:
+        st.markdown('<div class="v46-insight"><b>Logic:</b> Minimizes economic all-in delta (spend + payment-term finance cost − treasury return + inventory carry + MOQ drag). In Services mode, proposal spend includes service TCO, productivity gains, SLA risk cost and leakage.</div>', unsafe_allow_html=True)
 
-render_section("Cost Optimization", "Run optimizer at any time — respects all constraints and updates share sliders automatically.", "#10b981")
-opt_iss = constraint_issues(get_min_shares(), get_max_shares()); opt_blocked = bool(opt_iss)
-for iss in opt_iss: st.error(f"Optimization blocked: {iss}")
-ocm1, ocm2 = st.columns([.24, .76])
-with ocm1:
-    run_opt = st.button("⚡ Run Optimization", type="primary", use_container_width=True, key="opt_main", disabled=opt_blocked)
-with ocm2:
-    st.markdown('<div class="v46-insight"><b>Logic:</b> Minimizes economic all-in delta (spend + payment-term finance cost − treasury return + inventory carry + MOQ drag). In Services mode, proposal spend includes service TCO, productivity gains, SLA risk cost and leakage.</div>', unsafe_allow_html=True)
+    if run_opt:
+        try:
+            os_, ord_, om_ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(opt_step))
+            st.session_state["pending_optimized_shares"] = os_
+            st.session_state["optimization_rationale_df"] = ord_
+            st.session_state["optimization_message"] = om_
+            st.rerun()
+        except Exception as exc: st.error(f"Optimization failed: {exc}")
+    if st.session_state.get("optimization_message"):
+        st.success(st.session_state.get("optimization_message"))
 
-if run_opt:
-    try:
-        os_, ord_, om_ = optimize_allocations(country_inputs, proposal_inputs, supplier_risk, rate_method, risk_threshold, int(opt_step))
-        st.session_state["pending_optimized_shares"] = os_
-        st.session_state["optimization_rationale_df"] = ord_
-        st.session_state["optimization_message"] = om_
-        st.rerun()
-    except Exception as exc: st.error(f"Optimization failed: {exc}")
-if st.session_state.get("optimization_message"):
-    st.success(st.session_state.get("optimization_message"))
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
 
-st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # DECISION STACKS
+    # ─────────────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DECISION STACKS
-# ─────────────────────────────────────────────────────────────────────────────
+    render_section("Decision Stacks", "Expand the stacks needed for the meeting. Everything is collapsed by default for a clean screen.", "#6366f1")
 
-render_section("Decision Stacks", "Expand the stacks needed for the meeting. Everything is collapsed by default for a clean screen.", "#6366f1")
+    @contextmanager
+    def stack(title, subtitle, icon, color, tag, expanded=False):
+        label = f"{icon}  {title}  ·  {tag}  —  {subtitle}"
+        with st.expander(label, expanded=expanded):
+            yield
 
-@contextmanager
-def stack(title, subtitle, icon, color, tag, expanded=False):
-    label = f"{icon}  {title}  ·  {tag}  —  {subtitle}"
-    with st.expander(label, expanded=expanded):
-        yield
+    # ── Top supplier focus ────────────────────────────────────────────────────────
+    if not supplier_focus_df.empty:
+        with stack("Top Supplier Focus", f"Top {focused_supplier_count} of {len(SUPPLIERS)} suppliers by executive lens.", "🎛️", "#3b82f6", "Supplier focus"):
+            fd = supplier_focus_df.head(focused_supplier_count).copy()
+            show_cols = ["Rank","Supplier","Executive Focus Metric","Economic Total","Risk Score"]
+            if analysis_mode=="Indirect / Services":
+                for ec in ["Performance Score","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap","Productivity ROI %","SLA Gap"]:
+                    if ec in fd.columns: show_cols.append(ec)
+            show_cols = [c for c in show_cols if c in fd.columns]
+            fd = fd[show_cols]
+            for mc in ["Executive Focus Metric","Economic Total","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap"]:
+                if mc in fd.columns: fd[mc] = fd[mc].map(lambda x: fmt_money(x, currency_symbol, compact=True, signed=(mc=="Should-Cost Gap")))
+            if "Risk Score" in fd.columns: fd["Risk Score"] = fd["Risk Score"].map(lambda x: f"{x:.2f}")
+            if "Performance Score" in fd.columns: fd["Performance Score"] = fd["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+            if "Productivity ROI %" in fd.columns: fd["Productivity ROI %"] = fd["Productivity ROI %"].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+            if "SLA Gap" in fd.columns: fd["SLA Gap"] = fd["SLA Gap"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
+            st.dataframe(fd, use_container_width=True, hide_index=True)
 
-# ── Top supplier focus ────────────────────────────────────────────────────────
-if not supplier_focus_df.empty:
-    with stack("Top Supplier Focus", f"Top {focused_supplier_count} of {len(SUPPLIERS)} suppliers by executive lens.", "🎛️", "#3b82f6", "Supplier focus"):
-        fd = supplier_focus_df.head(focused_supplier_count).copy()
-        show_cols = ["Rank","Supplier","Executive Focus Metric","Economic Total","Risk Score"]
-        if analysis_mode=="Indirect / Services":
-            for ec in ["Performance Score","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap","Productivity ROI %","SLA Gap"]:
-                if ec in fd.columns: show_cols.append(ec)
-        show_cols = [c for c in show_cols if c in fd.columns]
-        fd = fd[show_cols]
-        for mc in ["Executive Focus Metric","Economic Total","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap"]:
-            if mc in fd.columns: fd[mc] = fd[mc].map(lambda x: fmt_money(x, currency_symbol, compact=True, signed=(mc=="Should-Cost Gap")))
-        if "Risk Score" in fd.columns: fd["Risk Score"] = fd["Risk Score"].map(lambda x: f"{x:.2f}")
-        if "Performance Score" in fd.columns: fd["Performance Score"] = fd["Performance Score"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-        if "Productivity ROI %" in fd.columns: fd["Productivity ROI %"] = fd["Productivity ROI %"].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
-        if "SLA Gap" in fd.columns: fd["SLA Gap"] = fd["SLA Gap"].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
-        st.dataframe(fd, use_container_width=True, hide_index=True)
+    # ── Total project saving ────────────────────────────────────────────────────
+    with stack("Total Project Saving", "Gross saving, working capital gain and economic all-in.", "🏁", "#10b981" if final_econ<=0 else "#ef4444", "Final result", expanded=True):
+        c5 = st.columns(5)
+        with c5[0]: render_kpi("Gross Total Saving / Impact", fmt_money(gross_delta, currency_symbol, compact=True, signed=True), "New total spend − current total spend", delta_tone(gross_delta))
+        with c5[1]: render_kpi("Working Capital Gain", fmt_money(wc_delta, currency_symbol, compact=True, signed=True), "Current treasury return − new treasury return", delta_tone(wc_delta))
+        with c5[2]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "MOQ cash drag reduction", benefit_tone(moq_benefit))
+        with c5[3]: render_kpi("Total Saving + WC", fmt_money(total_saving_wc, currency_symbol, compact=True, signed=True), "Gross + treasury offset + MOQ release", delta_tone(total_saving_wc))
+        with c5[4]: render_kpi("Final Economic All-In", fmt_money(final_econ, currency_symbol, compact=True, signed=True), "Finance + treasury + inventory + MOQ drag", delta_tone(final_econ))
+        cc = st.columns(2)
+        with cc[0]: render_kpi(f"{PRIMARY_COUNTRY} contribution", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} economic delta", delta_tone(primary_row["Economic All-In Delta"]))
+        with cc[1]: render_kpi(f"{SECONDARY_GROUP} contribution", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{len(LATAM_COUNTRIES)} other markets", delta_tone(secondary_row["Economic All-In Delta"]))
 
-# ── Total project saving ────────────────────────────────────────────────────
-with stack("Total Project Saving", "Gross saving, working capital gain and economic all-in.", "🏁", "#10b981" if final_econ<=0 else "#ef4444", "Final result", expanded=True):
-    c5 = st.columns(5)
-    with c5[0]: render_kpi("Gross Total Saving / Impact", fmt_money(gross_delta, currency_symbol, compact=True, signed=True), "New total spend − current total spend", delta_tone(gross_delta))
-    with c5[1]: render_kpi("Working Capital Gain", fmt_money(wc_delta, currency_symbol, compact=True, signed=True), "Current treasury return − new treasury return", delta_tone(wc_delta))
-    with c5[2]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "MOQ cash drag reduction", benefit_tone(moq_benefit))
-    with c5[3]: render_kpi("Total Saving + WC", fmt_money(total_saving_wc, currency_symbol, compact=True, signed=True), "Gross + treasury offset + MOQ release", delta_tone(total_saving_wc))
-    with c5[4]: render_kpi("Final Economic All-In", fmt_money(final_econ, currency_symbol, compact=True, signed=True), "Finance + treasury + inventory + MOQ drag", delta_tone(final_econ))
-    cc = st.columns(2)
-    with cc[0]: render_kpi(f"{PRIMARY_COUNTRY} contribution", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY} economic delta", delta_tone(primary_row["Economic All-In Delta"]))
-    with cc[1]: render_kpi(f"{SECONDARY_GROUP} contribution", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{len(LATAM_COUNTRIES)} other markets", delta_tone(secondary_row["Economic All-In Delta"]))
+    # ── AI Copilot ────────────────────────────────────────────────────────────────
+    with stack("AI Executive Copilot", "Concise decision-oriented brief from the current scenario.", "🤖", "#6366f1", "AI brief"):
+        ai1, ai2 = st.columns([.30, .70])
+        with ai1:
+            if st.button("Generate Brief", type="primary", use_container_width=True, key="gen_brief"):
+                st.session_state["ai_payload"] = build_ai_payload(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
+                st.session_state["ai_brief"] = generate_local_brief(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
+            st.caption("Local deterministic brief. Connect Anthropic API key for live AI analysis.")
+        with ai2:
+            st.markdown('<div class="v46-insight"><b>How it works:</b> Reads the full scenario — suppliers, economics, risk, SLA, productivity — and produces an Amazon-caliber concise recommendation with negotiation levers and next actions.</div>', unsafe_allow_html=True)
+        if st.session_state.get("ai_brief"):
+            st.markdown(st.session_state["ai_brief"], unsafe_allow_html=True)
+            with st.expander("Copy prompt for external AI", expanded=False):
+                st.text_area("Prompt payload", value=st.session_state.get("ai_payload",""), height=200, key="ai_payload_ta")
 
-# ── AI Copilot ────────────────────────────────────────────────────────────────
-with stack("AI Executive Copilot", "Concise decision-oriented brief from the current scenario.", "🤖", "#6366f1", "AI brief"):
-    ai1, ai2 = st.columns([.30, .70])
-    with ai1:
-        if st.button("Generate Brief", type="primary", use_container_width=True, key="gen_brief"):
-            st.session_state["ai_payload"] = build_ai_payload(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
-            st.session_state["ai_brief"] = generate_local_brief(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
-        st.caption("Local deterministic brief. Connect Anthropic API key for live AI analysis.")
-    with ai2:
-        st.markdown('<div class="v46-insight"><b>How it works:</b> Reads the full scenario — suppliers, economics, risk, SLA, productivity — and produces an Amazon-caliber concise recommendation with negotiation levers and next actions.</div>', unsafe_allow_html=True)
-    if st.session_state.get("ai_brief"):
-        st.markdown(st.session_state["ai_brief"], unsafe_allow_html=True)
-        with st.expander("Copy prompt for external AI", expanded=False):
-            st.text_area("Prompt payload", value=st.session_state.get("ai_payload",""), height=200, key="ai_payload_ta")
+    # ── Cost Stack ───────────────────────────────────────────────────────────────
+    with stack("Total Cost Stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline"):
+        c6 = st.columns(6)
+        with c6[0]: render_kpi("Current Spend", fmt_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
+        with c6[1]: render_kpi("New Spend", fmt_money(total["New Spend"], currency_symbol, compact=True), "Proposals × shares", "neutral")
+        with c6[2]: render_kpi("Current Fin. Cost", fmt_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend × current term rate", "neutral")
+        with c6[3]: render_kpi("New Fin. Cost", fmt_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend × proposed term rates", "neutral")
+        with c6[4]: render_kpi("Current Total", fmt_money(total["Current Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
+        with c6[5]: render_kpi("New Total", fmt_money(total["New Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
 
-# ── Cost Stack ───────────────────────────────────────────────────────────────
-with stack("Total Cost Stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline"):
-    c6 = st.columns(6)
-    with c6[0]: render_kpi("Current Spend", fmt_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
-    with c6[1]: render_kpi("New Spend", fmt_money(total["New Spend"], currency_symbol, compact=True), "Proposals × shares", "neutral")
-    with c6[2]: render_kpi("Current Fin. Cost", fmt_money(total["Current Financial Cost"], currency_symbol, compact=True), "Current spend × current term rate", "neutral")
-    with c6[3]: render_kpi("New Fin. Cost", fmt_money(total["New Financial Cost"], currency_symbol, compact=True), "New spend × proposed term rates", "neutral")
-    with c6[4]: render_kpi("Current Total", fmt_money(total["Current Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
-    with c6[5]: render_kpi("New Total", fmt_money(total["New Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
+    # ── Working capital carry view ────────────────────────────────────────────────
+    with stack("Working Capital Carry", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing"):
+        wc6 = st.columns(6)
+        with wc6[0]: render_kpi("Current Treasury Return", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current terms", "good")
+        with wc6[1]: render_kpi("New Treasury Return", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed terms", "good")
+        with wc6[2]: render_kpi("Current Net Financial", fmt_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Financial cost − treasury return", delta_tone(total["Current Net Financial Effect"]))
+        with wc6[3]: render_kpi("New Net Financial", fmt_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost − treasury return", delta_tone(total["New Net Financial Effect"]))
+        with wc6[4]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New − current net financial effect", delta_tone(total["Net Financial Delta"]))
+        with wc6[5]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "Lower MOQ cash drag", benefit_tone(moq_benefit))
 
-# ── Working capital carry view ────────────────────────────────────────────────
-with stack("Working Capital Carry", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing"):
-    wc6 = st.columns(6)
-    with wc6[0]: render_kpi("Current Treasury Return", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current terms", "good")
-    with wc6[1]: render_kpi("New Treasury Return", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed terms", "good")
-    with wc6[2]: render_kpi("Current Net Financial", fmt_money(total["Current Net Financial Effect"], currency_symbol, compact=True, signed=True), "Financial cost − treasury return", delta_tone(total["Current Net Financial Effect"]))
-    with wc6[3]: render_kpi("New Net Financial", fmt_money(total["New Net Financial Effect"], currency_symbol, compact=True, signed=True), "New financial cost − treasury return", delta_tone(total["New Net Financial Effect"]))
-    with wc6[4]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "New − current net financial effect", delta_tone(total["Net Financial Delta"]))
-    with wc6[5]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "Lower MOQ cash drag", benefit_tone(moq_benefit))
+    # ── Total decomposition ───────────────────────────────────────────────────────
+    with stack("Total Decomposition", "Decision-ready breakdown of spend, finance, inventory and risk.", "🧩", "#8b5cf6", "Decision view"):
+        c7 = st.columns(7)
+        with c7[0]: render_kpi("Spend Delta", fmt_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New − current spend", delta_tone(total["Spend Delta"]))
+        with c7[1]: render_kpi("Gross Financial Delta", fmt_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New − current gross fin. cost", delta_tone(total["Financial Delta"]))
+        with c7[2]: render_kpi("Treasury Offset", fmt_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current − new treasury return", delta_tone(total["Treasury Return Offset Delta"]))
+        with c7[3]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross fin. + treasury offset", delta_tone(total["Net Financial Delta"]))
+        with c7[4]: render_kpi("MOQ WC Drag Delta", fmt_money(moq_drag_delta, currency_symbol, compact=True, signed=True), "New − current MOQ drag", delta_tone(moq_drag_delta))
+        with c7[5]: render_kpi("Economic All-In", fmt_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net fin. + inventory + MOQ", delta_tone(final_econ))
+        with c7[6]: render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]))
 
-# ── Total decomposition ───────────────────────────────────────────────────────
-with stack("Total Decomposition", "Decision-ready breakdown of spend, finance, inventory and risk.", "🧩", "#8b5cf6", "Decision view"):
-    c7 = st.columns(7)
-    with c7[0]: render_kpi("Spend Delta", fmt_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New − current spend", delta_tone(total["Spend Delta"]))
-    with c7[1]: render_kpi("Gross Financial Delta", fmt_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New − current gross fin. cost", delta_tone(total["Financial Delta"]))
-    with c7[2]: render_kpi("Treasury Offset", fmt_money(total["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), "Current − new treasury return", delta_tone(total["Treasury Return Offset Delta"]))
-    with c7[3]: render_kpi("Net Financial Delta", fmt_money(total["Net Financial Delta"], currency_symbol, compact=True, signed=True), "Gross fin. + treasury offset", delta_tone(total["Net Financial Delta"]))
-    with c7[4]: render_kpi("MOQ WC Drag Delta", fmt_money(moq_drag_delta, currency_symbol, compact=True, signed=True), "New − current MOQ drag", delta_tone(moq_drag_delta))
-    with c7[5]: render_kpi("Economic All-In", fmt_money(total["Economic All-In Delta"], currency_symbol, compact=True, signed=True), "Spend + net fin. + inventory + MOQ", delta_tone(final_econ))
-    with c7[6]: render_kpi("Weighted Risk", f"{total['Weighted Risk']:.2f}/5", "Lower is better", risk_tone(total["Weighted Risk"]))
+    # ── Anchor market ────────────────────────────────────────────────────────────
+    with stack(f"{PRIMARY_COUNTRY} Result", f"Detailed P&L for anchor market {PRIMARY_COUNTRY}.", "📍", "#06b6d4", "Anchor market"):
+        c7a = st.columns(7)
+        with c7a[0]: render_kpi("Current Avg Term", f"{primary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
+        with c7a[1]: render_kpi("New Avg Term", f"{primary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
+        with c7a[2]: render_kpi("Spend Delta", fmt_money(primary_row["Spend Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Spend Delta"]))
+        with c7a[3]: render_kpi("Gross Fin. Delta", fmt_money(primary_row["Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Financial Delta"]))
+        with c7a[4]: render_kpi("Treasury Offset", fmt_money(primary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Treasury Return Offset Delta"]))
+        with c7a[5]: render_kpi("Net Fin. Delta", fmt_money(primary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Net Financial Delta"]))
+        with c7a[6]: render_kpi("Economic All-In", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Economic All-In Delta"]))
 
-# ── Anchor market ────────────────────────────────────────────────────────────
-with stack(f"{PRIMARY_COUNTRY} Result", f"Detailed P&L for anchor market {PRIMARY_COUNTRY}.", "📍", "#06b6d4", "Anchor market"):
-    c7a = st.columns(7)
-    with c7a[0]: render_kpi("Current Avg Term", f"{primary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
-    with c7a[1]: render_kpi("New Avg Term", f"{primary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
-    with c7a[2]: render_kpi("Spend Delta", fmt_money(primary_row["Spend Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Spend Delta"]))
-    with c7a[3]: render_kpi("Gross Fin. Delta", fmt_money(primary_row["Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Financial Delta"]))
-    with c7a[4]: render_kpi("Treasury Offset", fmt_money(primary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Treasury Return Offset Delta"]))
-    with c7a[5]: render_kpi("Net Fin. Delta", fmt_money(primary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Net Financial Delta"]))
-    with c7a[6]: render_kpi("Economic All-In", fmt_money(primary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{PRIMARY_COUNTRY}", delta_tone(primary_row["Economic All-In Delta"]))
+    # ── Other markets ────────────────────────────────────────────────────────────
+    with stack(f"{SECONDARY_GROUP} Result", f"Consolidated view for {len(LATAM_COUNTRIES)} other selected markets.", "🌎", "#ec4899", "Regional view"):
+        c7b = st.columns(7)
+        with c7b[0]: render_kpi("Current Avg Term", f"{secondary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
+        with c7b[1]: render_kpi("New Avg Term", f"{secondary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
+        with c7b[2]: render_kpi("Spend Delta", fmt_money(secondary_row["Spend Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Spend Delta"]))
+        with c7b[3]: render_kpi("Gross Fin. Delta", fmt_money(secondary_row["Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Financial Delta"]))
+        with c7b[4]: render_kpi("Treasury Offset", fmt_money(secondary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Treasury Return Offset Delta"]))
+        with c7b[5]: render_kpi("Net Fin. Delta", fmt_money(secondary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Net Financial Delta"]))
+        with c7b[6]: render_kpi("Economic All-In", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Economic All-In Delta"]))
 
-# ── Other markets ────────────────────────────────────────────────────────────
-with stack(f"{SECONDARY_GROUP} Result", f"Consolidated view for {len(LATAM_COUNTRIES)} other selected markets.", "🌎", "#ec4899", "Regional view"):
-    c7b = st.columns(7)
-    with c7b[0]: render_kpi("Current Avg Term", f"{secondary_row['Current Avg Payment Days']:.0f} dd", "Baseline", "neutral")
-    with c7b[1]: render_kpi("New Avg Term", f"{secondary_row['New Avg Payment Days']:.0f} dd", "Share-weighted", "neutral")
-    with c7b[2]: render_kpi("Spend Delta", fmt_money(secondary_row["Spend Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Spend Delta"]))
-    with c7b[3]: render_kpi("Gross Fin. Delta", fmt_money(secondary_row["Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Financial Delta"]))
-    with c7b[4]: render_kpi("Treasury Offset", fmt_money(secondary_row["Treasury Return Offset Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Treasury Return Offset Delta"]))
-    with c7b[5]: render_kpi("Net Fin. Delta", fmt_money(secondary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Net Financial Delta"]))
-    with c7b[6]: render_kpi("Economic All-In", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Economic All-In Delta"]))
+    # ── Decision recommendation ────────────────────────────────────────────────
+    with stack("Decision Recommendation", "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
+        cls_ = "good" if final_econ <= 0 else "bad"
+        title_ = "Scenario is economically attractive — recommend approval" if final_econ <= 0 else "Scenario creates economic cost impact — renegotiate before approval"
+        st.markdown(
+            f"""<div class="v46-decision {cls_}">
+            <div class="v46-decision-title">{'✅' if final_econ<=0 else '⚠'} {title_}</div>
+            <div class="v46-decision-body">
+            Economic all-in delta: <b>{fmt_money(final_econ, currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
+            Commercial spend delta: <b>{fmt_money(total['Spend Delta'], currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
+            Weighted risk: <b>{total['Weighted Risk']:.2f}/5</b>.
+            {'Use Cost Optimization or adjust supplier mix, payment terms or proposal spend to improve the case.' if final_econ>0 else 'Proceed with final commercial negotiation using the top supplier focus list as the anchor for price, payment terms and productivity commitments.'}
+            </div></div>""",
+            unsafe_allow_html=True,
+        )
 
-# ── Decision recommendation ────────────────────────────────────────────────
-with stack("Decision Recommendation", "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
-    cls_ = "good" if final_econ <= 0 else "bad"
-    title_ = "Scenario is economically attractive — recommend approval" if final_econ <= 0 else "Scenario creates economic cost impact — renegotiate before approval"
-    st.markdown(
-        f"""<div class="v46-decision {cls_}">
-        <div class="v46-decision-title">{'✅' if final_econ<=0 else '⚠'} {title_}</div>
-        <div class="v46-decision-body">
-        Economic all-in delta: <b>{fmt_money(final_econ, currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
-        Commercial spend delta: <b>{fmt_money(total['Spend Delta'], currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
-        Weighted risk: <b>{total['Weighted Risk']:.2f}/5</b>.
-        {'Use Cost Optimization or adjust supplier mix, payment terms or proposal spend to improve the case.' if final_econ>0 else 'Proceed with final commercial negotiation using the top supplier focus list as the anchor for price, payment terms and productivity commitments.'}
-        </div></div>""",
-        unsafe_allow_html=True,
-    )
+    # ── Charts ────────────────────────────────────────────────────────────────────
+    with stack("Charts", "Cost stack, economic waterfall and decision map.", "📈", "#2563eb", "Visual analytics"):
+        cc1, cc2 = st.columns([1.2, 1.0], gap="large")
+        with cc1:
+            st.markdown("<div class='v46-chart'><h4>Total Cost Stack</h4>", unsafe_allow_html=True)
+            if PLOTLY_AVAILABLE:
+                labels_ = ["Current\nSpend","New\nSpend","Current\nFin. Cost","New\nFin. Cost","Current\nTotal","New\nTotal"]
+                values_ = [total["Current Spend"],total["New Spend"],total["Current Financial Cost"],total["New Financial Cost"],total["Current Total Spend"],total["New Total Spend"]]
+                colors_ = ["#475569","#3b82f6","#f97316","#fb923c","#0f766e","#1d4ed8"]
+                fig_cs = go.Figure(go.Bar(x=labels_, y=values_, marker_color=colors_, text=[fmt_money(v,currency_symbol,compact=True) for v in values_], textposition="outside", hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
+                fig_cs.update_layout(title="Total Cost Stack", yaxis_title=f"({currency_symbol})")
+                st.plotly_chart(apply_chart_theme(fig_cs), use_container_width=True, config={"displayModeBar":False})
+            st.markdown("</div>", unsafe_allow_html=True)
+        with cc2:
+            st.markdown("<div class='v46-chart'><h4>Economic Delta Waterfall</h4>", unsafe_allow_html=True)
+            if PLOTLY_AVAILABLE:
+                wf_names = ["Spend","Net financial","Inventory","MOQ WC","Economic all-in"]
+                wf_vals = [total["Spend Delta"],total["Net Financial Delta"],total["Inventory Delta"],moq_drag_delta,final_econ]
+                fig_wf = go.Figure(go.Waterfall(orientation="v", measure=["relative","relative","relative","relative","total"], x=wf_names, y=wf_vals, text=[fmt_money(v,currency_symbol,compact=True,signed=True) for v in wf_vals], textposition="outside", connector={"line":{"color":"rgba(148,163,184,.3)","width":2}}, increasing={"marker":{"color":"#ef4444"}}, decreasing={"marker":{"color":"#10b981"}}, totals={"marker":{"color":"#3b82f6"}}, hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
+                fig_wf.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)")
+                fig_wf.update_layout(title="Economic Delta Waterfall", yaxis_title=f"({currency_symbol})")
+                st.plotly_chart(apply_chart_theme(fig_wf), use_container_width=True, config={"displayModeBar":False})
+            st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Charts ────────────────────────────────────────────────────────────────────
-with stack("Charts", "Cost stack, economic waterfall and decision map.", "📈", "#2563eb", "Visual analytics"):
-    cc1, cc2 = st.columns([1.2, 1.0], gap="large")
-    with cc1:
-        st.markdown("<div class='v46-chart'><h4>Total Cost Stack</h4>", unsafe_allow_html=True)
-        if PLOTLY_AVAILABLE:
-            labels_ = ["Current\nSpend","New\nSpend","Current\nFin. Cost","New\nFin. Cost","Current\nTotal","New\nTotal"]
-            values_ = [total["Current Spend"],total["New Spend"],total["Current Financial Cost"],total["New Financial Cost"],total["Current Total Spend"],total["New Total Spend"]]
-            colors_ = ["#475569","#3b82f6","#f97316","#fb923c","#0f766e","#1d4ed8"]
-            fig_cs = go.Figure(go.Bar(x=labels_, y=values_, marker_color=colors_, text=[fmt_money(v,currency_symbol,compact=True) for v in values_], textposition="outside", hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
-            fig_cs.update_layout(title="Total Cost Stack", yaxis_title=f"({currency_symbol})")
-            st.plotly_chart(apply_chart_theme(fig_cs), use_container_width=True, config={"displayModeBar":False})
-        st.markdown("</div>", unsafe_allow_html=True)
-    with cc2:
-        st.markdown("<div class='v46-chart'><h4>Economic Delta Waterfall</h4>", unsafe_allow_html=True)
-        if PLOTLY_AVAILABLE:
-            wf_names = ["Spend","Net financial","Inventory","MOQ WC","Economic all-in"]
-            wf_vals = [total["Spend Delta"],total["Net Financial Delta"],total["Inventory Delta"],moq_drag_delta,final_econ]
-            fig_wf = go.Figure(go.Waterfall(orientation="v", measure=["relative","relative","relative","relative","total"], x=wf_names, y=wf_vals, text=[fmt_money(v,currency_symbol,compact=True,signed=True) for v in wf_vals], textposition="outside", connector={"line":{"color":"rgba(148,163,184,.3)","width":2}}, increasing={"marker":{"color":"#ef4444"}}, decreasing={"marker":{"color":"#10b981"}}, totals={"marker":{"color":"#3b82f6"}}, hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
-            fig_wf.add_hline(y=0, line_dash="dash", line_color="rgba(148,163,184,.3)")
-            fig_wf.update_layout(title="Economic Delta Waterfall", yaxis_title=f"({currency_symbol})")
-            st.plotly_chart(apply_chart_theme(fig_wf), use_container_width=True, config={"displayModeBar":False})
-        st.markdown("</div>", unsafe_allow_html=True)
+    # ── v47 New Modules ────────────────────────────────────────────────────────
 
-# ── v47 New Modules ────────────────────────────────────────────────────────
+    with stack("Sensitivity Analysis", "What-if: how price, volume, FX and rates shift the economic outcome.", "🎚", "#f59e0b", "What-if"):
+        render_sensitivity_panel(
+            base_econ_delta=final_econ,
+            base_spend=float(total.get("Current Spend", 0.0)),
+            country_inputs=country_inputs,
+            proposal_inputs=proposal_inputs,
+            all_shares=final_shares,
+            supplier_risk=supplier_risk,
+            method=rate_method,
+            currency=currency_symbol,
+        )
 
-with stack("Sensitivity Analysis", "What-if: how price, volume, FX and rates shift the economic outcome.", "🎚", "#f59e0b", "What-if"):
-    render_sensitivity_panel(
-        base_econ_delta=final_econ,
-        base_spend=float(total.get("Current Spend", 0.0)),
-        country_inputs=country_inputs,
-        proposal_inputs=proposal_inputs,
-        all_shares=final_shares,
-        supplier_risk=supplier_risk,
-        method=rate_method,
-        currency=currency_symbol,
-    )
+    with stack("Award Scenario Comparison", "Save and compare up to 3 sourcing scenarios side-by-side.", "🏆", "#06b6d4", "Scenarios"):
+        render_award_scenarios(total, supplier_focus_df, final_shares, currency_symbol)
 
-with stack("Award Scenario Comparison", "Save and compare up to 3 sourcing scenarios side-by-side.", "🏆", "#06b6d4", "Scenarios"):
-    render_award_scenarios(total, supplier_focus_df, final_shares, currency_symbol)
+    with stack("Kraljic Portfolio Matrix", "Position suppliers by spend impact × supply risk — defines sourcing strategy per quadrant.", "🔷", "#8b5cf6", "Portfolio"):
+        render_kraljic_matrix(supplier_focus_df, risk_inputs, risk_weights, total, currency_symbol)
 
-with stack("Kraljic Portfolio Matrix", "Position suppliers by spend impact × supply risk — defines sourcing strategy per quadrant.", "🔷", "#8b5cf6", "Portfolio"):
-    render_kraljic_matrix(supplier_focus_df, risk_inputs, risk_weights, total, currency_symbol)
+    with stack("BATNA / ZOPA Negotiation", "Walk-away price, ZOPA zone and lever quantification before entering negotiations.", "🤝", "#ec4899", "Negotiation"):
+        render_batna_zopa(total, country_inputs, proposal_inputs, supplier_focus_df, currency_symbol)
 
-with stack("BATNA / ZOPA Negotiation", "Walk-away price, ZOPA zone and lever quantification before entering negotiations.", "🤝", "#ec4899", "Negotiation"):
-    render_batna_zopa(total, country_inputs, proposal_inputs, supplier_focus_df, currency_symbol)
+    with stack("Concentration Risk & Stress Test", "HHI index, single-supplier dependency alerts and failure simulation.", "⚠", "#ef4444", "Risk"):
+        render_concentration_risk(
+            supplier_df, total, country_inputs, proposal_inputs,
+            supplier_risk, rate_method, currency_symbol,
+            threshold_pct=float(st.session_state.get("concentration_threshold", 60.0)),
+        )
 
-with stack("Concentration Risk & Stress Test", "HHI index, single-supplier dependency alerts and failure simulation.", "⚠", "#ef4444", "Risk"):
-    render_concentration_risk(
-        supplier_df, total, country_inputs, proposal_inputs,
-        supplier_risk, rate_method, currency_symbol,
-        threshold_pct=float(st.session_state.get("concentration_threshold", 60.0)),
-    )
+    # ── Working capital economic view ──────────────────────────────────────────
+    if show_adv_econ:
+        with stack("Working Capital Economic View", "Treasury return, capital gain and inventory separated.", "💼", "#0f766e", "Economic view"):
+            ec5 = st.columns(5)
+            with ec5[0]: render_kpi("Current Capital Gain", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Current payment terms", "good")
+            with ec5[1]: render_kpi("New Capital Gain", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), f"Avg {total.get('New Avg Return Days',0):.0f}dd", "good")
+            with ec5[2]: render_kpi("Inventory Delta", fmt_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New − current inventory carry", delta_tone(total["Inventory Delta"]))
+            with ec5[3]: render_kpi("Current Econ. Total", fmt_money(total["Current Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
+            with ec5[4]: render_kpi("New Econ. Total", fmt_money(total["New Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
+            st.markdown("<div class='v46-plain-title'>Optimization rationale</div>", unsafe_allow_html=True)
+            rat_df = st.session_state.get("optimization_rationale_df")
+            if isinstance(rat_df, pd.DataFrame) and not rat_df.empty:
+                rd_ = rat_df.copy()
+                for mc in ["Economic Delta","Gross All-In Delta","Spend Delta"]:
+                    if mc in rd_.columns: rd_[mc] = rd_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=True))
+                st.dataframe(rd_, use_container_width=True)
+            else:
+                st.info("Run Cost Optimization to generate the rationale table.")
 
-# ── Working capital economic view ──────────────────────────────────────────
-if show_adv_econ:
-    with stack("Working Capital Economic View", "Treasury return, capital gain and inventory separated.", "💼", "#0f766e", "Economic view"):
-        ec5 = st.columns(5)
-        with ec5[0]: render_kpi("Current Capital Gain", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Current payment terms", "good")
-        with ec5[1]: render_kpi("New Capital Gain", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), f"Avg {total.get('New Avg Return Days',0):.0f}dd", "good")
-        with ec5[2]: render_kpi("Inventory Delta", fmt_money(total["Inventory Delta"], currency_symbol, compact=True, signed=True), "New − current inventory carry", delta_tone(total["Inventory Delta"]))
-        with ec5[3]: render_kpi("Current Econ. Total", fmt_money(total["Current Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
-        with ec5[4]: render_kpi("New Econ. Total", fmt_money(total["New Economic Total"], currency_symbol, compact=True), "Gross − capital gain + inventory", "neutral")
-        st.markdown("<div class='v46-plain-title'>Optimization rationale</div>", unsafe_allow_html=True)
-        rat_df = st.session_state.get("optimization_rationale_df")
-        if isinstance(rat_df, pd.DataFrame) and not rat_df.empty:
-            rd_ = rat_df.copy()
-            for mc in ["Economic Delta","Gross All-In Delta","Spend Delta"]:
-                if mc in rd_.columns: rd_[mc] = rd_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=True))
-            st.dataframe(rd_, use_container_width=True)
-        else:
-            st.info("Run Cost Optimization to generate the rationale table.")
-
-# ── Detailed data ─────────────────────────────────────────────────────────────
-with stack("Detailed Data", "Full audit trail for Finance, Procurement and category strategy.", "🧾", "#64748b", "Audit trail"):
-    dt_names = ["Country summary","Region summary","Supplier allocation","Risk scores","Governance","Custom analysis"]
-    if analysis_mode != "Direct Materials": dt_names.append("Service scorecards")
-    dt_tabs = st.tabs(dt_names)
-    with dt_tabs[0]:
-        dc_ = country_df.copy()
-        for mc in [c for c in dc_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
-            dc_[mc] = dc_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
-        for mc in ["Weighted Risk","Current Effective Financial Rate","New Avg Financial Rate","Current Effective Treasury Rate","New Avg Treasury Rate"]:
-            if mc in dc_: dc_[mc] = dc_[mc].map(fmt_pct if "Rate" in mc else lambda x: f"{x:.2f}")
-        st.dataframe(dc_, use_container_width=True)
-    with dt_tabs[1]:
-        dg_ = group_df.copy()
-        for mc in [c for c in dg_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
-            dg_[mc] = dg_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
-        st.dataframe(dg_, use_container_width=True)
-    with dt_tabs[2]:
-        ds_ = supplier_df.copy()
-        if top_focus_ids: ds_["Executive Focus"] = ds_["Supplier ID"].isin(top_focus_ids).map({True:"Top focus",False:"Other"})
-        for mc in ["Allocated Spend","Supplier Financial Cost","Capital Gain Offset","Inventory Carrying Cost","Economic Total","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","Performance-Adjusted Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Custom Cost Adjustment","Total Contract Value"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
-        for mc in ["Share %"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.1f}%")
-        for mc in ["Risk Score"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.2f}")
-        for mc in ["Performance Score"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-        for mc in ["Productivity ROI %"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
-        for mc in ["SLA Gap"]:
-            if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
-        st.dataframe(ds_, use_container_width=True)
-    with dt_tabs[3]:
-        st.dataframe(pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS]), use_container_width=True)
-    with dt_tabs[4]:
-        if gov_rows: st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
-        else: st.info("No governance data.")
-    with dt_tabs[5]:
-        if cf_rows: st.dataframe(pd.DataFrame(cf_rows), use_container_width=True, hide_index=True)
-        else: st.info("No custom points added.")
-    if analysis_mode != "Direct Materials" and len(dt_tabs) > 6:
-        with dt_tabs[6]:
-            svc_cols = ["Country","Supplier","Service Scope","Pricing Model","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","SLA Attainment","SLA Gap","Performance Score","Performance Tier","Performance-Adjusted Cost","Headcount / FTEs","Price per Person / Month","Hourly Rate","Overtime Hours / Month","Overtime Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Open-Cost Coverage %","Unexplained Quote Value","Productivity ROI %","Payback Months","Total Contract Value","Scope Creep %","Rate Card Gap %","Share %","Allocated Spend"]
-            ac_ = [c for c in svc_cols if c in supplier_df.columns]
-            svdf_ = supplier_df[ac_].copy()
-            for mc in ["Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","Performance-Adjusted Cost","Allocated Spend","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Total Contract Value"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
-            for mc in ["Performance Score"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
-            for mc in ["Scope Creep %","Open-Cost Coverage %"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
-            for mc in ["Rate Card Gap %"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}%")
+    # ── Detailed data ─────────────────────────────────────────────────────────────
+    with stack("Detailed Data", "Full audit trail for Finance, Procurement and category strategy.", "🧾", "#64748b", "Audit trail"):
+        dt_names = ["Country summary","Region summary","Supplier allocation","Risk scores","Governance","Custom analysis"]
+        if analysis_mode != "Direct Materials": dt_names.append("Service scorecards")
+        dt_tabs = st.tabs(dt_names)
+        with dt_tabs[0]:
+            dc_ = country_df.copy()
+            for mc in [c for c in dc_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
+                dc_[mc] = dc_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
+            for mc in ["Weighted Risk","Current Effective Financial Rate","New Avg Financial Rate","Current Effective Treasury Rate","New Avg Treasury Rate"]:
+                if mc in dc_: dc_[mc] = dc_[mc].map(fmt_pct if "Rate" in mc else lambda x: f"{x:.2f}")
+            st.dataframe(dc_, use_container_width=True)
+        with dt_tabs[1]:
+            dg_ = group_df.copy()
+            for mc in [c for c in dg_.columns if any(k in c for k in ["Spend","Cost","Gain","Total","Delta"])]:
+                dg_[mc] = dg_[mc].map(lambda x: fmt_money(x, currency_symbol, signed=("Delta" in mc)))
+            st.dataframe(dg_, use_container_width=True)
+        with dt_tabs[2]:
+            ds_ = supplier_df.copy()
+            if top_focus_ids: ds_["Executive Focus"] = ds_["Supplier ID"].isin(top_focus_ids).map({True:"Top focus",False:"Other"})
+            for mc in ["Allocated Spend","Supplier Financial Cost","Capital Gain Offset","Inventory Carrying Cost","Economic Total","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","Performance-Adjusted Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Custom Cost Adjustment","Total Contract Value"]:
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
             for mc in ["Share %"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: f"{x:.1f}%")
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.1f}%")
+            for mc in ["Risk Score"]:
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: f"{x:.2f}")
+            for mc in ["Performance Score"]:
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
             for mc in ["Productivity ROI %"]:
-                if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
-            st.dataframe(svdf_, use_container_width=True)
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+            for mc in ["SLA Gap"]:
+                if mc in ds_.columns: ds_[mc] = ds_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}pp")
+            st.dataframe(ds_, use_container_width=True)
+        with dt_tabs[3]:
+            st.dataframe(pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS]), use_container_width=True)
+        with dt_tabs[4]:
+            if gov_rows: st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
+            else: st.info("No governance data.")
+        with dt_tabs[5]:
+            if cf_rows: st.dataframe(pd.DataFrame(cf_rows), use_container_width=True, hide_index=True)
+            else: st.info("No custom points added.")
+        if analysis_mode != "Direct Materials" and len(dt_tabs) > 6:
+            with dt_tabs[6]:
+                svc_cols = ["Country","Supplier","Service Scope","Pricing Model","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","SLA Attainment","SLA Gap","Performance Score","Performance Tier","Performance-Adjusted Cost","Headcount / FTEs","Price per Person / Month","Hourly Rate","Overtime Hours / Month","Overtime Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Open-Cost Coverage %","Unexplained Quote Value","Productivity ROI %","Payback Months","Total Contract Value","Scope Creep %","Rate Card Gap %","Share %","Allocated Spend"]
+                ac_ = [c for c in svc_cols if c in supplier_df.columns]
+                svdf_ = supplier_df[ac_].copy()
+                for mc in ["Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","Performance-Adjusted Cost","Allocated Spend","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Unexplained Quote Value","Total Contract Value"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else fmt_money(x, currency_symbol, signed=(mc=="Should-Cost Gap")))
+                for mc in ["Performance Score"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}/100")
+                for mc in ["Scope Creep %","Open-Cost Coverage %"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x*100:.1f}%")
+                for mc in ["Rate Card Gap %"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.1f}%")
+                for mc in ["Share %"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: f"{x:.1f}%")
+                for mc in ["Productivity ROI %"]:
+                    if mc in svdf_.columns: svdf_[mc] = svdf_[mc].map(lambda x: "" if pd.isna(x) else f"{x:.0f}%")
+                st.dataframe(svdf_, use_container_width=True)
 
-# ── Download ──────────────────────────────────────────────────────────────────
-with stack("Export", "Download country summary CSV.", "⬇️", "#64748b", "Export"):
-    st.download_button(
-        label="⬇️ Download country summary CSV",
-        data=country_df.to_csv(index=False).encode("utf-8"),
-        file_name="procurement_tco_v46_country_summary.csv",
-        mime="text/csv",
-    )
+    # ── Download ──────────────────────────────────────────────────────────────────
+    with stack("Export", "Download country summary CSV.", "⬇️", "#64748b", "Export"):
+        st.download_button(
+            label="⬇️ Download country summary CSV",
+            data=country_df.to_csv(index=False).encode("utf-8"),
+            file_name="procurement_tco_v46_country_summary.csv",
+            mime="text/csv",
+        )
+
 
 # ── Tab 8: Route Optimizer ───────────────────────────────────────────────────
 with input_tabs[7]:
