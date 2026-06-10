@@ -63,6 +63,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as _stc
 
 try:
     from scipy.optimize import linprog
@@ -4420,48 +4421,245 @@ def render_route_optimizer(reporting_currency: str):
             st.plotly_chart(apply_chart_theme(fig_sc, 340), use_container_width=True, config={"displayModeBar": False})
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Map ───────────────────────────────────────────────────────────────
-    if PLOTLY_AVAILABLE:
-        st.markdown("<div class='v46-chart'><h4>Mapa de rotas — top 3 opções</h4>", unsafe_allow_html=True)
-        fig_map = go.Figure()
-        map_colors = ["#10b981", "#3b82f6", "#f59e0b"]
-        for ri, alt in enumerate(results[:3]):
-            # For the map, show origin → waypoints in the order evaluated → dest
-            # Reconstruct from waypoints field if possible (direct = just O→D)
-            map_lats = [float(origin_lat)]
-            map_lons = [float(origin_lon)]
-            # Can't perfectly reconstruct permutation order from results here, show direct line
-            map_lats.append(float(dest_lat))
-            map_lons.append(float(dest_lon))
-            fig_map.add_trace(go.Scattergeo(
-                lat=map_lats, lon=map_lons, mode="lines+markers",
-                line=dict(width=4 if ri==0 else 2, color=map_colors[ri]),
-                marker=dict(size=12 if ri==0 else 8, color=map_colors[ri]),
-                name=f"#{ri+1} {alt['label'][:28]}",
-                hovertemplate=f"#{ri+1}<br>TCO: {reporting_currency} {alt['annual_tco']:,.0f}<br>Score: {alt['composite_score']:.3f}<extra></extra>",
-            ))
-        # Add waypoint markers
-        for wp in waypoints:
-            fig_map.add_trace(go.Scattergeo(
-                lat=[wp["lat"]], lon=[wp["lon"]], mode="markers+text",
-                text=[wp["name"].split("-")[0].strip()[:12]],
-                textposition="top right",
-                marker=dict(size=10, color="#60a5fa", symbol="square"),
-                name=wp["name"].split("-")[0].strip(),
-                showlegend=False,
-            ))
-        fig_map.update_geos(
-            visible=True, showcountries=True, showland=True,
-            landcolor="#1e293b", countrycolor="#334155", coastlinecolor="#475569",
-            bgcolor="rgba(15,23,42,0)", fitbounds="locations", projection_type="mercator",
-        )
-        fig_map.update_layout(
-            title="Rotas avaliadas (destaque: melhor opção)", height=460,
-            margin=dict(l=8,r=8,t=44,b=8), paper_bgcolor="rgba(15,23,42,0)",
-            legend=dict(font=dict(color="#94a3b8"), bgcolor="rgba(0,0,0,0)"),
-        )
-        st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+    # ── Mapa dinâmico — Leaflet + OSRM (rota real nas rodovias) ────────────
+    st.markdown("<div class='v46-chart' style='padding:0;overflow:hidden'>", unsafe_allow_html=True)
+
+    # Build the full ordered point sequence for the best route
+    best_route_points = (
+        [{"lat": float(origin_lat), "lon": float(origin_lon), "name": origin_name, "type": "origin"}]
+        + [{"lat": float(w["lat"]), "lon": float(w["lon"]), "name": w["name"], "type": "waypoint"} for w in (waypoints if waypoints else [])]
+        + [{"lat": float(dest_lat), "lon": float(dest_lon), "name": dest_name, "type": "destination"}]
+    )
+    # All route points for top-3 alternatives (we pass direct O→D for each)
+    top3_routes = []
+    for ri, alt in enumerate(results[:3]):
+        if ri == 0:
+            # Best route: use full waypoint sequence
+            pts = best_route_points
+        else:
+            # Other routes: direct O→D (we don't have their waypoint permutation)
+            pts = [
+                {"lat": float(origin_lat), "lon": float(origin_lon), "name": origin_name, "type": "origin"},
+                {"lat": float(dest_lat), "lon": float(dest_lon), "name": dest_name, "type": "destination"},
+            ]
+        top3_routes.append({
+            "label": alt["label"],
+            "score": alt["composite_score"],
+            "tco": alt["annual_tco"],
+            "risk": alt["risk_score"],
+            "points": pts,
+        })
+
+    import json as _json
+    routes_json = _json.dumps(top3_routes)
+    currency_js = reporting_currency.replace("'", "\'")
+
+    map_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  body{{margin:0;padding:0;background:#0a1628;font-family:-apple-system,sans-serif}}
+  #map{{width:100%;height:520px;border-radius:0 0 18px 18px}}
+  #legend{{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:999;
+    background:rgba(10,22,40,.92);border:1px solid rgba(148,163,184,.2);
+    border-radius:12px;padding:10px 16px;display:flex;gap:16px;align-items:center;
+    backdrop-filter:blur(8px);white-space:nowrap}}
+  .leg-item{{display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8}}
+  .leg-dot{{width:12px;height:4px;border-radius:2px}}
+  #status{{position:absolute;bottom:12px;left:12px;z-index:999;
+    background:rgba(10,22,40,.9);border:1px solid rgba(16,185,129,.3);
+    border-radius:8px;padding:6px 12px;font-size:11px;color:#6ee7b7;
+    font-family:monospace}}
+  #info-panel{{position:absolute;top:12px;right:12px;z-index:999;
+    background:rgba(10,22,40,.92);border:1px solid rgba(148,163,184,.2);
+    border-radius:12px;padding:12px 14px;min-width:200px;
+    backdrop-filter:blur(8px)}}
+  .info-row{{display:flex;justify-content:space-between;gap:16px;
+    font-size:11px;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.08)}}
+  .info-row:last-child{{border:none}}
+  .info-label{{color:#64748b}}
+  .info-val{{color:#e2e8f0;font-family:monospace;font-weight:600}}
+  .info-title{{font-size:12px;font-weight:600;color:#f1f5f9;margin-bottom:8px}}
+  .loading{{display:flex;align-items:center;gap:8px;color:#60a5fa;font-size:12px}}
+  .spinner{{width:14px;height:14px;border:2px solid rgba(99,102,241,.3);
+    border-top-color:#6366f1;border-radius:50%;animation:spin .6s linear infinite}}
+  @keyframes spin{{to{{transform:rotate(360deg)}}}}
+</style>
+</head>
+<body>
+<div id="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:#10b981;width:20px;height:4px"></div>#1 Best route (OSRM)</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#3b82f6;width:14px;height:2px"></div>#2 Alternative</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#f59e0b;width:14px;height:2px"></div>#3 Alternative</div>
+</div>
+<div id="map"></div>
+<div id="status">Carregando rota via OSRM...</div>
+<div id="info-panel">
+  <div class="info-title">🏆 Melhor rota</div>
+  <div id="info-content"><div class="loading"><div class="spinner"></div>Calculando...</div></div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const ROUTES = {routes_json};
+const CURRENCY = '{currency_js}';
+const COLORS = ['#10b981','#3b82f6','#f59e0b'];
+const WEIGHTS = [5, 2.5, 2];
+
+const map = L.map('map', {{
+  center: [-15, -52],
+  zoom: 4,
+  zoomControl: true,
+  attributionControl: false,
+}});
+
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+  maxZoom: 18,
+  subdomains: 'abcd',
+}}).addTo(map);
+
+L.control.attribution({{prefix: '© OpenStreetMap · CartoDB · OSRM'}}).addTo(map);
+
+const markerIcon = (color, label) => L.divIcon({{
+  html: `<div style="background:${{color}};width:12px;height:12px;border-radius:50%;
+    border:2px solid white;box-shadow:0 0 6px ${{color}}88;
+    display:flex;align-items:center;justify-content:center;font-size:7px;color:white;font-weight:700">${{label}}</div>`,
+  iconSize:[12,12], iconAnchor:[6,6], className:''
+}});
+
+const waypointIcon = L.divIcon({{
+  html: `<div style="background:#60a5fa;width:10px;height:10px;border-radius:3px;
+    border:2px solid white;box-shadow:0 0 4px #60a5fa88"></div>`,
+  iconSize:[10,10], iconAnchor:[5,5], className:''
+}});
+
+async function fetchOSRMRoute(points) {{
+  const coords = points.map(p => `${{p.lon}},${{p.lat}}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${{coords}}?overview=full&geometries=geojson&steps=false`;
+  try {{
+    const resp = await fetch(url, {{signal: AbortSignal.timeout(8000)}});
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data.code !== 'Ok' || !data.routes?.length) return null;
+    return {{
+      coords: data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]),
+      distance: (data.routes[0].distance / 1000).toFixed(1),
+      duration: (data.routes[0].duration / 3600).toFixed(1),
+    }};
+  }} catch(e) {{
+    return null;
+  }}
+}}
+
+function fallbackLine(points, color, weight, opacity) {{
+  const latlngs = points.map(p => [p.lat, p.lon]);
+  return L.polyline(latlngs, {{color, weight, opacity, dashArray: '6 4'}});
+}}
+
+function updateInfoPanel(route, osrmData) {{
+  const tco = (route.tco / 1e6).toFixed(2);
+  const dist = osrmData ? osrmData.distance : 'N/A';
+  const dur  = osrmData ? osrmData.duration : 'N/A';
+  document.getElementById('info-content').innerHTML = `
+    <div class="info-row"><span class="info-label">Rota</span><span class="info-val" style="font-size:10px;max-width:130px;text-align:right">${{route.label.slice(0,30)}}</span></div>
+    <div class="info-row"><span class="info-label">Annual TCO</span><span class="info-val">${{CURRENCY}} ${{tco}}M</span></div>
+    <div class="info-row"><span class="info-label">Score</span><span class="info-val">${{route.score.toFixed(3)}}</span></div>
+    <div class="info-row"><span class="info-label">Risk</span><span class="info-val">${{route.risk.toFixed(1)}}/5</span></div>
+    ${{osrmData ? `
+    <div class="info-row"><span class="info-label">Dist. real (OSRM)</span><span class="info-val">${{dist}} km</span></div>
+    <div class="info-row"><span class="info-label">Drive time</span><span class="info-val">${{dur}} h</span></div>
+    ` : '<div class="info-row"><span class="info-label">Rota</span><span class="info-val" style="color:#fbbf24">linha reta (offline)</span></div>'}}
+  `;
+}}
+
+const allBounds = [];
+const layerGroups = [];
+
+async function drawAllRoutes() {{
+  const statusEl = document.getElementById('status');
+  
+  for (let ri = 0; ri < ROUTES.length; ri++) {{
+    const route = ROUTES[ri];
+    const color = COLORS[ri];
+    const weight = WEIGHTS[ri];
+    const pts = route.points;
+    
+    if (ri === 0) {{
+      statusEl.textContent = `Buscando rota real via OSRM (#${{ri+1}})...`;
+    }}
+    
+    const group = L.layerGroup().addTo(map);
+    layerGroups.push(group);
+    
+    const osrmData = ri <= 1 ? await fetchOSRMRoute(pts) : null;
+    
+    if (osrmData) {{
+      const polyline = L.polyline(osrmData.coords, {{
+        color,
+        weight,
+        opacity: ri === 0 ? 0.95 : 0.55,
+        smoothFactor: 1,
+      }}).addTo(group);
+      
+      if (ri === 0) {{
+        polyline.bindTooltip(
+          `<b>#1 Melhor rota</b><br>${{CURRENCY}} ${{(route.tco/1e6).toFixed(2)}}M/ano<br>Dist. OSRM: ${{osrmData.distance}} km<br>Tempo: ${{osrmData.duration}} h<br>Score: ${{route.score.toFixed(3)}}`,
+          {{sticky: true, className: 'route-tooltip'}}
+        );
+        updateInfoPanel(route, osrmData);
+        osrmData.coords.forEach(c => allBounds.push(c));
+      }}
+    }} else {{
+      fallbackLine(pts, color, weight, ri === 0 ? 0.85 : 0.45).addTo(group);
+      if (ri === 0) {{
+        updateInfoPanel(route, null);
+        pts.forEach(p => allBounds.push([p.lat, p.lon]));
+      }}
+    }}
+    
+    // Markers for origin / waypoints / destination
+    pts.forEach((pt, pi) => {{
+      let icon, title;
+      if (pt.type === 'origin') {{
+        icon = markerIcon('#10b981', 'O');
+        title = `🟢 Origem: ${{pt.name.split(' - ')[0]}}`;
+      }} else if (pt.type === 'destination') {{
+        icon = markerIcon('#ef4444', 'D');
+        title = `🔴 Destino: ${{pt.name.split(' - ')[0]}}`;
+      }} else {{
+        icon = waypointIcon;
+        title = `🔵 Waypoint: ${{pt.name.split(' - ')[0]}}`;
+      }}
+      if (ri === 0 || pt.type !== 'waypoint') {{
+        L.marker([pt.lat, pt.lon], {{icon}})
+          .bindPopup(`<b>${{title}}</b><br>Lat: ${{pt.lat.toFixed(4)}} · Lon: ${{pt.lon.toFixed(4)}}`)
+          .addTo(ri === 0 ? group : group);
+      }}
+    }});
+    
+    if (ri === 0) statusEl.textContent = `✓ Rota #1 traçada via OSRM (rodovias reais)`;
+  }}
+  
+  if (allBounds.length > 1) {{
+    try {{ map.fitBounds(allBounds, {{padding: [40, 40]}}); }} catch(e) {{}}
+  }}
+  
+  statusEl.textContent = `✓ ${{ROUTES.length}} rotas calculadas — melhor: ${{ROUTES[0].label.slice(0,25)}}`;
+}}
+
+drawAllRoutes().catch(e => {{
+  document.getElementById('status').textContent = '⚠ OSRM timeout — usando linhas diretas';
+}});
+</script>
+</body>
+</html>"""
+
+    _stc.html(map_html, height=540, scrolling=False)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.caption("Mapa: OpenStreetMap + CartoDB · Roteamento: OSRM (router.project-osrm.org) · Rota #1 traçada nas rodovias reais. Se OSRM timeout (>8s), exibe linha direta como fallback.")
 
     # ── Executive insight ─────────────────────────────────────────────────
     if len(results) > 1:
