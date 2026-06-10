@@ -5498,6 +5498,370 @@ drawAllRoutes().catch(e => {{
 
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHOULD-COST ENGINE — Hybrid: reference price + market trend drivers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Preset market driver templates per mode/scope
+SHOULD_COST_DRIVER_PRESETS: Dict[str, List[Dict]] = {
+    "Direct Materials — Chemicals / Oils": [
+        {"name": "Base commodity price",     "weight": 55.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy / utilities",       "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor / manufacturing",    "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / logistics",      "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "FX / currency",            "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",          "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Direct Materials — Metals": [
+        {"name": "Metal index (LME/Platts)",  "weight": 65.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy / smelting",         "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor",                     "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / logistics",       "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "FX / currency",             "weight": 7.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Direct Materials — Packaging / Polymers": [
+        {"name": "Naphtha / polymer index",   "weight": 58.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy",                    "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor",                     "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight",                   "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",           "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "IT — Software & SaaS": [
+        {"name": "USD/BRL FX",               "weight": 70.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Vendor price increase (CPI/list)", "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Seat volume change",        "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "IT — Hardware / CAPEX": [
+        {"name": "Component cost index (DRAM/NAND/CPU)", "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "USD/BRL FX",               "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / import logistics","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Import duties / ICMS",      "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",           "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Outsourcing / Mão de Obra": [
+        {"name": "Salário mínimo / CCT dissídio", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Encargos / FGTS / INSS",    "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Vale-refeição / alimentação","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Mercado de trabalho / desemprego", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Overhead + margem prestadora","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Facilities / Limpeza & Manutenção": [
+        {"name": "Salário mínimo / CCT",      "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Materiais / produtos químicos","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energia elétrica (tarifa)", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Equipamentos / depreciação","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Margem do fornecedor",      "weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Logistics / Freight": [
+        {"name": "Diesel / combustível (ANP)", "weight": 35.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Salário motorista / CCT",   "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Pedágios",                  "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Manutenção / pneus",        "weight": 13.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Seguro de carga",           "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Margem transportadora",     "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Marketing / Agências": [
+        {"name": "Salário equipe criativa / CCT", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Mídia digital (CPM/CPC index)", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Produção audiovisual / técnica","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Overhead + margem da agência","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Custom (manual)": [
+        {"name": "Driver 1", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 2", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 3", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 4", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+}
+
+# Map analysis modes / scopes → preset
+SHOULD_COST_PRESET_MAP = {
+    "Direct Materials": "Direct Materials — Chemicals / Oils",
+    "IT — Software & SaaS licensing": "IT — Software & SaaS",
+    "IT — Hardware & Infrastructure (incl. CAPEX servers)": "IT — Hardware / CAPEX",
+    "Serviços de Outsourcing de Mão de Obra": "Outsourcing / Mão de Obra",
+    "Mão de Obra Temporária (CLT flex / PJ / agência)": "Outsourcing / Mão de Obra",
+    "Facilities / Limpeza, Manutenção & Workplace": "Facilities / Limpeza & Manutenção",
+    "Logistics / Transport Services": "Logistics / Freight",
+    "Marketing / Agências & Serviços Criativos": "Marketing / Agências",
+}
+
+
+def calc_should_cost_hybrid(
+    reference_price: float,
+    drivers: List[Dict],   # [{name, weight_pct, change_pct}]
+    supplier_margin_override: float | None = None,
+) -> Dict[str, float]:
+    """
+    Hybrid should-cost model:
+        should_cost = reference_price × Π(1 + driver_weight_i/100 × change_i/100)
+        for all i drivers.
+
+    Also returns a 'target negotiation price' = should_cost × (1 - negotiation_buffer).
+    """
+    if reference_price <= 0:
+        return {"should_cost": 0.0, "total_adjustment_pct": 0.0,
+                "driver_contributions": {}, "negotiation_target": 0.0,
+                "gap_vs_should_cost": 0.0, "gap_pct": 0.0}
+
+    total_adjustment_pct = 0.0
+    driver_contributions = {}
+    for d in drivers:
+        w   = float(d.get("weight", 0.0)) / 100.0
+        chg = float(d.get("change", 0.0)) / 100.0
+        contrib = w * chg * 100.0          # % contribution to total price change
+        total_adjustment_pct += contrib
+        driver_contributions[d.get("name", "?")] = contrib
+
+    should_cost = reference_price * (1.0 + total_adjustment_pct / 100.0)
+
+    # Negotiation target: should_cost minus a buffer that represents
+    # best-case achievable (default 5% stretch goal on top of should-cost)
+    negotiation_target = should_cost * 0.95
+
+    return {
+        "should_cost": should_cost,
+        "total_adjustment_pct": total_adjustment_pct,
+        "driver_contributions": driver_contributions,
+        "negotiation_target": negotiation_target,
+        "gap_vs_should_cost": 0.0,   # filled later when proposal price is known
+        "gap_pct": 0.0,
+    }
+
+
+def render_should_cost_panel(
+    *,
+    key_prefix: str,
+    analysis_mode: str,
+    scope: str,
+    reference_price: float,
+    proposal_price: float,
+    currency: str,
+    price_label: str = "unit price",
+) -> Dict:
+    """
+    Should-Cost Engine panel — rendered inside the proposal supplier builder.
+    Returns the calculated should_cost and all metadata for use in frontier + decision stack.
+    """
+    cfg = SERVICE_SCOPE_CONFIG.get(scope, {})
+    icon = cfg.get("icon", "🔬") if cfg else "🔬"
+    color = cfg.get("color", "#3b82f6") if cfg else "#3b82f6"
+
+    # Pick best-fit preset
+    preset_key = SHOULD_COST_PRESET_MAP.get(scope) or SHOULD_COST_PRESET_MAP.get(analysis_mode, "Custom (manual)")
+    preset_drivers = SHOULD_COST_DRIVER_PRESETS.get(preset_key, SHOULD_COST_DRIVER_PRESETS["Custom (manual)"])
+
+    with st.expander(f"🔬 Should-Cost Engine — tendências de mercado ({scope or analysis_mode})", expanded=False):
+        st.caption(
+            "Informe o preço de referência do período anterior e as variações de mercado de cada driver. "
+            "A ferramenta calcula o preço justo hoje e o posiciona no frontier junto com Optimized e Lower Risk."
+        )
+
+        # ── Reference price ───────────────────────────────────────────────
+        rc = st.columns([1.2, 0.9, 0.9])
+        with rc[0]:
+            ref_price = st.number_input(
+                f"Preço / custo de referência ({currency})",
+                min_value=0.0,
+                value=float(reference_price) if reference_price > 0 else float(proposal_price) * 0.95,
+                step=max(float(reference_price) * 0.01, 1.0),
+                format="%.4f",
+                key=f"{key_prefix}__sc_ref_price",
+                help="Último contrato, benchmark externo ou cotação anterior. Base para calcular o preço justo ajustado pelos drivers de mercado.",
+            )
+        with rc[1]:
+            ref_period = st.text_input(
+                "Período de referência",
+                value="12 meses atrás",
+                key=f"{key_prefix}__sc_ref_period",
+                help="Quando era válido o preço de referência? (ex: 'Jan/2024', '12 meses atrás', 'último contrato 2023')",
+            )
+        with rc[2]:
+            neg_buffer_pct = st.number_input(
+                "Stretch goal de negociação %",
+                min_value=0.0, max_value=20.0, value=5.0, step=0.5,
+                key=f"{key_prefix}__sc_neg_buffer",
+                help="% abaixo do should-cost para definir o target de negociação (posição de abertura agressiva).",
+            )
+
+        # ── Preset selector ───────────────────────────────────────────────
+        dc = st.columns([1.5, 0.5])
+        with dc[0]:
+            chosen_preset = st.selectbox(
+                "Template de drivers de mercado",
+                options=list(SHOULD_COST_DRIVER_PRESETS.keys()),
+                index=list(SHOULD_COST_DRIVER_PRESETS.keys()).index(preset_key)
+                      if preset_key in SHOULD_COST_DRIVER_PRESETS else 0,
+                key=f"{key_prefix}__sc_preset",
+                help="Escolha o template mais adequado ao seu escopo. Você pode ajustar os pesos e variações abaixo.",
+            )
+        with dc[1]:
+            n_drivers = st.number_input(
+                "Nº de drivers (max 8)",
+                min_value=1, max_value=8,
+                value=min(len(SHOULD_COST_DRIVER_PRESETS[chosen_preset]), 6),
+                step=1, key=f"{key_prefix}__sc_n_drivers",
+            )
+
+        drivers_preset = SHOULD_COST_DRIVER_PRESETS[chosen_preset][:int(n_drivers)]
+
+        # ── Driver table ──────────────────────────────────────────────────
+        st.markdown(
+            "<div style='display:grid;grid-template-columns:2fr 1fr 1.2fr;gap:6px;"
+            "padding:6px 8px;background:rgba(15,23,42,.4);border-radius:8px;"
+            "font-size:.70rem;font-weight:600;color:#64748b;text-transform:uppercase;"
+            "letter-spacing:.06em;margin-bottom:4px'>"
+            "<span>Driver de custo</span><span>Peso % no custo total</span>"
+            "<span>Variação de mercado (%)</span></div>",
+            unsafe_allow_html=True,
+        )
+        drivers = []
+        total_weight = 0.0
+        for idx, d in enumerate(drivers_preset):
+            dc2 = st.columns([2, 1, 1.2])
+            with dc2[0]:
+                dname = st.text_input(
+                    "Driver", value=d["name"], label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dname_{idx}",
+                )
+            with dc2[1]:
+                dweight = st.number_input(
+                    "Peso %", min_value=0.0, max_value=100.0,
+                    value=float(d["weight"]), step=1.0, format="%.1f",
+                    label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dweight_{idx}",
+                )
+            with dc2[2]:
+                dchange = st.number_input(
+                    "Variação %", min_value=-50.0, max_value=100.0,
+                    value=float(d.get("change", 0.0)), step=0.5, format="%.2f",
+                    label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dchange_{idx}",
+                    help=f"Ex: +8 = commodity subiu 8% desde o período de referência. Negativo = caiu.",
+                )
+            drivers.append({"name": dname, "weight": dweight, "change": dchange})
+            total_weight += dweight
+
+        # Weight validation
+        wc_ = "#34d399" if abs(total_weight - 100.0) < 0.5 else "#f87171"
+        st.markdown(
+            f"<div style='font-size:.75rem;margin-top:2px;margin-bottom:8px'>"
+            f"<span style='color:{wc_}'>Pesos somam: <b>{total_weight:.1f}%</b> "
+            f"{'✓' if abs(total_weight-100)<0.5 else '— ajuste para 100% para resultado preciso'}</span></div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Calculation ───────────────────────────────────────────────────
+        sc_result = calc_should_cost_hybrid(float(ref_price), drivers)
+        should_cost   = sc_result["should_cost"]
+        total_adj_pct = sc_result["total_adjustment_pct"]
+        neg_target    = should_cost * (1.0 - float(neg_buffer_pct) / 100.0)
+
+        gap_vs_should     = float(proposal_price) - should_cost
+        gap_pct           = safe_divide(gap_vs_should, should_cost) * 100.0
+        gap_vs_target     = float(proposal_price) - neg_target
+        gap_target_pct    = safe_divide(gap_vs_target, neg_target) * 100.0
+
+        # Gap colors
+        gap_color   = "#34d399" if gap_vs_should < 0 else "#f87171" if gap_vs_should > 0 else "#60a5fa"
+        tgt_color   = "#34d399" if gap_vs_target < 0 else "#fbbf24" if abs(gap_target_pct) < 5 else "#f87171"
+        adj_color   = "#f87171" if total_adj_pct > 0 else "#34d399" if total_adj_pct < 0 else "#64748b"
+
+        # ── Driver contribution visual ────────────────────────────────────
+        contribs = sc_result["driver_contributions"]
+        def _sc_color(v): return "#f87171" if v > 0 else "#34d399" if v < 0 else "#64748b"
+        _max_abs_contrib = max((abs(c) for c in contribs.values() if c != 0), default=1.0)
+        contrib_html = "".join(
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"padding:4px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+            f"<span style='font-size:.76rem;color:#94a3b8'>{name[:38]}</span>"
+            f"<div style='display:flex;align-items:center;gap:8px'>"
+            f"<div style='width:60px;height:5px;border-radius:3px;background:rgba(148,163,184,.1);overflow:hidden'>"
+            f"<div style='height:100%;width:{min(abs(contrib) / _max_abs_contrib * 100, 100):.0f}%;"
+            f"background:{_sc_color(contrib)};border-radius:3px'></div></div>"
+            f"<span style='font-family:IBM Plex Mono,monospace;font-size:.76rem;"
+            f"color:{_sc_color(contrib)}'>"
+            f"{contrib:+.2f}%</span></div></div>"
+            for name, contrib in contribs.items() if abs(contrib) > 0.001
+        ) if contribs else ""
+
+        # ── Result card ───────────────────────────────────────────────────
+        st.markdown(
+            f"""<div style="background:rgba(15,23,42,.6);border:1px solid rgba(148,163,184,.16);
+            border-left:4px solid {color};border-radius:14px;padding:16px 18px;margin-top:8px">
+            <div style="font-size:.80rem;font-weight:600;color:#94a3b8;
+            text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px">
+            🔬 Should-Cost Result — {ref_period}</div>
+
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Preço referência</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#e2e8f0">
+                  {currency} {float(ref_price):,.4f}</div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Should-cost hoje</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#60a5fa">
+                  {currency} {should_cost:,.4f}
+                  <span style="font-size:.70rem;color:{adj_color};margin-left:4px">({total_adj_pct:+.2f}%)</span>
+                </div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Target de negociação</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#a78bfa">
+                  {currency} {neg_target:,.4f}
+                  <span style="font-size:.70rem;color:#64748b;margin-left:4px">(-{neg_buffer_pct:.1f}% stretch)</span>
+                </div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Gap proposta vs should-cost</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:{gap_color}">
+                  {currency} {gap_vs_should:+,.4f}
+                  <span style="font-size:.70rem;margin-left:4px">({gap_pct:+.1f}%)</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-bottom:10px">
+              <div style="font-size:.73rem;font-weight:600;color:#64748b;
+              text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">
+              Contribuição de cada driver</div>
+              {contrib_html}
+            </div>
+
+            <div style="font-size:.78rem;color:#94a3b8;padding-top:8px;
+            border-top:1px solid rgba(148,163,184,.12)">
+              <b style="color:{'#34d399' if gap_vs_should<=0 else '#f87171'}">
+              {'✅ Proposta está dentro ou abaixo do should-cost — preço está justificado pelo mercado.' if gap_vs_should<=0
+               else f'⚠ Proposta está {gap_pct:.1f}% acima do should-cost. Usar como alavanca de negociação.'}
+              </b>
+              &nbsp;·&nbsp; Gap vs target: <span style="color:{tgt_color}">{gap_vs_target:+,.2f} ({gap_target_pct:+.1f}%)</span>
+            </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Store result in session state for frontier chart to consume
+    sc_key = f"should_cost_result__{key_prefix}"
+    sc_store = {
+        "ref_price": float(ref_price),
+        "should_cost": float(should_cost),
+        "neg_target": float(neg_target),
+        "total_adj_pct": float(total_adj_pct),
+        "gap_vs_should": float(gap_vs_should),
+        "gap_pct": float(gap_pct),
+        "gap_vs_target": float(gap_vs_target),
+        "drivers": drivers,
+        "preset": chosen_preset,
+        "ref_period": ref_period,
+        "neg_buffer_pct": float(neg_buffer_pct),
+    }
+    st.session_state[sc_key] = sc_store
+    st.session_state["last_should_cost"] = sc_store   # global latest for frontier
+    return sc_store
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6773,366 +7137,3 @@ st.markdown(
     </div>""",
     unsafe_allow_html=True,
 )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SHOULD-COST ENGINE — Hybrid: reference price + market trend drivers
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Preset market driver templates per mode/scope
-SHOULD_COST_DRIVER_PRESETS: Dict[str, List[Dict]] = {
-    "Direct Materials — Chemicals / Oils": [
-        {"name": "Base commodity price",     "weight": 55.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Energy / utilities",       "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Labor / manufacturing",    "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Freight / logistics",      "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
-        {"name": "FX / currency",            "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Supplier margin",          "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Direct Materials — Metals": [
-        {"name": "Metal index (LME/Platts)",  "weight": 65.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Energy / smelting",         "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Labor",                     "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Freight / logistics",       "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
-        {"name": "FX / currency",             "weight": 7.0,  "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Direct Materials — Packaging / Polymers": [
-        {"name": "Naphtha / polymer index",   "weight": 58.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Energy",                    "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Labor",                     "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Freight",                   "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Supplier margin",           "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "IT — Software & SaaS": [
-        {"name": "USD/BRL FX",               "weight": 70.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Vendor price increase (CPI/list)", "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Seat volume change",        "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "IT — Hardware / CAPEX": [
-        {"name": "Component cost index (DRAM/NAND/CPU)", "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "USD/BRL FX",               "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Freight / import logistics","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Import duties / ICMS",      "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Supplier margin",           "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Outsourcing / Mão de Obra": [
-        {"name": "Salário mínimo / CCT dissídio", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Encargos / FGTS / INSS",    "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Vale-refeição / alimentação","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Mercado de trabalho / desemprego", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Overhead + margem prestadora","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Facilities / Limpeza & Manutenção": [
-        {"name": "Salário mínimo / CCT",      "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Materiais / produtos químicos","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Energia elétrica (tarifa)", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Equipamentos / depreciação","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Margem do fornecedor",      "weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Logistics / Freight": [
-        {"name": "Diesel / combustível (ANP)", "weight": 35.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Salário motorista / CCT",   "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Pedágios",                  "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Manutenção / pneus",        "weight": 13.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Seguro de carga",           "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Margem transportadora",     "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Marketing / Agências": [
-        {"name": "Salário equipe criativa / CCT", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Mídia digital (CPM/CPC index)", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Produção audiovisual / técnica","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Overhead + margem da agência","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-    "Custom (manual)": [
-        {"name": "Driver 1", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Driver 2", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Driver 3", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-        {"name": "Driver 4", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
-    ],
-}
-
-# Map analysis modes / scopes → preset
-SHOULD_COST_PRESET_MAP = {
-    "Direct Materials": "Direct Materials — Chemicals / Oils",
-    "IT — Software & SaaS licensing": "IT — Software & SaaS",
-    "IT — Hardware & Infrastructure (incl. CAPEX servers)": "IT — Hardware / CAPEX",
-    "Serviços de Outsourcing de Mão de Obra": "Outsourcing / Mão de Obra",
-    "Mão de Obra Temporária (CLT flex / PJ / agência)": "Outsourcing / Mão de Obra",
-    "Facilities / Limpeza, Manutenção & Workplace": "Facilities / Limpeza & Manutenção",
-    "Logistics / Transport Services": "Logistics / Freight",
-    "Marketing / Agências & Serviços Criativos": "Marketing / Agências",
-}
-
-
-def calc_should_cost_hybrid(
-    reference_price: float,
-    drivers: List[Dict],   # [{name, weight_pct, change_pct}]
-    supplier_margin_override: float | None = None,
-) -> Dict[str, float]:
-    """
-    Hybrid should-cost model:
-        should_cost = reference_price × Π(1 + driver_weight_i/100 × change_i/100)
-        for all i drivers.
-
-    Also returns a 'target negotiation price' = should_cost × (1 - negotiation_buffer).
-    """
-    if reference_price <= 0:
-        return {"should_cost": 0.0, "total_adjustment_pct": 0.0,
-                "driver_contributions": {}, "negotiation_target": 0.0,
-                "gap_vs_should_cost": 0.0, "gap_pct": 0.0}
-
-    total_adjustment_pct = 0.0
-    driver_contributions = {}
-    for d in drivers:
-        w   = float(d.get("weight", 0.0)) / 100.0
-        chg = float(d.get("change", 0.0)) / 100.0
-        contrib = w * chg * 100.0          # % contribution to total price change
-        total_adjustment_pct += contrib
-        driver_contributions[d.get("name", "?")] = contrib
-
-    should_cost = reference_price * (1.0 + total_adjustment_pct / 100.0)
-
-    # Negotiation target: should_cost minus a buffer that represents
-    # best-case achievable (default 5% stretch goal on top of should-cost)
-    negotiation_target = should_cost * 0.95
-
-    return {
-        "should_cost": should_cost,
-        "total_adjustment_pct": total_adjustment_pct,
-        "driver_contributions": driver_contributions,
-        "negotiation_target": negotiation_target,
-        "gap_vs_should_cost": 0.0,   # filled later when proposal price is known
-        "gap_pct": 0.0,
-    }
-
-
-def render_should_cost_panel(
-    *,
-    key_prefix: str,
-    analysis_mode: str,
-    scope: str,
-    reference_price: float,
-    proposal_price: float,
-    currency: str,
-    price_label: str = "unit price",
-) -> Dict:
-    """
-    Should-Cost Engine panel — rendered inside the proposal supplier builder.
-    Returns the calculated should_cost and all metadata for use in frontier + decision stack.
-    """
-    cfg = SERVICE_SCOPE_CONFIG.get(scope, {})
-    icon = cfg.get("icon", "🔬") if cfg else "🔬"
-    color = cfg.get("color", "#3b82f6") if cfg else "#3b82f6"
-
-    # Pick best-fit preset
-    preset_key = SHOULD_COST_PRESET_MAP.get(scope) or SHOULD_COST_PRESET_MAP.get(analysis_mode, "Custom (manual)")
-    preset_drivers = SHOULD_COST_DRIVER_PRESETS.get(preset_key, SHOULD_COST_DRIVER_PRESETS["Custom (manual)"])
-
-    with st.expander(f"🔬 Should-Cost Engine — tendências de mercado ({scope or analysis_mode})", expanded=False):
-        st.caption(
-            "Informe o preço de referência do período anterior e as variações de mercado de cada driver. "
-            "A ferramenta calcula o preço justo hoje e o posiciona no frontier junto com Optimized e Lower Risk."
-        )
-
-        # ── Reference price ───────────────────────────────────────────────
-        rc = st.columns([1.2, 0.9, 0.9])
-        with rc[0]:
-            ref_price = st.number_input(
-                f"Preço / custo de referência ({currency})",
-                min_value=0.0,
-                value=float(reference_price) if reference_price > 0 else float(proposal_price) * 0.95,
-                step=max(float(reference_price) * 0.01, 1.0),
-                format="%.4f",
-                key=f"{key_prefix}__sc_ref_price",
-                help="Último contrato, benchmark externo ou cotação anterior. Base para calcular o preço justo ajustado pelos drivers de mercado.",
-            )
-        with rc[1]:
-            ref_period = st.text_input(
-                "Período de referência",
-                value="12 meses atrás",
-                key=f"{key_prefix}__sc_ref_period",
-                help="Quando era válido o preço de referência? (ex: 'Jan/2024', '12 meses atrás', 'último contrato 2023')",
-            )
-        with rc[2]:
-            neg_buffer_pct = st.number_input(
-                "Stretch goal de negociação %",
-                min_value=0.0, max_value=20.0, value=5.0, step=0.5,
-                key=f"{key_prefix}__sc_neg_buffer",
-                help="% abaixo do should-cost para definir o target de negociação (posição de abertura agressiva).",
-            )
-
-        # ── Preset selector ───────────────────────────────────────────────
-        dc = st.columns([1.5, 0.5])
-        with dc[0]:
-            chosen_preset = st.selectbox(
-                "Template de drivers de mercado",
-                options=list(SHOULD_COST_DRIVER_PRESETS.keys()),
-                index=list(SHOULD_COST_DRIVER_PRESETS.keys()).index(preset_key)
-                      if preset_key in SHOULD_COST_DRIVER_PRESETS else 0,
-                key=f"{key_prefix}__sc_preset",
-                help="Escolha o template mais adequado ao seu escopo. Você pode ajustar os pesos e variações abaixo.",
-            )
-        with dc[1]:
-            n_drivers = st.number_input(
-                "Nº de drivers (max 8)",
-                min_value=1, max_value=8,
-                value=min(len(SHOULD_COST_DRIVER_PRESETS[chosen_preset]), 6),
-                step=1, key=f"{key_prefix}__sc_n_drivers",
-            )
-
-        drivers_preset = SHOULD_COST_DRIVER_PRESETS[chosen_preset][:int(n_drivers)]
-
-        # ── Driver table ──────────────────────────────────────────────────
-        st.markdown(
-            "<div style='display:grid;grid-template-columns:2fr 1fr 1.2fr;gap:6px;"
-            "padding:6px 8px;background:rgba(15,23,42,.4);border-radius:8px;"
-            "font-size:.70rem;font-weight:600;color:#64748b;text-transform:uppercase;"
-            "letter-spacing:.06em;margin-bottom:4px'>"
-            "<span>Driver de custo</span><span>Peso % no custo total</span>"
-            "<span>Variação de mercado (%)</span></div>",
-            unsafe_allow_html=True,
-        )
-        drivers = []
-        total_weight = 0.0
-        for idx, d in enumerate(drivers_preset):
-            dc2 = st.columns([2, 1, 1.2])
-            with dc2[0]:
-                dname = st.text_input(
-                    "Driver", value=d["name"], label_visibility="collapsed",
-                    key=f"{key_prefix}__sc_dname_{idx}",
-                )
-            with dc2[1]:
-                dweight = st.number_input(
-                    "Peso %", min_value=0.0, max_value=100.0,
-                    value=float(d["weight"]), step=1.0, format="%.1f",
-                    label_visibility="collapsed",
-                    key=f"{key_prefix}__sc_dweight_{idx}",
-                )
-            with dc2[2]:
-                dchange = st.number_input(
-                    "Variação %", min_value=-50.0, max_value=100.0,
-                    value=float(d.get("change", 0.0)), step=0.5, format="%.2f",
-                    label_visibility="collapsed",
-                    key=f"{key_prefix}__sc_dchange_{idx}",
-                    help=f"Ex: +8 = commodity subiu 8% desde o período de referência. Negativo = caiu.",
-                )
-            drivers.append({"name": dname, "weight": dweight, "change": dchange})
-            total_weight += dweight
-
-        # Weight validation
-        wc_ = "#34d399" if abs(total_weight - 100.0) < 0.5 else "#f87171"
-        st.markdown(
-            f"<div style='font-size:.75rem;margin-top:2px;margin-bottom:8px'>"
-            f"<span style='color:{wc_}'>Pesos somam: <b>{total_weight:.1f}%</b> "
-            f"{'✓' if abs(total_weight-100)<0.5 else '— ajuste para 100% para resultado preciso'}</span></div>",
-            unsafe_allow_html=True,
-        )
-
-        # ── Calculation ───────────────────────────────────────────────────
-        sc_result = calc_should_cost_hybrid(float(ref_price), drivers)
-        should_cost   = sc_result["should_cost"]
-        total_adj_pct = sc_result["total_adjustment_pct"]
-        neg_target    = should_cost * (1.0 - float(neg_buffer_pct) / 100.0)
-
-        gap_vs_should     = float(proposal_price) - should_cost
-        gap_pct           = safe_divide(gap_vs_should, should_cost) * 100.0
-        gap_vs_target     = float(proposal_price) - neg_target
-        gap_target_pct    = safe_divide(gap_vs_target, neg_target) * 100.0
-
-        # Gap colors
-        gap_color   = "#34d399" if gap_vs_should < 0 else "#f87171" if gap_vs_should > 0 else "#60a5fa"
-        tgt_color   = "#34d399" if gap_vs_target < 0 else "#fbbf24" if abs(gap_target_pct) < 5 else "#f87171"
-        adj_color   = "#f87171" if total_adj_pct > 0 else "#34d399" if total_adj_pct < 0 else "#64748b"
-
-        # ── Driver contribution visual ────────────────────────────────────
-        contribs = sc_result["driver_contributions"]
-        def _sc_color(v): return "#f87171" if v > 0 else "#34d399" if v < 0 else "#64748b"
-        _max_abs_contrib = max((abs(c) for c in contribs.values() if c != 0), default=1.0)
-        contrib_html = "".join(
-            f"<div style='display:flex;justify-content:space-between;align-items:center;"
-            f"padding:4px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
-            f"<span style='font-size:.76rem;color:#94a3b8'>{name[:38]}</span>"
-            f"<div style='display:flex;align-items:center;gap:8px'>"
-            f"<div style='width:60px;height:5px;border-radius:3px;background:rgba(148,163,184,.1);overflow:hidden'>"
-            f"<div style='height:100%;width:{min(abs(contrib) / _max_abs_contrib * 100, 100):.0f}%;"
-            f"background:{_sc_color(contrib)};border-radius:3px'></div></div>"
-            f"<span style='font-family:IBM Plex Mono,monospace;font-size:.76rem;"
-            f"color:{_sc_color(contrib)}'>"
-            f"{contrib:+.2f}%</span></div></div>"
-            for name, contrib in contribs.items() if abs(contrib) > 0.001
-        ) if contribs else ""
-
-        # ── Result card ───────────────────────────────────────────────────
-        st.markdown(
-            f"""<div style="background:rgba(15,23,42,.6);border:1px solid rgba(148,163,184,.16);
-            border-left:4px solid {color};border-radius:14px;padding:16px 18px;margin-top:8px">
-            <div style="font-size:.80rem;font-weight:600;color:#94a3b8;
-            text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px">
-            🔬 Should-Cost Result — {ref_period}</div>
-
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
-              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
-                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Preço referência</div>
-                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#e2e8f0">
-                  {currency} {float(ref_price):,.4f}</div>
-              </div>
-              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
-                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Should-cost hoje</div>
-                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#60a5fa">
-                  {currency} {should_cost:,.4f}
-                  <span style="font-size:.70rem;color:{adj_color};margin-left:4px">({total_adj_pct:+.2f}%)</span>
-                </div>
-              </div>
-              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
-                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Target de negociação</div>
-                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#a78bfa">
-                  {currency} {neg_target:,.4f}
-                  <span style="font-size:.70rem;color:#64748b;margin-left:4px">(-{neg_buffer_pct:.1f}% stretch)</span>
-                </div>
-              </div>
-              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
-                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Gap proposta vs should-cost</div>
-                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:{gap_color}">
-                  {currency} {gap_vs_should:+,.4f}
-                  <span style="font-size:.70rem;margin-left:4px">({gap_pct:+.1f}%)</span>
-                </div>
-              </div>
-            </div>
-
-            <div style="margin-bottom:10px">
-              <div style="font-size:.73rem;font-weight:600;color:#64748b;
-              text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">
-              Contribuição de cada driver</div>
-              {contrib_html}
-            </div>
-
-            <div style="font-size:.78rem;color:#94a3b8;padding-top:8px;
-            border-top:1px solid rgba(148,163,184,.12)">
-              <b style="color:{'#34d399' if gap_vs_should<=0 else '#f87171'}">
-              {'✅ Proposta está dentro ou abaixo do should-cost — preço está justificado pelo mercado.' if gap_vs_should<=0
-               else f'⚠ Proposta está {gap_pct:.1f}% acima do should-cost. Usar como alavanca de negociação.'}
-              </b>
-              &nbsp;·&nbsp; Gap vs target: <span style="color:{tgt_color}">{gap_vs_target:+,.2f} ({gap_target_pct:+.1f}%)</span>
-            </div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-    # Store result in session state for frontier chart to consume
-    sc_key = f"should_cost_result__{key_prefix}"
-    sc_store = {
-        "ref_price": float(ref_price),
-        "should_cost": float(should_cost),
-        "neg_target": float(neg_target),
-        "total_adj_pct": float(total_adj_pct),
-        "gap_vs_should": float(gap_vs_should),
-        "gap_pct": float(gap_pct),
-        "gap_vs_target": float(gap_vs_target),
-        "drivers": drivers,
-        "preset": chosen_preset,
-        "ref_period": ref_period,
-        "neg_buffer_pct": float(neg_buffer_pct),
-    }
-    st.session_state[sc_key] = sc_store
-    st.session_state["last_should_cost"] = sc_store   # global latest for frontier
-    return sc_store
