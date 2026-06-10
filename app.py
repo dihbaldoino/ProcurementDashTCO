@@ -284,35 +284,581 @@ LANDED_COST_COMPONENTS = [
 
 # ── INDIRECT / SERVICES CONFIGURATION ────────────────────────────────────────
 SERVICE_SCOPES = [
-    "IT Services / Digital & Outsourcing",
-    "Facilities / Cleaning & Workplace",
+    # ── 7 Focal buying scopes (Amazon-grade) ─────────────────────────────
+    "IT — Software & SaaS licensing",
+    "IT — Hardware & Infrastructure (incl. CAPEX servers)",
+    "Serviços de Outsourcing de Mão de Obra",
+    "Mão de Obra Temporária (CLT flex / PJ / agência)",
+    "Facilities / Limpeza, Manutenção & Workplace",
+    "EPI / Segurança do Trabalho & Materiais",
+    "Jardinagem & Serviços de Áreas Externas",
+    "Marketing / Agências & Serviços Criativos",
+    "RH — Recrutamento, T&D & Benefícios",
+    # ── Legacy / outros ───────────────────────────────────────────────────
+    "Logistics / Transport Services",
     "Industrial MRO / VMI / Fastenal-style outsourcing",
     "Professional Services / Consulting",
-    "Marketing / Agency Services",
-    "Logistics / Transport Services",
     "BPO / Call Center",
     "Generic Indirect Service",
 ]
 SERVICE_SCOPE_CONFIG = {
-    "IT Services / Digital & Outsourcing": {
+
+    # ════════════════════════════════════════════════════════════════════
+    # 1. IT — SOFTWARE & SaaS LICENSING
+    # Amazon-grade: ELP negotiation, true-up exposure, shadow IT, vendor lock-in
+    # ════════════════════════════════════════════════════════════════════
+    "IT — Software & SaaS licensing": {
         "icon": "💻", "color": "#6366f1",
-        "pricing_models": ["T&M rate card", "FTE-based outsourcing", "Fixed fee project", "Managed service SLA", "Outcome-based / DevOps"],
-        "driver_label": "FTE-months, tickets, story points or sprints",
-        "productivity_label": "automation rate, ticket deflection %, cycle-time reduction, engineering velocity or toil elimination",
-        "field_labels": ["FTEs / squad members", "Tickets or story points / month", "Critical systems covered"],
-        "benchmark_fte_cost": 120_000.0,
-        "sla_kpis": ["Uptime %", "MTTR (hours)", "Ticket SLA %", "Defect escape rate", "Deployment frequency"],
-        "leakage_drivers": ["Scope additions", "Emergency changes", "Tool licensing overruns", "Rework / bug fix cost", "Unplanned incidents"],
+        "pricing_models": [
+            "Enterprise license agreement (ELA)",
+            "Per-seat / per-user subscription",
+            "Named user vs concurrent user",
+            "Consumption / API-call based",
+            "Module-based licensing",
+            "Freemium → enterprise upgrade",
+            "Open-source + support contract",
+        ],
+        "driver_label": "licensed seats, API calls, TB storage, modules enabled, peak concurrent users",
+        "productivity_label": "consolidation savings, shadow IT elimination, true-up avoidance, license harvesting, SaaS rationalization",
+        "field_labels": ["Licensed seats / users", "Modules / SKUs active", "Annual true-up exposure (R$)"],
+        "benchmark_fte_cost": 0.0,
+        "sla_kpis": [
+            "System uptime / availability %",
+            "MTTR on P1 incidents (hours)",
+            "Ticket resolution SLA %",
+            "Security patch SLA (days)",
+            "User adoption rate %",
+            "Support response time",
+        ],
+        "leakage_drivers": [
+            "True-up charges (users grew beyond licensed count)",
+            "Shadow IT spend (unsanctioned tools)",
+            "Unused seat leakage (paid but not used)",
+            "Auto-renewal without review",
+            "Module sprawl (licensed features not used)",
+            "Vendor lock-in premium (switching cost)",
+            "Currency exposure on USD-denominated licenses",
+            "Over-spec'd tier vs actual usage",
+        ],
+        # Extended IT-specific config
+        "it_sw_pricing_metrics": [
+            "Per seat (named user)",
+            "Per seat (concurrent)",
+            "Per server / processor core",
+            "Per TB data / storage",
+            "Per API call / transaction",
+            "Per device / endpoint",
+            "Flat enterprise license",
+        ],
+        "it_sw_risk_factors": [
+            "Vendor financial health / acquisition risk",
+            "Lock-in / portability risk",
+            "True-up exposure (%)",
+            "Data sovereignty / LGPD compliance",
+            "Security certification (SOC2, ISO27001)",
+            "Roadmap alignment with internal strategy",
+        ],
+        "negotiation_levers": [
+            "Multi-year commitment for price lock",
+            "True-up cap clause (max % uplift)",
+            "License harvesting / reallocation rights",
+            "Benchmark / MFN (most-favored-nation) clause",
+            "Termination for convenience (T4C) clause",
+            "Flexibility to add/remove seats mid-term",
+            "Volume tier ratchet downgrade rights",
+            "Credits for downtime / SLA breach",
+        ],
     },
-    "Facilities / Cleaning & Workplace": {
-        "icon": "🏢", "color": "#0ea5e9",
-        "pricing_models": ["Rate per m²", "Fixed monthly fee", "FTE-based service", "Unit visit rate", "Performance-based"],
-        "driver_label": "m², sites, visits or headcount served",
-        "productivity_label": "frequency optimization, route density, material consumption reduction or supervision productivity",
-        "field_labels": ["Area serviced (m²)", "Sites / buildings", "Service frequency / month"],
-        "benchmark_fte_cost": 35_000.0,
-        "sla_kpis": ["Cleaning score / audit", "Compliance rate %", "Incident response time", "Material consumption vs budget", "Absenteeism rate"],
-        "leakage_drivers": ["Extra cleaning calls", "Consumable overruns", "Emergency call-outs", "Supervisor overhead", "Absenteeism cover cost"],
+
+    # ════════════════════════════════════════════════════════════════════
+    # 2. IT — HARDWARE & INFRASTRUCTURE (incl. CAPEX servers)
+    # Amazon-grade: TCO CAPEX vs cloud, refresh cycles, EOL risk
+    # ════════════════════════════════════════════════════════════════════
+    "IT — Hardware & Infrastructure (incl. CAPEX servers)": {
+        "icon": "🖥️", "color": "#8b5cf6",
+        "pricing_models": [
+            "CAPEX outright purchase",
+            "Leasing / financial lease (IFRS 16)",
+            "Operating lease / rental",
+            "HaaS — Hardware as a Service",
+            "Managed service (DaaS / IaaS)",
+            "Refresh program (trade-in + new)",
+            "Cloud migration (CAPEX → OPEX)",
+        ],
+        "driver_label": "units, server racks, TB storage, endpoints, networking nodes, refresh cycles",
+        "productivity_label": "server consolidation, virtualization ratio, data center PUE improvement, cloud-shift %, lifecycle extension",
+        "field_labels": ["Units / servers / endpoints", "Annual depreciation (R$)", "Refresh cycle (years)"],
+        "benchmark_fte_cost": 0.0,
+        "sla_kpis": [
+            "Hardware uptime / availability %",
+            "Mean time between failures (MTBF)",
+            "Warranty response SLA (NBD / 4h / 2h)",
+            "Parts availability SLA (EOL risk)",
+            "Deployment lead time (days)",
+            "Energy efficiency (PUE / W per compute unit)",
+            "Asset utilization % (CPU / storage)",
+        ],
+        "leakage_drivers": [
+            "EOL equipment support premium (post-warranty)",
+            "Over-spec purchase (capacity never reached)",
+            "Unplanned emergency purchases (no stock)",
+            "Undiscounted list price (no volume leverage)",
+            "Stranded CAPEX (migration before depreciation ends)",
+            "Power / cooling cost (ignored in TCO)",
+            "Data center space and rack unit cost",
+            "Disposal / WEEE compliance cost",
+        ],
+        "capex_tco_components": [
+            "Hardware acquisition cost",
+            "Freight, import duties, taxes",
+            "Installation / rack & stack",
+            "Power consumption (kWh/yr × R$/kWh)",
+            "Cooling allocation (PUE multiplier)",
+            "Data center space (R$/rack unit/month)",
+            "Annual maintenance / support contract",
+            "IT labor (FTE hours for management)",
+            "Insurance / asset protection",
+            "Disposal / end-of-life cost",
+            "Opportunity cost (WACC × CAPEX)",
+        ],
+        "cloud_vs_capex_levers": [
+            "On-demand vs reserved vs savings plan pricing",
+            "Egress cost (often ignored in cloud proposals)",
+            "Licensing in cloud (BYOL vs pay-as-you-go)",
+            "Data sovereignty / latency requirements",
+            "Workload variability (cloud wins for peaks)",
+            "Steady-state workloads (CAPEX often cheaper)",
+        ],
+        "negotiation_levers": [
+            "Volume bundle / enterprise agreement",
+            "Trade-in / refresh credit",
+            "Extended warranty inclusion",
+            "Consignment stock at buyer's site",
+            "Price protection clause (vs MSRP changes)",
+            "Dual-source approval for critical hardware",
+            "Loaner / swap unit commitment for failures",
+            "Energy efficiency rebate clause",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 3. SERVIÇOS DE OUTSOURCING DE MÃO DE OBRA
+    # Amazon-grade: FTE model, right-sizing, productivity management
+    # ════════════════════════════════════════════════════════════════════
+    "Serviços de Outsourcing de Mão de Obra": {
+        "icon": "👥", "color": "#0ea5e9",
+        "pricing_models": [
+            "FTE-based (preço por cabeça/mês)",
+            "Cost plus fee (custo aberto + margem)",
+            "Managed service SLA (entrega de resultado)",
+            "Unit rate (por transação / entrega)",
+            "Outcome-based / gain-share",
+            "Hybrid FTE + produtividade",
+        ],
+        "driver_label": "FTEs alocados, horas trabalhadas, produtividade (transações/FTE), absenteísmo, rotatividade",
+        "productivity_label": "right-sizing de headcount, automação de processos, redução de horas extras, controle de absenteísmo, supervisão produtiva",
+        "field_labels": ["FTEs contratados", "Horas extras/mês (%)", "Taxa de absenteísmo (%)"],
+        "benchmark_fte_cost": 65_000.0,
+        "sla_kpis": [
+            "Produtividade (transações / FTE / hora)",
+            "Taxa de absenteísmo %",
+            "Taxa de rotatividade / turnover %",
+            "Horas extras como % do total",
+            "Qualidade / retrabalho %",
+            "Conformidade trabalhista / audit %",
+            "NPS interno (stakeholder satisfaction)",
+            "SLA de substituição (horas para reposição)",
+        ],
+        "leakage_drivers": [
+            "Horas extras não controladas (OT descontrolado)",
+            "Absenteísmo não coberto (produção parada)",
+            "Rotatividade alta → custo de reposição e treinamento",
+            "Headcount além do right-size (FTEs ociosos)",
+            "Passivo trabalhista (encargos, vínculos empregatícios)",
+            "Supervisor overhead excessivo",
+            "Materiais e EPI faturados além do contrato",
+            "Custo de gerenciamento interno do contrato",
+        ],
+        "open_cost_model": [
+            ("salario_base",         "Salário base CLT"),
+            ("encargos_patronais",   "Encargos patronais (FGTS, INSS, férias, 13º)"),
+            ("vale_transporte",      "Vale-transporte"),
+            ("vale_refeicao",        "Vale-refeição / alimentação"),
+            ("epi_uniformes",        "EPI / uniformes"),
+            ("treinamento",          "Treinamento / onboarding"),
+            ("supervisao",           "Supervisão e coordenação"),
+            ("seguro_vida",          "Seguro de vida / acidentes"),
+            ("overhead_admin",       "Overhead administrativo da prestadora"),
+            ("margem",               "Margem da prestadora"),
+        ],
+        "negotiation_levers": [
+            "Benchmark salarial por CCT da categoria",
+            "Cláusula de right-sizing (ajuste de FTE pelo volume)",
+            "Teto de horas extras como % do contrato",
+            "Penalidade por absenteísmo acima do SLA",
+            "Gain-share por produtividade acima da meta",
+            "Transição estruturada com curva de ramp-up",
+            "Auditoria de folha de pagamento (open-book)",
+            "Cláusula de responsabilidade trabalhista solidária",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 4. MÃO DE OBRA TEMPORÁRIA
+    # Amazon-grade: flexibility management, seasonal demand, compliance
+    # ════════════════════════════════════════════════════════════════════
+    "Mão de Obra Temporária (CLT flex / PJ / agência)": {
+        "icon": "⏱️", "color": "#f59e0b",
+        "pricing_models": [
+            "CLT temporário via agência (Lei 6.019)",
+            "PJ / autônomo gerenciado pela agência",
+            "Pool de talentos on-demand",
+            "MSP (Managed Service Provider) model",
+            "VMS (Vendor Management System) + fee",
+            "Payroll outsourcing",
+        ],
+        "driver_label": "FTEs temporários, horas trabalhadas, pico de demanda %, filling time (dias), vacancy rate",
+        "productivity_label": "filling time reduction, quality of hires, retention durante contrato, conversion para efetivo, peak coverage sem overtime",
+        "field_labels": ["FTEs temporários pico", "Tempo médio de preenchimento (dias)", "Taxa de conversão para efetivo %"],
+        "benchmark_fte_cost": 48_000.0,
+        "sla_kpis": [
+            "Filling time (dias da requisição ao início)",
+            "Quality of fill (% aprovados sem reposição)",
+            "Retention rate durante o contrato %",
+            "Vacancy rate % (posições em aberto)",
+            "Compliance rate CLT / LGPD %",
+            "Conversion rate para efetivo %",
+            "NPS do hiring manager",
+            "Custo por contratação",
+        ],
+        "leakage_drivers": [
+            "Filling time longo → produção parada / overtime dos efetivos",
+            "High replacement rate → custo de reposição e retrabalho",
+            "Non-compliance CLT → passivo trabalhista",
+            "Fee sobre adicional de horas extras (dupla cobrança)",
+            "Taxa de agência não benchmarkada",
+            "Supplier fragmentation (múltiplas agências sem gestão)",
+            "Turnover dentro do contrato (custo de novo onboarding)",
+        ],
+        "seasonal_profile": [
+            "Volume baseline (FTEs mês padrão)",
+            "Volume pico sazonal (FTEs peak — Black Friday, harvest, etc.)",
+            "Duração do pico (meses)",
+            "Lead time de planejamento (semanas)",
+            "Taxa de conversão temporário → efetivo",
+        ],
+        "negotiation_levers": [
+            "Volume commitment para melhor fee rate",
+            "Exclusividade de pool de candidatos qualificados",
+            "SLA de filling time com penalidade financeira",
+            "Fee structure transparente (aberto sem bundling)",
+            "VMS integrado para visibilidade de todo o spend",
+            "Cláusula de substituição gratuita nos primeiros X dias",
+            "Dedicated recruiter capacity durante picos",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 5. FACILITIES / LIMPEZA, MANUTENÇÃO & WORKPLACE
+    # Amazon-grade: m² model, consumption control, performance-based
+    # ════════════════════════════════════════════════════════════════════
+    "Facilities / Limpeza, Manutenção & Workplace": {
+        "icon": "🏢", "color": "#06b6d4",
+        "pricing_models": [
+            "Rate per m² (tarifa por área)",
+            "Fixed monthly fee por site",
+            "FTE-based (por equipe alocada)",
+            "Unit visit rate (por visita)",
+            "Performance-based (score × tarifa)",
+            "Managed service (output-based)",
+        ],
+        "driver_label": "m² de área servida, sites, postos alocados, frequência de serviço, headcount servido",
+        "productivity_label": "otimização de frequência, densidade de rotas, controle de consumo de materiais, supervisor produtividade, IoT de ocupação",
+        "field_labels": ["Área total m²", "Sites / edificações", "Postos por turno"],
+        "benchmark_fte_cost": 38_000.0,
+        "sla_kpis": [
+            "Cleaning score / nota de auditoria (0-100)",
+            "Compliance % (inspeções aprovadas)",
+            "Tempo de resposta incidentes (min)",
+            "Consumo de materiais vs budget (R$/m²/mês)",
+            "Taxa de absenteísmo %",
+            "MTTR manutenções corretivas (horas)",
+            "Preventive maintenance compliance %",
+            "Satisfação do usuário (NPS interno)",
+        ],
+        "leakage_drivers": [
+            "Consumo de materiais acima do índice (sem medição)",
+            "Chamados extras não cobertos pelo contrato",
+            "Absenteísmo não coberto (limpeza atrasada)",
+            "Supervisão superdimensionada",
+            "Equipamentos (lavadoras, etc.) fora do custo unitário",
+            "Manutenção corretiva por falha preventiva",
+            "Horas extras em turno noturno",
+        ],
+        "open_cost_model": [
+            ("mao_de_obra",          "Mão de obra direta (CLT + encargos)"),
+            ("supervisao",           "Supervisão e coordenação"),
+            ("materiais_limpeza",    "Materiais e produtos de limpeza"),
+            ("equipamentos",         "Equipamentos / depreciação"),
+            ("epi_uniformes",        "EPI e uniformes"),
+            ("transporte_equipe",    "Transporte da equipe"),
+            ("overhead_admin",       "Overhead administrativo"),
+            ("margem",               "Margem do fornecedor"),
+        ],
+        "negotiation_levers": [
+            "Benchmark de R$/m² por tipo de área e cidade",
+            "Cláusula de consumo máximo de materiais (R$/m²/mês)",
+            "Penalidade por nota de auditoria abaixo do SLA",
+            "Incentivo por redução de consumo vs budget",
+            "Tecnologia IoT de ocupação para frequência dinâmica",
+            "Revisão semestral de postos vs ocupação real",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 6. EPI / SEGURANÇA DO TRABALHO & MATERIAIS
+    # Amazon-grade: NR compliance, TCO por proteção, consumption model
+    # ════════════════════════════════════════════════════════════════════
+    "EPI / Segurança do Trabalho & Materiais": {
+        "icon": "🦺", "color": "#ef4444",
+        "pricing_models": [
+            "Sistema de gestão de EPI (ERP/CA integrado)",
+            "Vending machines de EPI (Grainger-style)",
+            "Fornecimento direto por item (catálogo)",
+            "Kit mensal por função / cargo",
+            "Consignação com reposição automática",
+            "Managed service (4PL EPI)",
+        ],
+        "driver_label": "headcount protegido, Certificados de Aprovação (CAs), SKUs de EPI, consumo real vs dotação, incidentes",
+        "productivity_label": "controle de consumo por colaborador, eliminação de estoque excessivo, automação de dispensação (vending), redução de incidentes, conformidade NR",
+        "field_labels": ["Headcount protegido", "SKUs de EPI gerenciados", "Incidentes / mês (referência)"],
+        "benchmark_fte_cost": 0.0,
+        "sla_kpis": [
+            "Disponibilidade de EPI crítico (fill rate %)",
+            "% de EPI com CA válido (NR-6 compliance)",
+            "Taxa de incidentes com e sem afastamento (por 1M horas)",
+            "Consumo real vs dotação por colaborador (%)",
+            "Custo de EPI por colaborador/mês",
+            "Prazo de reposição (dias)",
+            "Audit score de conformidade NR %",
+            "% de descarte adequado (WEEE / resíduos perigosos)",
+        ],
+        "leakage_drivers": [
+            "Consumo além da dotação (sem controle por vending)",
+            "EPI vencido / CA expirado — risco legal NR-6",
+            "Estoque excessivo parado (FIFO não respeitado)",
+            "Compras spot de emergência (premium price)",
+            "Fragmentação de fornecedores sem escala",
+            "Perda e extravio de EPI de alto valor",
+            "Passivo trabalhista por não fornecimento",
+        ],
+        "nr_compliance_checklist": [
+            "NR-6 (EPI): CA válido, registro de entrega",
+            "NR-9 (PPRA / PGR): mapeamento de riscos",
+            "NR-15 (atividades insalubres): laudo",
+            "NR-35 (trabalho em altura): cinto e capacete",
+            "NR-10 (eletricidade): EPI elétrico certificado",
+            "LGPD: dados biométricos no vending",
+        ],
+        "negotiation_levers": [
+            "Vending machines gratuitas via volume commitment",
+            "Dotação anual por cargo com cláusula de controle",
+            "CA management como SLA (sem CA expirado em estoque)",
+            "Rebate por redução de consumo vs dotação",
+            "Gestão de descarte incluída no contrato",
+            "Integração com sistema de RH para dotação automática",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 7. JARDINAGEM & SERVIÇOS DE ÁREAS EXTERNAS
+    # Amazon-grade: área model, seasonal, water/chemical control
+    # ════════════════════════════════════════════════════════════════════
+    "Jardinagem & Serviços de Áreas Externas": {
+        "icon": "🌿", "color": "#16a34a",
+        "pricing_models": [
+            "Rate per m² (área verde)",
+            "Fixed monthly fee por site",
+            "FTE-based (equipe alocada)",
+            "Visita periódica (por evento)",
+            "Contrato anual com sazonal",
+        ],
+        "driver_label": "m² de área verde, m² de pavimento, número de árvores, visitas/mês, headcount servido",
+        "productivity_label": "eficiência de equipe por m², controle de insumos (água, fertilizantes, defensivos), automação de irrigação, redução de visitas por IoT",
+        "field_labels": ["Área verde m²", "Sites / campus", "Frequência de visitas/mês"],
+        "benchmark_fte_cost": 32_000.0,
+        "sla_kpis": [
+            "Índice de conformidade visual (auditoria)",
+            "Consumo de água vs benchmark (m³/m²/mês)",
+            "Uso de defensivos vs PBA (programa de controle)",
+            "Taxa de manutenção de árvores / podas no prazo",
+            "Tempo de resposta para incidentes (queda de árvore)",
+            "Satisfação dos usuários / NPS interno",
+        ],
+        "leakage_drivers": [
+            "Consumo de água sem medição por site",
+            "Uso excessivo de insumos (fertilizantes, defensivos) sem controle",
+            "Equipe ociosa em épocas de seca (sem ajuste de headcount)",
+            "Sem controle de ferramentas e equipamentos",
+            "Chamados emergenciais cobrados como extra",
+        ],
+        "negotiation_levers": [
+            "Cláusula de benchmark de R$/m² por região",
+            "Índice de consumo máximo de água (m³/m²/mês)",
+            "Sensor de irrigação inteligente como obrigação do contrato",
+            "Penalidade por auditoria abaixo do score mínimo",
+            "Revisão semestral de área vs ocupação real",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 8. MARKETING / AGÊNCIAS & SERVIÇOS CRIATIVOS
+    # Amazon-grade: transparency, pass-through audit, asset reuse
+    # ════════════════════════════════════════════════════════════════════
+    "Marketing / Agências & Serviços Criativos": {
+        "icon": "🎯", "color": "#ec4899",
+        "pricing_models": [
+            "Monthly retainer (fee mensal fixo)",
+            "Project fee (escopo fechado)",
+            "Pass-through + agency fee (% sobre mídia)",
+            "Rate card (tabela de horas por função)",
+            "Performance-linked (% sobre resultado)",
+            "Hybrid retainer + project",
+        ],
+        "driver_label": "campanhas, assets produzidos, horas criativas, mídia pass-through, direitos de imagem/uso",
+        "productivity_label": "reaproveitamento de assets, redução de rodadas de revisão, tempo de ciclo de campanha, eficiência de mídia, automation de produção",
+        "field_labels": ["Campanhas / trimestre", "Assets / mês", "Budget mídia pass-through"],
+        "benchmark_fte_cost": 95_000.0,
+        "sla_kpis": [
+            "On-time delivery % (entregas no prazo)",
+            "First-time approval rate % (aprovação sem revisão)",
+            "Rodadas de revisão por asset (target ≤2)",
+            "Campaign ROI vs target %",
+            "Asset reuse rate % (reaproveitamento)",
+            "Time-to-market (dias da brief ao lançamento)",
+            "NPS da equipe de marketing (satisfação interna)",
+            "% do budget em working media (vs non-working)",
+        ],
+        "leakage_drivers": [
+            "Revisões excessivas além das contratadas",
+            "Rush fees / urgência (não planejada)",
+            "Over-production (assets não utilizados)",
+            "Pass-through não auditado (comissão dupla)",
+            "Direitos de imagem expirados / não renovados",
+            "Overhead da agência embutido no pass-through",
+            "Silos de agência (duplicação de trabalho)",
+            "Escopo mal definido → scope creep",
+        ],
+        "pass_through_audit_model": [
+            "Mídia digital (Google, Meta, programática)",
+            "Mídia tradicional (TV, rádio, OOH, print)",
+            "Produção audiovisual e fotografia",
+            "Influenciadores / conteúdo",
+            "Eventos e ativações",
+            "Research e insights",
+        ],
+        "negotiation_levers": [
+            "Open-book na estrutura de fee (horas × tarifas)",
+            "Cláusula de separação fee vs pass-through",
+            "Auditoria de mídia anual (media auditor independente)",
+            "SLA de first-time approval com penalidade",
+            "Benchmark de tarifas por função (IPA / ABAP)",
+            "Propriedade de todos os assets pela empresa (não pela agência)",
+            "Cláusula de non-compete / conflito de cliente",
+            "Gain-share por efficiency savings comprovada",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # 9. RH — RECRUTAMENTO, T&D & BENEFÍCIOS
+    # Amazon-grade: cost per hire, benefit utilization, T&D ROI
+    # ════════════════════════════════════════════════════════════════════
+    "RH — Recrutamento, T&D & Benefícios": {
+        "icon": "🎓", "color": "#a855f7",
+        "pricing_models": [
+            "Success fee (% do salário anual)",
+            "Retained search (parcela fixa + success)",
+            "RPO — Recruitment Process Outsourcing",
+            "LMS / plataforma de T&D (SaaS per seat)",
+            "Conteúdo T&D (bibliotecas + customizado)",
+            "Gestão de benefícios (corretora + admin fee)",
+            "Pooled benefits (benefício flexível)",
+        ],
+        "driver_label": "posições abertas/fechadas, time-to-fill, custo por contratação, headcount treinado, horas de T&D, vidas em benefícios",
+        "productivity_label": "redução de time-to-fill, aumento de qualidade de contratação, T&D ROI vs produtividade, utilização de benefícios (saúde), redução de sinistralidade",
+        "field_labels": ["Posições contratadas / ano", "Headcount em T&D / ano", "Vidas em benefícios"],
+        "benchmark_fte_cost": 0.0,
+        "sla_kpis": [
+            "Time-to-fill (dias da abertura ao aceite)",
+            "Custo por contratação (R$)",
+            "Qualidade de contratação (% aprovados em 90 dias)",
+            "Taxa de retenção 12 meses %",
+            "NPS do candidato (candidate experience)",
+            "Cobertura de T&D (% do headcount treinado)",
+            "T&D completion rate %",
+            "Sinistralidade saúde % (vs mercado ABRAMGE)",
+            "Utilização de benefícios flexíveis %",
+        ],
+        "leakage_drivers": [
+            "Success fee sem benchmark de mercado",
+            "Time-to-fill longo → produção abaixo do ideal",
+            "Turnover precoce → custo de nova contratação",
+            "T&D sem ROI mensurado",
+            "Sinistralidade alta sem programa de saúde preventivo",
+            "Benefícios sub-utilizados (pagos mas não usados)",
+            "Fragmentação de benefícios (poder de barganha diluído)",
+            "Plataforma LMS subutilizada (custo por seat x uso real)",
+        ],
+        "benefits_tco_model": [
+            ("plano_saude",         "Plano de saúde (prêmio per capita/mês)"),
+            ("plano_odonto",        "Plano odontológico"),
+            ("seguro_vida",         "Seguro de vida"),
+            ("vr_va",               "Vale-refeição / alimentação"),
+            ("vt",                  "Vale-transporte"),
+            ("previdencia",         "Previdência complementar (matching)"),
+            ("gympass",             "Wellbeing / Gympass / TotalPass"),
+            ("pla_tda",             "Plataforma LMS / T&D"),
+            ("recrutamento",        "Fee de recrutamento anualizado"),
+            ("admin_fee",           "Admin fee RH / corretora benefícios"),
+        ],
+        "negotiation_levers": [
+            "Benchmark de sinistralidade vs ABRAMGE (dado público)",
+            "Programa de saúde preventiva → redução de sinistralidade",
+            "Licitação de benefícios a cada 3 anos com corretora independente",
+            "RPO para alto volume com SLA de time-to-fill",
+            "T&D: custo por conclusão vs horas vs seat fee",
+            "Pooled benefits (benefícios flexíveis) → eficiência vs preferência individual",
+            "Auditoria de utilização de benefícios (evitar subsídio de não-utilizadores)",
+        ],
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # LEGACY SCOPES (kept for backward compatibility)
+    # ════════════════════════════════════════════════════════════════════
+    "Logistics / Transport Services": {
+        "icon": "🚚", "color": "#10b981",
+        "pricing_models": [
+            "Rate per shipment (tarifa por embarque)",
+            "Rate per km (tarifa por km)",
+            "Dedicated route / vehicle (veículo dedicado mensal)",
+            "Cost plus fee (custo aberto + margem)",
+            "Per pallet (tarifa por pallet)",
+            "Per kg / ton (tarifa por peso)",
+            "Per m³ (tarifa por cubagem)",
+            "Milk run (rota multi-parada)",
+            "Spot / dynamic pricing (spot sob demanda)",
+            "Minimum freight + variable",
+        ],
+        "driver_label": "shipments/mês · km/rota · pallets · kg · m³ · orders",
+        "productivity_label": "load factor ↑ · empty km ↓ · dwell time ↓ · tender acceptance ↑ · backhaul capture · intermodal migration",
+        "field_labels": ["Shipments / mês", "Distância km (one-way)", "Pallets por embarque"],
+        "benchmark_fte_cost": 42_000.0,
+        "sla_kpis": ["OTIF %", "On-time pickup %", "Damage rate %", "Tender acceptance %", "Dwell time (min)", "Cost per shipment vs budget"],
+        "leakage_drivers": ["Detention & demurrage (doca parada)", "Empty miles / km vazio (retorno sem carga)", "Spot overflow (baixo tender acceptance)", "Fuel surcharge overruns (fórmula sem teto)", "Accessorial leakage (taxas extras)", "Damage & claims cost", "Failed pickup / no-show", "Redelivery cost"],
+        "route_types": ["Inbound to Warehouse (fornecedor → armazém)", "Middle Mile / Transfer (FC → CD / cross-dock)", "Outbound B2B (armazém → lojas / hubs)", "Last Mile Injection (armazém → delivery station)", "Reverse Logistics (devoluções → armazém)", "Shuttle / Yard Movement (transferências internas)", "Dedicated Lane (rota fixa recorrente)", "Spot / On-demand (frete sob demanda)"],
+        "vehicle_types": ["Van / Sprinter (até 3,5t)", "VUC (até 6t — restrição urbana)", "Toco (até 13t)", "Truck (até 23t)", "Carreta LS (até 33t)", "Bitrem (até 57t)", "Rodotrem (até 74t)", "Refrigerado / temperatura controlada", "Sider / Grade aberta", "Baú (fechado)", "Container 20' / 40'", "Semi-reboque tanque"],
+        "cargo_risk_levels": ["Padrão / Geral (baixo valor)", "Médio valor (R$50K–R$300K por embarque)", "Alto valor (R$300K–R$1M por embarque)", "Muito alto valor / eletrônicos (>R$1M)", "Frágil / perecível", "Perigoso (IMDG / ADR)", "Farmacêutico / GDP"],
+        "escort_triggers": {"RJ / ES (rotas de risco)": True, "Alto valor >R$500K": True, "Eletrônicos / smartphones": True, "Carga perigosa": False, "Padrão": False},
     },
     "Industrial MRO / VMI / Fastenal-style outsourcing": {
         "icon": "🧰", "color": "#f59e0b",
@@ -333,87 +879,6 @@ SERVICE_SCOPE_CONFIG = {
         "benchmark_fte_cost": 250_000.0,
         "sla_kpis": ["Milestone on-time %", "Deliverable acceptance rate", "Stakeholder satisfaction (NPS)", "Knowledge transfer score", "Benefit realization %"],
         "leakage_drivers": ["Scope creep / change orders", "Rework and iterations", "Delayed sign-offs (idle time)", "Unplanned senior escalations", "Post-project fix cost"],
-    },
-    "Marketing / Agency Services": {
-        "icon": "🎯", "color": "#ec4899",
-        "pricing_models": ["Monthly retainer", "Project fee", "Pass-through + agency fee", "Rate card", "Performance-linked"],
-        "driver_label": "campaigns, assets, production jobs, media pass-through or usage rights",
-        "productivity_label": "asset reuse, lower rework, campaign cycle-time reduction or media efficiency",
-        "field_labels": ["Campaigns / month", "Assets / deliverables", "Media pass-through budget"],
-        "benchmark_fte_cost": 95_000.0,
-        "sla_kpis": ["On-time delivery %", "First-time approval rate %", "Campaign ROI vs target", "Asset reuse rate %", "Revision rounds per asset"],
-        "leakage_drivers": ["Revision / rework cost", "Rush fees and premiums", "Unused assets / over-production", "Untracked pass-through", "IP / rights overruns"],
-    },
-    "Logistics / Transport Services": {
-        "icon": "🚚", "color": "#10b981",
-        "pricing_models": [
-            "Rate per shipment (tarifa por embarque)",
-            "Rate per km (tarifa por km)",
-            "Dedicated route / vehicle (veículo dedicado mensal)",
-            "Cost plus fee (custo aberto + margem)",
-            "Per pallet (tarifa por pallet)",
-            "Per kg / ton (tarifa por peso)",
-            "Per m³ (tarifa por cubagem)",
-            "Milk run (rota multi-parada)",
-            "Spot / dynamic pricing (spot sob demanda)",
-            "Minimum freight + variable",
-        ],
-        "driver_label": "shipments/mês · km/rota · pallets · kg · m³ · orders",
-        "productivity_label": "load factor ↑ · empty km ↓ · dwell time ↓ · tender acceptance ↑ · backhaul capture · intermodal migration",
-        "field_labels": ["Shipments / mês", "Distância km (one-way)", "Pallets por embarque"],
-        "benchmark_fte_cost": 42_000.0,
-        "sla_kpis": ["OTIF %", "On-time pickup %", "Damage rate %", "Tender acceptance %", "Dwell time (min)", "Cost per shipment vs budget"],
-        "leakage_drivers": [
-            "Detention & demurrage (doca parada)",
-            "Empty miles / km vazio (retorno sem carga)",
-            "Spot overflow (baixo tender acceptance)",
-            "Fuel surcharge overruns (fórmula sem teto)",
-            "Accessorial leakage (taxas extras)",
-            "Damage & claims cost",
-            "Failed pickup / no-show",
-            "Redelivery cost",
-        ],
-        # Route-specific sub-config
-        "route_types": [
-            "Inbound to Warehouse (fornecedor → armazém)",
-            "Middle Mile / Transfer (FC → CD / cross-dock)",
-            "Outbound B2B (armazém → lojas / hubs)",
-            "Last Mile Injection (armazém → delivery station)",
-            "Reverse Logistics (devoluções → armazém)",
-            "Shuttle / Yard Movement (transferências internas)",
-            "Dedicated Lane (rota fixa recorrente)",
-            "Spot / On-demand (frete sob demanda)",
-        ],
-        "vehicle_types": [
-            "Van / Sprinter (até 3,5t)",
-            "VUC (até 6t — restrição urbana)",
-            "Toco (até 13t)",
-            "Truck (até 23t)",
-            "Carreta LS (até 33t)",
-            "Bitrem (até 57t)",
-            "Rodotrem (até 74t)",
-            "Refrigerado / temperatura controlada",
-            "Sider / Grade aberta",
-            "Baú (fechado)",
-            "Container 20' / 40'",
-            "Semi-reboque tanque",
-        ],
-        "cargo_risk_levels": [
-            "Padrão / Geral (baixo valor)",
-            "Médio valor (R$50K–R$300K por embarque)",
-            "Alto valor (R$300K–R$1M por embarque)",
-            "Muito alto valor / eletrônicos (>R$1M)",
-            "Frágil / perecível",
-            "Perigoso (IMDG / ADR)",
-            "Farmacêutico / GDP",
-        ],
-        "escort_triggers": {
-            "RJ / ES (rotas de risco)":          True,
-            "Alto valor >R$500K":                True,
-            "Eletrônicos / smartphones":         True,
-            "Carga perigosa":                    False,
-            "Padrão":                            False,
-        },
     },
     "BPO / Call Center": {
         "icon": "🎧", "color": "#06b6d4",
@@ -436,6 +901,7 @@ SERVICE_SCOPE_CONFIG = {
         "leakage_drivers": ["Scope additions", "Emergency requests", "Rework cost", "Overhead overruns", "Unplanned escalations"],
     },
 }
+
 SERVICE_SCORECARD_WEIGHTS = {
     "Cost competitiveness":    20.0,  # Is the rate card benchmarked? Formula-based? Open-book?
     "SLA / Delivery":          18.0,  # On-time, quality of delivery, OTIF
@@ -696,11 +1162,31 @@ html, body, [data-testid="stApp"] {
     color: #e2e8f0;
 }
 .block-container {
-    padding: 1.5rem 2rem 4rem 2rem !important;
+    padding: 2rem 2rem 4rem 2rem !important;
     max-width: 1800px !important;
 }
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
+/* Sidebar toggle button */
+[data-testid="stSidebarCollapseButton"] {
+    background: rgba(59,130,246,.15) !important;
+    border: 1px solid rgba(59,130,246,.3) !important;
+    border-radius: 8px !important;
+    color: #60a5fa !important;
+    transition: all .2s ease !important;
+}
+[data-testid="stSidebarCollapseButton"]:hover {
+    background: rgba(59,130,246,.28) !important;
+    box-shadow: 0 4px 12px rgba(59,130,246,.25) !important;
+}
+/* Collapsed sidebar — show expand button prominently */
+[data-testid="collapsedControl"] {
+    background: rgba(59,130,246,.15) !important;
+    border: 1px solid rgba(59,130,246,.3) !important;
+    border-radius: 0 10px 10px 0 !important;
+    color: #60a5fa !important;
+    width: 32px !important;
+}
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0a1628 0%, #0d1f3c 100%) !important;
     border-right: 1px solid rgba(59,130,246,.18) !important;
@@ -900,7 +1386,7 @@ label {
     background: linear-gradient(135deg, #0a0f1e 0%, #0d1b3e 40%, #1a1040 100%);
     border: 1px solid rgba(99,102,241,.25);
     border-radius: 24px; padding: 40px 44px 36px;
-    margin-bottom: 28px;
+    margin-bottom: 48px;
     box-shadow: 0 24px 64px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
     animation: fadeSlideUp .5s ease-out both;
 }
@@ -1050,9 +1536,10 @@ label {
     animation: fadeSlideUp .5s ease-out both;
 }
 .v46-chart h4 {
-    font-family: 'Libre Baskerville', Georgia, serif !important; font-size: .95rem !important;
-    font-weight: 700 !important; color: #e2e8f0 !important;
-    margin: 0 0 14px 0 !important;
+    font-family: 'Libre Baskerville', Georgia, serif !important; font-size: 1.05rem !important;
+    font-weight: 700 !important; color: #f1f5f9 !important;
+    margin: 0 0 16px 0 !important; text-align: center !important;
+    letter-spacing: -.01em !important;
 }
 
 /* AI Copilot card */
@@ -1623,6 +2110,294 @@ def render_service_scope_fields(*, key_prefix: str, scope: str) -> Dict[str, flo
     return values
 
 
+def render_indirect_scope_extra_panel(*, key_prefix: str, scope: str, reporting_currency: str, annual_spend: float) -> Dict:
+    """
+    Deep-dive analytics panel for each focal indirect buying scope.
+    Renders scope-specific leakage waterfall, open-cost model, KPI targets,
+    negotiation levers, compliance checklist and strategic notes.
+    Called from render_service_supplier_builder when scope is one of the 9 focal scopes.
+    """
+    cfg = SERVICE_SCOPE_CONFIG.get(scope, {})
+    if not cfg:
+        return {}
+    icon = cfg.get("icon", "🧾")
+    color = cfg.get("color", "#64748b")
+    leakage_drivers = cfg.get("leakage_drivers", [])
+    sla_kpis = cfg.get("sla_kpis", [])
+    negotiation_levers = cfg.get("negotiation_levers", [])
+    open_cost_model = cfg.get("open_cost_model", [])
+    result = {}
+
+    # ── Contract leakage model ────────────────────────────────────────────
+    if leakage_drivers:
+        with st.expander(f"💧 Leakage waterfall — {scope}", expanded=False):
+            st.caption("Modele cada vetor de leakage. Amazon procurement exige que scope creep, emergências e retrabalho estejam orçados antes da assinatura.")
+            leakage_vals = {}
+            cols_leakage = st.columns(min(3, len(leakage_drivers)))
+            for idx, driver in enumerate(leakage_drivers):
+                with cols_leakage[idx % 3]:
+                    leakage_vals[driver] = st.number_input(
+                        driver[:40], min_value=0.0, value=0.0, step=max(annual_spend * 0.002, 1000.0), format="%.2f",
+                        key=f"{key_prefix}__leakage__{idx}",
+                    )
+            total_leakage = sum(leakage_vals.values())
+            leakage_pct = safe_divide(total_leakage, annual_spend) * 100
+            leakage_color = "#f87171" if leakage_pct > 8 else "#fbbf24" if leakage_pct > 4 else "#34d399"
+            if annual_spend > 0:
+                wf_html = "".join(
+                    f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+                    f"<span style='font-size:.77rem;color:#94a3b8'>{d[:45]}</span>"
+                    f"<span style='font-family:IBM Plex Mono,monospace;font-size:.77rem;color:#e2e8f0'>{reporting_currency} {v:,.0f}</span></div>"
+                    for d, v in leakage_vals.items() if v > 0
+                )
+                if wf_html:
+                    st.markdown(
+                        f"""<div class="v46-leakage">
+                        <div class="v46-leakage-title">💧 Leakage decomposition</div>
+                        {wf_html}
+                        <div class="v46-leakage-row">
+                            <span class="v46-leakage-item"><b>Total leakage</b></span>
+                            <span class="v46-leakage-val" style="color:{leakage_color}">
+                                {reporting_currency} {total_leakage:,.0f} ({leakage_pct:.1f}% of spend)
+                                {'⚠ Red flag >8%' if leakage_pct > 8 else ''}
+                            </span>
+                        </div></div>""",
+                        unsafe_allow_html=True,
+                    )
+            result["total_leakage"] = total_leakage
+            result["leakage_pct"] = leakage_pct
+
+    # ── Open-cost model (scope-specific) ─────────────────────────────────
+    if open_cost_model:
+        with st.expander(f"🔬 Open-cost model — {scope}", expanded=False):
+            st.caption("Solicite ao fornecedor o custo aberto linha a linha. Itens não explicados são alavancas de negociação.")
+            oc_vals = {}
+            oc_cols = st.columns(min(3, len(open_cost_model)))
+            for idx, (k, label) in enumerate(open_cost_model):
+                with oc_cols[idx % 3]:
+                    oc_vals[k] = st.number_input(
+                        label[:35], min_value=0.0, value=0.0, step=max(annual_spend * 0.01, 500.0), format="%.2f",
+                        key=f"{key_prefix}__opencost__{k}",
+                    )
+            oc_total = sum(oc_vals.values())
+            oc_coverage = safe_divide(oc_total, annual_spend) * 100
+            unexplained = max(annual_spend - oc_total, 0.0)
+            oc_color = "#34d399" if oc_coverage >= 80 else "#fbbf24" if oc_coverage >= 50 else "#f87171"
+            st.markdown(
+                f"""<div class="v46-opencost-card">
+                <b>Open-cost coverage:</b> <span style="color:{oc_color}">{oc_coverage:.1f}%</span> &nbsp;·&nbsp;
+                <b>Total modelado:</b> {reporting_currency} {oc_total:,.0f} &nbsp;·&nbsp;
+                <b>Valor não explicado (alavanca):</b> <span style="color:#f87171">{reporting_currency} {unexplained:,.0f}</span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            result["open_cost_total"] = oc_total
+            result["open_cost_coverage_pct"] = oc_coverage
+            result["unexplained_quote_value"] = unexplained
+
+    # ── SLA target table ──────────────────────────────────────────────────
+    if sla_kpis:
+        with st.expander(f"🎯 KPIs & SLA targets — {scope}", expanded=False):
+            st.caption("Defina os targets antes de assinar. Sem target definido, não há base para penalidade ou incentivo.")
+            kpi_targets = {}
+            kpi_actuals = {}
+            kpi_cols = st.columns(min(3, len(sla_kpis)))
+            for idx, kpi in enumerate(sla_kpis):
+                with kpi_cols[idx % 3]:
+                    kpi_targets[kpi] = st.number_input(f"Target: {kpi[:30]}", min_value=0.0, value=95.0, step=0.5, format="%.2f", key=f"{key_prefix}__kpi_target__{idx}")
+                    kpi_actuals[kpi] = st.number_input(f"Atual:  {kpi[:30]}", min_value=0.0, value=92.0, step=0.5, format="%.2f", key=f"{key_prefix}__kpi_actual__{idx}")
+            # Simple gap analysis
+            gaps = {kpi: kpi_targets[kpi] - kpi_actuals[kpi] for kpi in sla_kpis}
+            at_risk = [k for k, v in gaps.items() if v > 0]
+            if at_risk:
+                st.markdown(
+                    f"<div class='v46-svc-result'><b>KPIs abaixo do target:</b> " +
+                    " &nbsp;·&nbsp; ".join(f"<span style='color:#f87171'>{k[:25]} (gap {v:.1f})</span>" for k, v in gaps.items() if v > 0) +
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            result["kpi_targets"] = kpi_targets
+            result["kpi_gaps"] = gaps
+
+    # ── Negotiation levers quantified ─────────────────────────────────────
+    if negotiation_levers:
+        with st.expander(f"💡 Levers de negociação — {scope}", expanded=False):
+            st.caption("Quantifique o valor $ de cada lever antes de entrar na negociação. O lever que não está quantificado não entra na mesa.")
+            lever_vals = {}
+            lv_cols = st.columns(min(2, len(negotiation_levers)))
+            for idx, lever in enumerate(negotiation_levers):
+                with lv_cols[idx % 2]:
+                    lever_vals[lever] = st.number_input(
+                        f"Valor: {lever[:45]}", min_value=0.0, value=0.0, step=max(annual_spend * 0.005, 500.0), format="%.2f",
+                        key=f"{key_prefix}__lever__{idx}",
+                    )
+            total_lever = sum(lever_vals.values())
+            if total_lever > 0:
+                st.markdown(
+                    f"<div class='v46-roi-badge'>💡 Potencial de negociação total: <b>{reporting_currency} {total_lever:,.0f}</b> ({safe_divide(total_lever, annual_spend)*100:.1f}% do contrato)</div>",
+                    unsafe_allow_html=True,
+                )
+            result["negotiation_potential"] = total_lever
+
+    # ── Scope-specific deep panels ────────────────────────────────────────
+
+    # IT Software: license metrics + TCO
+    if "IT — Software" in scope:
+        with st.expander("📋 License metrics & true-up model", expanded=False):
+            st.caption("True-up não planejado é uma das maiores fontes de surpresa orçamentária em TI.")
+            lm_cols = st.columns(4)
+            with lm_cols[0]: licensed_seats = st.number_input("Seats licenciados", min_value=0.0, value=0.0, step=10.0, key=f"{key_prefix}__licensed_seats")
+            with lm_cols[1]: actual_seats   = st.number_input("Seats em uso atual", min_value=0.0, value=0.0, step=10.0, key=f"{key_prefix}__actual_seats")
+            with lm_cols[2]: price_per_seat = st.number_input(f"Preço por seat ({reporting_currency})", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__price_per_seat")
+            with lm_cols[3]: growth_rate_pct = st.number_input("Crescimento de usuários/ano %", min_value=0.0, value=5.0, step=1.0, key=f"{key_prefix}__seat_growth")
+            unused_seats = max(float(licensed_seats) - float(actual_seats), 0)
+            projected_seats_y2 = float(actual_seats) * (1 + float(growth_rate_pct) / 100)
+            true_up_risk = max(projected_seats_y2 - float(licensed_seats), 0) * float(price_per_seat)
+            unused_cost = unused_seats * float(price_per_seat)
+            if float(licensed_seats) > 0:
+                st.markdown(
+                    f"""<div class='v46-opencost-card'>
+                    <b>Seats não utilizados:</b> {unused_seats:.0f} → custo desperdiçado: <span style='color:#f87171'>{reporting_currency} {unused_cost:,.0f}/ano</span> &nbsp;·&nbsp;
+                    <b>Risco de true-up (ano 2):</b> <span style='color:#fbbf24'>{reporting_currency} {true_up_risk:,.0f}</span>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+            result["unused_seat_cost"] = unused_cost
+            result["true_up_risk"] = true_up_risk
+
+    # IT Hardware: full TCO model (CAPEX vs Cloud)
+    if "Hardware" in scope:
+        with st.expander("🖥️ CAPEX TCO vs Cloud — comparativo completo", expanded=False):
+            st.caption("Uma decisão CAPEX vs OPEX/Cloud deve comparar o custo total ao longo de todo o ciclo de vida, não só o preço de aquisição.")
+            tc_cols = st.columns(5)
+            with tc_cols[0]: hw_unit_cost    = st.number_input(f"Custo hardware ({reporting_currency})", min_value=0.0, value=0.0, step=10_000.0, key=f"{key_prefix}__hw_unit")
+            with tc_cols[1]: hw_units        = st.number_input("Quantidade de unidades", min_value=0.0, value=1.0, step=1.0, key=f"{key_prefix}__hw_units")
+            with tc_cols[2]: hw_life_years   = st.number_input("Vida útil (anos)", min_value=1.0, value=5.0, step=1.0, key=f"{key_prefix}__hw_life")
+            with tc_cols[3]: hw_support_pct  = st.number_input("Suporte anual (% do valor)", min_value=0.0, value=15.0, step=1.0, key=f"{key_prefix}__hw_support")
+            with tc_cols[4]: hw_power_kw     = st.number_input("Consumo energia (kW)", min_value=0.0, value=0.0, step=0.1, key=f"{key_prefix}__hw_power")
+            tc2 = st.columns(5)
+            with tc2[0]: energy_cost_kwh  = st.number_input(f"Energia (R$/kWh)", min_value=0.0, value=0.72, step=0.01, key=f"{key_prefix}__energy_kwh")
+            with tc2[1]: dc_pue           = st.number_input("PUE do datacenter", min_value=1.0, value=1.5, step=0.05, key=f"{key_prefix}__pue")
+            with tc2[2]: dc_rack_monthly  = st.number_input(f"Custo rack ({reporting_currency}/mês)", min_value=0.0, value=0.0, step=100.0, key=f"{key_prefix}__rack_cost")
+            with tc2[3]: wacc_pct         = st.number_input("WACC / custo capital %", min_value=0.0, value=15.0, step=0.5, key=f"{key_prefix}__wacc")
+            with tc2[4]: cloud_equiv_monthly = st.number_input(f"Equivalente cloud/mês ({reporting_currency})", min_value=0.0, value=0.0, step=1_000.0, key=f"{key_prefix}__cloud_monthly")
+            # TCO calculation
+            hw_total_capex = float(hw_unit_cost) * float(hw_units)
+            annual_support = hw_total_capex * float(hw_support_pct) / 100
+            annual_energy  = float(hw_power_kw) * 8_760 * float(energy_cost_kwh) * float(dc_pue) * float(hw_units)
+            annual_rack    = float(dc_rack_monthly) * 12 * float(hw_units)
+            annual_depreciation = safe_divide(hw_total_capex, float(hw_life_years))
+            wacc_cost      = hw_total_capex * float(wacc_pct) / 100
+            total_annual_capex_tco = annual_depreciation + annual_support + annual_energy + annual_rack + wacc_cost
+            total_life_tco = total_annual_capex_tco * float(hw_life_years)
+            cloud_life_cost = float(cloud_equiv_monthly) * 12 * float(hw_life_years)
+            capex_vs_cloud  = total_life_tco - cloud_life_cost
+            if hw_total_capex > 0:
+                cv_color = "#34d399" if capex_vs_cloud < 0 else "#f87171"
+                st.markdown(
+                    f"""<div class='v46-svc-result' style='padding:14px 18px'>
+                    <div style='font-size:.82rem;font-weight:600;color:#c4b5fd;margin-bottom:8px'>🖥️ CAPEX vs Cloud TCO ({float(hw_life_years):.0f} anos)</div>
+                    <div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:.78rem;margin-bottom:10px'>
+                        <div style='background:rgba(15,23,42,.5);padding:8px;border-radius:8px'>
+                            <div style='color:#64748b'>CAPEX total</div>
+                            <div style='font-family:IBM Plex Mono;font-weight:600;color:#e2e8f0'>{reporting_currency} {hw_total_capex:,.0f}</div>
+                        </div>
+                        <div style='background:rgba(15,23,42,.5);padding:8px;border-radius:8px'>
+                            <div style='color:#64748b'>TCO anual (all-in)</div>
+                            <div style='font-family:IBM Plex Mono;font-weight:600;color:#60a5fa'>{reporting_currency} {total_annual_capex_tco:,.0f}</div>
+                        </div>
+                        <div style='background:rgba(15,23,42,.5);padding:8px;border-radius:8px'>
+                            <div style='color:#64748b'>TCO total ({float(hw_life_years):.0f}yr)</div>
+                            <div style='font-family:IBM Plex Mono;font-weight:600;color:#60a5fa'>{reporting_currency} {total_life_tco:,.0f}</div>
+                        </div>
+                        <div style='background:rgba(15,23,42,.5);padding:8px;border-radius:8px'>
+                            <div style='color:#64748b'>CAPEX vs Cloud</div>
+                            <div style='font-family:IBM Plex Mono;font-weight:600;color:{cv_color}'>
+                                {'CAPEX mais barato' if capex_vs_cloud < 0 else 'Cloud mais barato'}<br>{reporting_currency} {abs(capex_vs_cloud):,.0f}
+                            </div>
+                        </div>
+                    </div>
+                    <div style='font-size:.76rem;color:#64748b'>
+                        Energia: {reporting_currency} {annual_energy:,.0f}/ano &nbsp;·&nbsp;
+                        Suporte: {reporting_currency} {annual_support:,.0f}/ano &nbsp;·&nbsp;
+                        Rack: {reporting_currency} {annual_rack:,.0f}/ano &nbsp;·&nbsp;
+                        Custo capital (WACC): {reporting_currency} {wacc_cost:,.0f}/ano
+                    </div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+            result["hw_total_capex"] = hw_total_capex
+            result["total_annual_capex_tco"] = total_annual_capex_tco
+            result["total_life_tco"] = total_life_tco
+            result["capex_vs_cloud_delta"] = capex_vs_cloud
+
+    # EPI: NR compliance checklist
+    if "EPI" in scope:
+        with st.expander("✅ Checklist de conformidade NR & CA", expanded=False):
+            st.caption("Conformidade NR é obrigação legal — qualquer gap é passivo trabalhista imediato.")
+            nr_items = cfg.get("nr_compliance_checklist", [])
+            nr_results = {}
+            for idx, item in enumerate(nr_items):
+                nr_results[item] = st.checkbox(item, value=True, key=f"{key_prefix}__nr__{idx}")
+            gaps_nr = [k for k, v in nr_results.items() if not v]
+            if gaps_nr:
+                st.error(f"⚠ {len(gaps_nr)} gap(s) de conformidade NR: " + " · ".join(g[:30] for g in gaps_nr))
+            else:
+                st.success("✅ Todos os requisitos NR verificados")
+            result["nr_compliance_gaps"] = gaps_nr
+
+    # Marketing: pass-through audit
+    if "Marketing" in scope:
+        pt_items = cfg.get("pass_through_audit_model", [])
+        if pt_items:
+            with st.expander("🔍 Auditoria de pass-through & transparência", expanded=False):
+                st.caption("Pass-through não auditado é uma das maiores fontes de leakage em marketing. Separe fee de agência de custo de produção/mídia.")
+                pt_cols = st.columns(min(3, len(pt_items)))
+                pt_vals = {}
+                for idx, item in enumerate(pt_items):
+                    with pt_cols[idx % 3]:
+                        pt_vals[item] = st.number_input(item[:35], min_value=0.0, value=0.0, step=10_000.0, key=f"{key_prefix}__pt__{idx}")
+                total_pt = sum(pt_vals.values())
+                agency_fee = annual_spend - total_pt
+                working_media_pct = safe_divide(total_pt, annual_spend) * 100
+                st.markdown(
+                    f"""<div class='v46-opencost-card'>
+                    <b>Total pass-through:</b> {reporting_currency} {total_pt:,.0f} &nbsp;·&nbsp;
+                    <b>Working media %:</b> {working_media_pct:.1f}% (benchmark: 70-80%) &nbsp;·&nbsp;
+                    <b>Agency fee:</b> {reporting_currency} {agency_fee:,.0f}
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                result["pass_through_total"] = total_pt
+                result["working_media_pct"] = working_media_pct
+
+    # RH Benefits: full benefit TCO
+    if "RH" in scope:
+        benefits_model = cfg.get("benefits_tco_model", [])
+        if benefits_model:
+            with st.expander("💊 Modelo de TCO de benefícios — per capita/mês", expanded=False):
+                st.caption("Benchmark vs mercado Mercer/Towers Watson. Sinistralidade alta é o maior driver de custo em saúde.")
+                ben_cols = st.columns(min(3, len(benefits_model)))
+                ben_vals = {}
+                for idx, (k, label) in enumerate(benefits_model):
+                    with ben_cols[idx % 3]:
+                        ben_vals[k] = st.number_input(label[:35], min_value=0.0, value=0.0, step=50.0, format="%.2f", key=f"{key_prefix}__benefit__{k}")
+                total_benefit_pcm = sum(ben_vals.values())
+                headcount_input = st.number_input("Headcount coberto", min_value=1, value=100, step=10, key=f"{key_prefix}__benefit_headcount")
+                annual_benefits = total_benefit_pcm * float(headcount_input) * 12
+                st.markdown(
+                    f"""<div class='v46-svc-result'>
+                    <b>Total per capita/mês:</b> {reporting_currency} {total_benefit_pcm:,.2f} &nbsp;·&nbsp;
+                    <b>Custo anual total ({headcount_input} vidas):</b> {reporting_currency} {annual_benefits:,.0f}
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                result["total_benefit_per_capita_monthly"] = total_benefit_pcm
+                result["annual_benefits_total"] = annual_benefits
+
+    return result
+
+
 def render_service_scorecard(*, key_prefix: str, supplier_label: str, default_score: float = 82.0) -> Dict:
     st.markdown("<div class='v46-plain-title'>📊 Supplier Performance Scorecard</div>", unsafe_allow_html=True)
     c = st.columns(4) + st.columns(3)  # type: ignore
@@ -1972,6 +2747,28 @@ def render_service_supplier_builder(
         )
 
     scorecard = render_service_scorecard(key_prefix=key_prefix, supplier_label=supplier_label)
+
+    # ── Scope-specific deep analytics panel ──────────────────────────────
+    FOCAL_SCOPES = [
+        "IT — Software & SaaS licensing",
+        "IT — Hardware & Infrastructure (incl. CAPEX servers)",
+        "Serviços de Outsourcing de Mão de Obra",
+        "Mão de Obra Temporária (CLT flex / PJ / agência)",
+        "Facilities / Limpeza, Manutenção & Workplace",
+        "EPI / Segurança do Trabalho & Materiais",
+        "Jardinagem & Serviços de Áreas Externas",
+        "Marketing / Agências & Serviços Criativos",
+        "RH — Recrutamento, T&D & Benefícios",
+    ]
+    extra_result = {}
+    if scope in FOCAL_SCOPES:
+        extra_result = render_indirect_scope_extra_panel(
+            key_prefix=key_prefix, scope=scope,
+            reporting_currency=reporting_currency,
+            annual_spend=float(proposed_value),
+        )
+
+
     expected_risk_cost = float(risk_prob) / 100.0 * float(risk_impact)
     sla_risk_cost = sla_result["expected_annual_impact"]
     service_tco_before_prod = (float(proposed_value) + float(transition_cost) + float(change_order_reserve)
@@ -4827,9 +5624,10 @@ st.markdown(
 
 input_tabs = st.tabs([
     "1 · Current Baseline", "2 · Supplier Proposals",
-    "3 · Supplier Management", "4 · Custom Points",
-    "5 · Risk & Constraints", "6 · Share & Optimization",
-    "7 · Executive Dash", "🗺️ Route Optimizer",
+    "3 · 🔬 Should-Cost", "4 · Supplier Management",
+    "5 · Custom Points", "6 · Risk Matrix",
+    "7 · Share & Optimization", "8 · Executive Dash",
+    "🗺️ Route Optimizer",
 ])
 
 # ── TAB 1: Current Baseline ──────────────────────────────────────────────────
@@ -4908,8 +5706,272 @@ with input_tabs[1]:
                     st.markdown("</div>", unsafe_allow_html=True)
                     proposal_inputs[country][sup] = {"spend": float(spend_), "payment_days": int(pmt_days), "lead_time_days": int(lead_time), "safety_stock_days": int(safety_st), "inventory_ownership": inv_own, "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_s, "service_profile": sp_s, "service_scope": service_scope}
 
-# ── TAB 3: Supplier Management ────────────────────────────────────────────────
+# ── TAB 2 (NEW): Should-Cost Engine ─────────────────────────────────────────
 with input_tabs[2]:
+    render_section(
+        "🔬 Should-Cost Engine",
+        "Defina o preço justo de mercado uma vez — a ferramenta compara automaticamente contra todas as propostas.",
+        "#a78bfa",
+    )
+    st.markdown("""<div class='v46-insight'>
+    <b>Como usar:</b> Preencha o modelo abaixo <b>uma única vez</b> com o preço de referência e as tendências de mercado atuais.
+    A ferramenta calculará o <b>should-cost</b> e o <b>target de negociação</b>, depois comparará automaticamente contra
+    cada proposta de fornecedor — mostrando o gap, o veredicto e a alavanca de negociação para cada um.
+    O resultado aparece no <b>Cost × Risk frontier</b> e no <b>decision stack</b>.
+    </div>""", unsafe_allow_html=True)
+
+    # ── Reference price & period ──────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>📌 Preço / custo de referência</div>", unsafe_allow_html=True)
+    sc_r1 = st.columns([1.2, 0.9, 0.9, 0.9])
+    with sc_r1[0]:
+        sc_ref_price = st.number_input(
+            "Preço / custo de referência (na moeda de reporte)",
+            min_value=0.0, value=float(st.session_state.get("sc_ref_price_global", 0.0)),
+            step=1.0, format="%.4f", key="sc_ref_price_global",
+            help="Último contrato assinado, benchmark externo (ex: ICIS, Mercer, ABAP) ou cotação anterior. Este é o ponto de partida.",
+        )
+    with sc_r1[1]:
+        sc_ref_period = st.text_input(
+            "Período de referência",
+            value=st.session_state.get("sc_ref_period_global", "Último contrato"),
+            key="sc_ref_period_global",
+            help="Ex: 'Jan/2024', '12 meses atrás', 'último contrato 2023'",
+        )
+    with sc_r1[2]:
+        sc_neg_buffer = st.number_input(
+            "Stretch goal de negociação %",
+            min_value=0.0, max_value=25.0,
+            value=float(st.session_state.get("sc_neg_buffer_global", 5.0)),
+            step=0.5, key="sc_neg_buffer_global",
+            help="% abaixo do should-cost para definir o target agressivo de negociação.",
+        )
+    with sc_r1[3]:
+        sc_price_label = st.text_input(
+            "Unidade / rótulo do preço",
+            value=st.session_state.get("sc_price_label_global", "unit price / kg"),
+            key="sc_price_label_global",
+            help="Ex: 'R$/kg', 'R$/FTE/mês', 'R$/ano', 'USD/MT'",
+        )
+
+    # ── Template selector ─────────────────────────────────────────────────
+    st.markdown("<div class='v46-plain-title'>📋 Template de drivers de mercado</div>", unsafe_allow_html=True)
+    _auto_preset = SHOULD_COST_PRESET_MAP.get(
+        service_scope or analysis_mode,
+        SHOULD_COST_PRESET_MAP.get(analysis_mode, "Custom (manual)")
+    )
+    sc_tc = st.columns([1.5, 0.5])
+    with sc_tc[0]:
+        sc_chosen_preset = st.selectbox(
+            "Template de drivers",
+            options=list(SHOULD_COST_DRIVER_PRESETS.keys()),
+            index=list(SHOULD_COST_DRIVER_PRESETS.keys()).index(_auto_preset)
+                  if _auto_preset in SHOULD_COST_DRIVER_PRESETS else 0,
+            key="sc_preset_global",
+            help="Selecionado automaticamente pelo modo de análise. Você pode mudar para outro template.",
+        )
+    with sc_tc[1]:
+        sc_n_drivers = st.number_input(
+            "Nº de drivers (max 8)", min_value=1, max_value=8,
+            value=min(len(SHOULD_COST_DRIVER_PRESETS[sc_chosen_preset]), 6),
+            step=1, key="sc_n_drivers_global",
+        )
+
+    drivers_preset_g = SHOULD_COST_DRIVER_PRESETS[sc_chosen_preset][:int(sc_n_drivers)]
+
+    # ── Driver table ──────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='display:grid;grid-template-columns:2fr 1fr 1.2fr;gap:6px;"
+        "padding:7px 10px;background:rgba(15,23,42,.5);border-radius:10px;"
+        "font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;"
+        "letter-spacing:.06em;margin:8px 0 4px 0'>"
+        "<span>Driver de custo</span><span>Peso % no custo total</span>"
+        "<span>Variação de mercado (%)</span></div>",
+        unsafe_allow_html=True,
+    )
+    sc_drivers_global = []
+    sc_total_weight_g = 0.0
+    for idx, d in enumerate(drivers_preset_g):
+        dc3 = st.columns([2, 1, 1.2])
+        with dc3[0]:
+            dn = st.text_input("Driver", value=d["name"], label_visibility="collapsed", key=f"sc_dname_g_{idx}")
+        with dc3[1]:
+            dw = st.number_input("Peso %", min_value=0.0, max_value=100.0, value=float(d["weight"]),
+                                 step=1.0, format="%.1f", label_visibility="collapsed", key=f"sc_dweight_g_{idx}")
+        with dc3[2]:
+            dch = st.number_input("Variação %", min_value=-50.0, max_value=100.0,
+                                  value=float(d.get("change", 0.0)), step=0.5, format="%.2f",
+                                  label_visibility="collapsed", key=f"sc_dchange_g_{idx}",
+                                  help="Positivo = driver subiu (aumenta o custo). Negativo = caiu.")
+        sc_drivers_global.append({"name": dn, "weight": dw, "change": dch})
+        sc_total_weight_g += dw
+
+    wc_g = "#34d399" if abs(sc_total_weight_g - 100.0) < 0.5 else "#f87171"
+    st.markdown(
+        f"<div style='font-size:.75rem;margin:4px 0 12px'>"
+        f"<span style='color:{wc_g}'>Pesos somam: <b>{sc_total_weight_g:.1f}%</b> "
+        f"{'✓' if abs(sc_total_weight_g-100)<0.5 else '— ajuste para 100%'}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Calculate global should-cost ──────────────────────────────────────
+    sc_global_result = calc_should_cost_hybrid(float(sc_ref_price), sc_drivers_global)
+    sc_should_cost_g  = sc_global_result["should_cost"]
+    sc_neg_target_g   = sc_should_cost_g * (1.0 - float(sc_neg_buffer) / 100.0)
+    sc_total_adj_g    = sc_global_result["total_adjustment_pct"]
+    sc_contribs_g     = sc_global_result["driver_contributions"]
+
+    # Store globally for frontier + decision stacks
+    st.session_state["last_should_cost"] = {
+        "should_cost": float(sc_should_cost_g),
+        "neg_target":  float(sc_neg_target_g),
+        "total_adj_pct": float(sc_total_adj_g),
+        "drivers":     sc_drivers_global,
+        "preset":      sc_chosen_preset,
+        "ref_price":   float(sc_ref_price),
+        "ref_period":  sc_ref_period,
+        "neg_buffer_pct": float(sc_neg_buffer),
+        "price_label": sc_price_label,
+        "gap_vs_should": 0.0,   # will be per-supplier below
+        "gap_pct": 0.0,
+        "gap_vs_target": 0.0,
+    }
+
+    # ── Should-cost summary card ──────────────────────────────────────────
+    if float(sc_ref_price) > 0:
+        adj_color_g = "#f87171" if sc_total_adj_g > 0 else "#34d399" if sc_total_adj_g < 0 else "#64748b"
+        st.markdown(
+            f"""<div style="background:rgba(49,46,129,.15);border:1px solid rgba(167,139,250,.25);
+            border-left:5px solid #a78bfa;border-radius:16px;padding:18px 22px;margin:12px 0 20px 0">
+            <div style="font-size:.82rem;font-weight:600;color:#a78bfa;margin-bottom:14px;
+            text-transform:uppercase;letter-spacing:.07em">🔬 Should-Cost calculado</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+              <div style="background:rgba(15,23,42,.5);padding:12px 14px;border-radius:10px">
+                <div style="font-size:.70rem;color:#64748b;margin-bottom:4px">Preço referência ({sc_ref_period})</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.15rem;font-weight:600;color:#e2e8f0">
+                  {currency_symbol} {float(sc_ref_price):,.4f}</div>
+                <div style="font-size:.70rem;color:#64748b;margin-top:2px">{sc_price_label}</div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:12px 14px;border-radius:10px">
+                <div style="font-size:.70rem;color:#64748b;margin-bottom:4px">Should-cost hoje</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.15rem;font-weight:600;color:#a78bfa">
+                  {currency_symbol} {sc_should_cost_g:,.4f}
+                  <span style="font-size:.72rem;color:{adj_color_g};margin-left:6px">({sc_total_adj_g:+.2f}%)</span>
+                </div>
+                <div style="font-size:.70rem;color:#64748b;margin-top:2px">{sc_price_label}</div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:12px 14px;border-radius:10px">
+                <div style="font-size:.70rem;color:#64748b;margin-bottom:4px">Target de negociação (-{sc_neg_buffer:.1f}% stretch)</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.15rem;font-weight:600;color:#34d399">
+                  {currency_symbol} {sc_neg_target_g:,.4f}</div>
+                <div style="font-size:.70rem;color:#64748b;margin-top:2px">{sc_price_label}</div>
+              </div>
+            </div>
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(148,163,184,.12)">
+              <div style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;
+              letter-spacing:.06em;margin-bottom:8px">Contribuição de cada driver</div>
+              {"".join(
+                f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                f"padding:4px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+                f"<span style='font-size:.78rem;color:#94a3b8'>{name[:40]}</span>"
+                f"<span style='font-family:IBM Plex Mono;font-size:.78rem;"
+                f"color:{'#f87171' if v>0 else '#34d399' if v<0 else '#64748b'}'>{v:+.2f}%</span></div>"
+                for name, v in sc_contribs_g.items() if abs(v) > 0.001
+              ) or "<div style='font-size:.78rem;color:#475569'>Nenhuma variação informada ainda — ajuste os drivers acima.</div>"}
+            </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        # ── Per-supplier comparison table ─────────────────────────────────
+        st.markdown("<div class='v46-plain-title'>📊 Comparativo should-cost vs todas as propostas</div>", unsafe_allow_html=True)
+        st.caption("A tabela abaixo é atualizada automaticamente conforme você preenche as propostas na aba 2.")
+
+        sup_rows_sc = []
+        for country in COUNTRIES:
+            for sup in SUPPLIERS:
+                # Get proposal price: direct = unit_price_reporting, indirect = proposed contract value / 12 / headcount
+                dp_ = proposal_inputs.get(country, {}).get(sup, {}).get("direct_profile", {}) or {}
+                sp_ = proposal_inputs.get(country, {}).get(sup, {}).get("service_profile", {}) or {}
+                if analysis_mode == "Direct Materials":
+                    prop_price = float(dp_.get("unit_price_reporting", 0.0) or 0.0)
+                else:
+                    prop_price = float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or 0.0)
+                if prop_price <= 0:
+                    prop_price = float(proposal_inputs.get(country, {}).get(sup, {}).get("spend", 0.0) or 0.0)
+
+                if prop_price <= 0:
+                    continue
+
+                gap = prop_price - sc_should_cost_g
+                gap_pct_sup = safe_divide(gap, sc_should_cost_g) * 100.0
+                gap_tgt = prop_price - sc_neg_target_g
+                gap_tgt_pct = safe_divide(gap_tgt, sc_neg_target_g) * 100.0
+                share = float(final_shares.get(country, {}).get(sup, 0.0))
+
+                sup_rows_sc.append({
+                    "País": country,
+                    "Fornecedor": supplier_display_name(sup),
+                    "Proposta": fmt_money(prop_price, currency_symbol, compact=True),
+                    "Should-cost": fmt_money(sc_should_cost_g, currency_symbol, compact=True),
+                    "Target negoc.": fmt_money(sc_neg_target_g, currency_symbol, compact=True),
+                    "Gap vs should-cost": f"{gap_pct_sup:+.1f}%",
+                    "Gap vs target": f"{gap_tgt_pct:+.1f}%",
+                    "Share %": f"{share:.1f}%",
+                    "Veredicto": "✅ OK" if gap <= 0 else ("⚠ Negociar" if gap_pct_sup < 10 else "🔴 Acima"),
+                })
+
+        if sup_rows_sc:
+            sc_df = pd.DataFrame(sup_rows_sc)
+            st.dataframe(sc_df, use_container_width=True, hide_index=True)
+
+            # Chart: proposal vs should-cost bar
+            if PLOTLY_AVAILABLE:
+                fig_sc_cmp = go.Figure()
+                sc_labels = [f"{r['País']} · {r['Fornecedor']}" for r in sup_rows_sc]
+                prop_vals = []
+                for r in sup_rows_sc:
+                    # Re-extract numeric value
+                    for country in COUNTRIES:
+                        for sup in SUPPLIERS:
+                            if supplier_display_name(sup) == r["Fornecedor"] and country == r["País"]:
+                                dp_ = proposal_inputs.get(country,{}).get(sup,{}).get("direct_profile",{}) or {}
+                                sp_ = proposal_inputs.get(country,{}).get(sup,{}).get("service_profile",{}) or {}
+                                if analysis_mode == "Direct Materials":
+                                    prop_vals.append(float(dp_.get("unit_price_reporting", 0.0) or 0.0))
+                                else:
+                                    prop_vals.append(float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or proposal_inputs.get(country,{}).get(sup,{}).get("spend", 0.0) or 0.0))
+                if prop_vals:
+                    fig_sc_cmp.add_trace(go.Bar(
+                        name="Proposta fornecedor",
+                        x=sc_labels, y=prop_vals,
+                        marker_color=["#f87171" if v > sc_should_cost_g else "#34d399" for v in prop_vals],
+                        text=[fmt_money(v, currency_symbol, compact=True) for v in prop_vals],
+                        textposition="outside",
+                    ))
+                    fig_sc_cmp.add_hline(
+                        y=sc_should_cost_g, line_dash="dash", line_color="#a78bfa", line_width=2,
+                        annotation_text=f"Should-cost: {fmt_money(sc_should_cost_g, currency_symbol, compact=True)}",
+                        annotation_font_color="#a78bfa",
+                    )
+                    fig_sc_cmp.add_hline(
+                        y=sc_neg_target_g, line_dash="dot", line_color="#34d399", line_width=1.5,
+                        annotation_text=f"Target: {fmt_money(sc_neg_target_g, currency_symbol, compact=True)}",
+                        annotation_font_color="#34d399",
+                    )
+                    fig_sc_cmp.update_layout(
+                        title="Proposta vs should-cost vs target de negociação",
+                        yaxis_title=f"{sc_price_label} ({currency_symbol})",
+                        height=340, showlegend=False,
+                    )
+                    st.plotly_chart(apply_chart_theme(fig_sc_cmp, 340), use_container_width=True, config={"displayModeBar": False})
+                    st.caption(f"Linha roxa tracejada = should-cost ({sc_ref_period}). Linha verde pontilhada = target de negociação. Barras verdes = proposta abaixo do should-cost ✅. Barras vermelhas = acima ⚠.")
+        else:
+            st.info("Preencha as propostas dos fornecedores na aba '2 · Supplier Proposals' para ver a comparação aqui.")
+    else:
+        st.info("Informe o preço de referência acima para calcular o should-cost e comparar com as propostas.")
+
+# ── TAB 3: Supplier Management ────────────────────────────────────────────────
+with input_tabs[3]:
     render_section("Supplier Management, Performance & Due Diligence", "Governance scorecards → risk defaults → optimization feed.", "#06b6d4")
     supplier_management_inputs: Dict = {}; gov_rows = []
     for sup in SUPPLIERS:
@@ -4932,7 +5994,7 @@ with input_tabs[2]:
     st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
 
 # ── TAB 4: Custom Points ──────────────────────────────────────────────────────
-with input_tabs[3]:
+with input_tabs[4]:
     render_section("Custom Analysis Points", "Tooling, credits, productivity commitments, tax benefits, exclusivity premiums or any buyer-specific lever.", "#f59e0b")
     cf_count = st.number_input("Number of custom points", min_value=0, max_value=12, value=0, step=1, key="cf_count")
     custom_cost_adj: Dict = {c: {s: 0.0 for s in SUPPLIERS} for c in COUNTRIES}
@@ -4975,9 +6037,9 @@ with input_tabs[3]:
         st.caption("No custom points. Standard proposal, risk and TCO logic will be used.")
 
 # ── TAB 5: Risk & Constraints ─────────────────────────────────────────────────
-with input_tabs[4]:
+with input_tabs[5]:
     render_section(
-        "Supplier Risk & Strategic Constraints",
+        "Supplier Risk Matrix & Strategic Constraints",
         "7-axis risk scoring (Supply · Quality · Financial · Compliance · ESG · Logistics · Geopolitical) · Spider charts · Governance blend · LP optimization feed",
         "#ef4444",
     )
@@ -5055,7 +6117,7 @@ with input_tabs[4]:
                     {dim_rows}</div>""", unsafe_allow_html=True)
 
 # ── TAB 6: Share & Optimization ───────────────────────────────────────────────
-with input_tabs[5]:
+with input_tabs[6]:
     render_section("Share Projection & Cost Optimization", "Slider scenarios + automatic LP optimization respecting Kraljic constraints.", "#10b981")
     st.info("Current baseline uses each country's current payment term only. Proposals use each supplier's proposed term.")
     share_mode = st.radio("Share control", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
@@ -5172,7 +6234,7 @@ def coord_unit(unit):
     base = get_country_geo(ANCHOR_COUNTRY); dl, dn = _stable_offset(unit)
     return {"lat": base["lat"]+dl, "lon": base["lon"]+dn}
 
-with input_tabs[6]:
+with input_tabs[7]:
     render_section("Executive Dash View", "Visual cockpit — filter, map, rank and compare across markets and suppliers.", "#6366f1")
 
     unit_lbl = "Country" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} locality"
@@ -5256,10 +6318,22 @@ with input_tabs[6]:
                 _, _, _, lr_total = calc_scenario(lr_shares, country_inputs, proposal_inputs, supplier_risk, rate_method)
                 fr_rows.append({"Scenario": "Lower Risk", "Risk": lr_total["Weighted Risk"], "Econ Delta": lr_total["Economic All-In Delta"]})
             except: pass
+            # ── Should-Cost point: uses last_should_cost from session state ──
+            sc_sess = st.session_state.get("last_should_cost")
+            if sc_sess and float(sc_sess.get("should_cost", 0.0)) > 0:
+                sc_val  = float(sc_sess["should_cost"])
+                cur_sp  = float(total.get("Current Spend", 1.0)) or 1.0
+                # Should-cost econ delta: how much would current spend change if suppliers priced at should-cost
+                sc_econ_delta = float(total.get("Economic All-In Delta", 0.0)) + float(sc_sess.get("gap_vs_should", 0.0)) * float(total.get("New Spend", cur_sp)) / max(sc_val, 1.0)
+                fr_rows.append({
+                    "Scenario": "Should-Cost",
+                    "Risk": float(total.get("Weighted Risk", 3.0)),
+                    "Econ Delta": sc_econ_delta,
+                })
             frf = pd.DataFrame(fr_rows)
-            col_map = {"Current": "#64748b", "Optimized": "#10b981", "Lower Risk": "#f59e0b"}
-            size_map = {"Current": 18, "Optimized": 18, "Lower Risk": 18}
-            symbol_map = {"Current": "circle", "Optimized": "diamond", "Lower Risk": "square"}
+            col_map    = {"Current": "#64748b", "Optimized": "#10b981", "Lower Risk": "#f59e0b", "Should-Cost": "#a78bfa"}
+            size_map   = {"Current": 18, "Optimized": 18, "Lower Risk": 18, "Should-Cost": 20}
+            symbol_map = {"Current": "circle", "Optimized": "diamond", "Lower Risk": "square", "Should-Cost": "star"}
             fig_fr = go.Figure()
             for _, rw in frf.iterrows():
                 scen = rw["Scenario"]
@@ -5419,17 +6493,127 @@ with input_tabs[6]:
         with c7b[5]: render_kpi("Net Fin. Delta", fmt_money(secondary_row["Net Financial Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Net Financial Delta"]))
         with c7b[6]: render_kpi("Economic All-In", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), SECONDARY_GROUP, delta_tone(secondary_row["Economic All-In Delta"]))
 
+    # ── Should-Cost stack ─────────────────────────────────────────────────────
+    sc_sess = st.session_state.get("last_should_cost")
+    with stack("Should-Cost Analysis", "Preço justo pelo mercado vs proposta — gap e target de negociação.", "🔬", "#a78bfa", "Should-cost"):
+        if not sc_sess or float(sc_sess.get("should_cost", 0.0)) <= 0:
+            st.markdown(
+                "<div class='v46-insight'>Preencha o <b>Should-Cost Engine</b> na aba <b>3 · 🔬 Should-Cost</b> para ver o resultado aqui.</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            sc = sc_sess
+            should_cost    = float(sc["should_cost"])
+            neg_target     = float(sc["neg_target"])
+            total_adj_pct  = float(sc["total_adj_pct"])
+            ref_period     = str(sc.get("ref_period", ""))
+            preset         = str(sc.get("preset", ""))
+            drivers        = sc.get("drivers", [])
+            neg_buffer_pct = float(sc.get("neg_buffer_pct", 5.0))
+            price_label    = str(sc.get("price_label", "unit price"))
+
+            # Compute weighted average proposal price vs should-cost across all suppliers/countries
+            total_spend_sc = float(total.get("New Spend", 0.0)) or 1.0
+            # Proxy: use total spend delta as indicator of market positioning
+            # If suppliers priced at should-cost, spend would shift by the aggregate gap
+            avg_prop_price_proxy = should_cost  # default neutral
+            sup_sc_rows = []
+            for country in COUNTRIES:
+                for sup in SUPPLIERS:
+                    share_frac = float(final_shares.get(country, {}).get(sup, 0.0)) / 100.0
+                    if share_frac < 0.001:
+                        continue
+                    dp_ = proposal_inputs.get(country, {}).get(sup, {}).get("direct_profile", {}) or {}
+                    sp_ = proposal_inputs.get(country, {}).get(sup, {}).get("service_profile", {}) or {}
+                    if analysis_mode == "Direct Materials":
+                        pp = float(dp_.get("unit_price_reporting", 0.0) or 0.0)
+                    else:
+                        pp = float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or proposal_inputs.get(country, {}).get(sup, {}).get("spend", 0.0) or 0.0)
+                    if pp > 0:
+                        sup_sc_rows.append((pp, share_frac, supplier_display_name(sup), country))
+
+            if sup_sc_rows:
+                total_w_sc = sum(r[1] for r in sup_sc_rows) or 1.0
+                avg_prop_price_proxy = sum(r[0] * r[1] for r in sup_sc_rows) / total_w_sc
+            gap_vs_should  = avg_prop_price_proxy - should_cost
+            gap_pct        = safe_divide(gap_vs_should, should_cost) * 100.0
+            gap_vs_target  = avg_prop_price_proxy - neg_target
+            gap_target_pct = safe_divide(gap_vs_target, neg_target) * 100.0
+
+            gap_color  = "#34d399" if gap_vs_should <= 0 else "#f87171"
+            adj_color  = "#f87171" if total_adj_pct > 0 else "#34d399" if total_adj_pct < 0 else "#64748b"
+
+            # KPI row
+            sc_kpis = st.columns(5)
+            with sc_kpis[0]: render_kpi("Should-Cost", fmt_money(should_cost, currency_symbol, compact=True), f"Ajuste: {total_adj_pct:+.2f}% vs {ref_period}", "neutral")
+            with sc_kpis[1]: render_kpi("Target de negociação", fmt_money(neg_target, currency_symbol, compact=True), f"-{neg_buffer_pct:.1f}% stretch goal", "good")
+            with sc_kpis[2]: render_kpi("Gap proposta vs should-cost", fmt_money(gap_vs_should, currency_symbol, compact=True, signed=True), f"{gap_pct:+.1f}%", delta_tone(gap_vs_should))
+            with sc_kpis[3]: render_kpi("Gap proposta vs target", fmt_money(gap_vs_target, currency_symbol, compact=True, signed=True), "Alavanca de negociação", delta_tone(gap_vs_target))
+            with sc_kpis[4]: render_kpi("Drivers activos", str(len([d for d in drivers if abs(float(d.get("change", 0))) > 0.01])), f"Template: {preset[:22]}", "neutral")
+
+            # Driver waterfall
+            if drivers and PLOTLY_AVAILABLE:
+                active_d = [(d["name"], float(d.get("weight", 0)) / 100.0 * float(d.get("change", 0))) for d in drivers if abs(float(d.get("change", 0))) > 0.01]
+                if active_d:
+                    d_names = [x[0][:30] for x in active_d]
+                    d_vals  = [x[1] for x in active_d]
+                    d_cols  = ["#f87171" if v > 0 else "#34d399" for v in d_vals]
+                    fig_sc_wf = go.Figure(go.Bar(
+                        x=d_names, y=d_vals,
+                        marker_color=d_cols,
+                        text=[f"{v:+.2f}%" for v in d_vals],
+                        textposition="outside",
+                        hovertemplate="%{x}<br>Contribuição: %{y:.2f}%<extra></extra>",
+                    ))
+                    fig_sc_wf.add_hline(y=0, line_color="rgba(148,163,184,.3)", line_width=1)
+                    fig_sc_wf.update_layout(
+                        title=f"Contribuição de cada driver — ajuste total: {total_adj_pct:+.2f}%",
+                        yaxis_title="Contribuição ao preço (%)",
+                        height=280,
+                    )
+                    st.plotly_chart(apply_chart_theme(fig_sc_wf, 280), use_container_width=True, config={"displayModeBar": False})
+
+            # Verdict
+            if gap_vs_should <= 0:
+                verdict = f"✅ Proposta está {abs(gap_pct):.1f}% <b>abaixo</b> do should-cost — preço está justificado pelos drivers de mercado. Avançar para negociação final de prazo e condições."
+                v_class = "good"
+            else:
+                verdict = (
+                    f"⚠ Proposta está <b>{gap_pct:.1f}% acima</b> do should-cost. "
+                    f"Gap = <b>{fmt_money(gap_vs_should, currency_symbol, compact=True)}</b>. "
+                    f"Use como alavanca: 'Nosso modelo de mercado indica should-cost de "
+                    f"{fmt_money(should_cost, currency_symbol, compact=True)} — qual é a abertura do fornecedor para chegar nesse nível?' "
+                    f"Target de negociação: <b>{fmt_money(neg_target, currency_symbol, compact=True)}</b>."
+                )
+                v_class = "bad"
+            st.markdown(
+                f"""<div class="v46-decision {v_class}" style="margin-top:12px">
+                <div class="v46-decision-body">{verdict}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
     # ── Decision recommendation ────────────────────────────────────────────────
     with stack("Decision Recommendation", "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
         cls_ = "good" if final_econ <= 0 else "bad"
         title_ = "Scenario is economically attractive — recommend approval" if final_econ <= 0 else "Scenario creates economic cost impact — renegotiate before approval"
+        sc_line = ""
+        sc_sess2 = st.session_state.get("last_should_cost")
+        if sc_sess2 and float(sc_sess2.get("should_cost", 0.0)) > 0:
+            scgap = float(sc_sess2["gap_vs_should"])
+            scgap_pct = float(sc_sess2["gap_pct"])
+            scneg = float(sc_sess2["neg_target"])
+            if scgap > 0:
+                sc_line = f" Should-cost gap: <b style='color:#f87171'>{scgap_pct:+.1f}%</b> above fair market price — negotiate down to <b>{fmt_money(scneg, currency_symbol, compact=True)}</b> before approval."
+            else:
+                sc_line = f" Should-cost check: <b style='color:#34d399'>proposal is within market range ✓</b>"
         st.markdown(
             f"""<div class="v46-decision {cls_}">
             <div class="v46-decision-title">{'✅' if final_econ<=0 else '⚠'} {title_}</div>
             <div class="v46-decision-body">
             Economic all-in delta: <b>{fmt_money(final_econ, currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
             Commercial spend delta: <b>{fmt_money(total['Spend Delta'], currency_symbol, signed=True)}</b> &nbsp;·&nbsp;
-            Weighted risk: <b>{total['Weighted Risk']:.2f}/5</b>.
+            Weighted risk: <b>{total['Weighted Risk']:.2f}/5</b>.{sc_line}
             {'Use Cost Optimization or adjust supplier mix, payment terms or proposal spend to improve the case.' if final_econ>0 else 'Proceed with final commercial negotiation using the top supplier focus list as the anchor for price, payment terms and productivity commitments.'}
             </div></div>""",
             unsafe_allow_html=True,
@@ -5579,7 +6763,7 @@ with input_tabs[6]:
 
 
 # ── Tab 8: Route Optimizer ───────────────────────────────────────────────────
-with input_tabs[7]:
+with input_tabs[8]:
     render_route_optimizer(currency_symbol)
 
 st.markdown(
@@ -5589,3 +6773,366 @@ st.markdown(
     </div>""",
     unsafe_allow_html=True,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHOULD-COST ENGINE — Hybrid: reference price + market trend drivers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Preset market driver templates per mode/scope
+SHOULD_COST_DRIVER_PRESETS: Dict[str, List[Dict]] = {
+    "Direct Materials — Chemicals / Oils": [
+        {"name": "Base commodity price",     "weight": 55.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy / utilities",       "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor / manufacturing",    "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / logistics",      "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "FX / currency",            "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",          "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Direct Materials — Metals": [
+        {"name": "Metal index (LME/Platts)",  "weight": 65.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy / smelting",         "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor",                     "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / logistics",       "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "FX / currency",             "weight": 7.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Direct Materials — Packaging / Polymers": [
+        {"name": "Naphtha / polymer index",   "weight": 58.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energy",                    "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Labor",                     "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight",                   "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",           "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "IT — Software & SaaS": [
+        {"name": "USD/BRL FX",               "weight": 70.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Vendor price increase (CPI/list)", "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Seat volume change",        "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "IT — Hardware / CAPEX": [
+        {"name": "Component cost index (DRAM/NAND/CPU)", "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "USD/BRL FX",               "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Freight / import logistics","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Import duties / ICMS",      "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Supplier margin",           "weight": 5.0,  "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Outsourcing / Mão de Obra": [
+        {"name": "Salário mínimo / CCT dissídio", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Encargos / FGTS / INSS",    "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Vale-refeição / alimentação","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Mercado de trabalho / desemprego", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Overhead + margem prestadora","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Facilities / Limpeza & Manutenção": [
+        {"name": "Salário mínimo / CCT",      "weight": 45.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Materiais / produtos químicos","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Energia elétrica (tarifa)", "weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Equipamentos / depreciação","weight": 10.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Margem do fornecedor",      "weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Logistics / Freight": [
+        {"name": "Diesel / combustível (ANP)", "weight": 35.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Salário motorista / CCT",   "weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Pedágios",                  "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Manutenção / pneus",        "weight": 13.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Seguro de carga",           "weight": 8.0,  "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Margem transportadora",     "weight": 12.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Marketing / Agências": [
+        {"name": "Salário equipe criativa / CCT", "weight": 40.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Mídia digital (CPM/CPC index)", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Produção audiovisual / técnica","weight": 20.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Overhead + margem da agência","weight": 15.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+    "Custom (manual)": [
+        {"name": "Driver 1", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 2", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 3", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+        {"name": "Driver 4", "weight": 25.0, "change": 0.0, "unit": "% vs ref period"},
+    ],
+}
+
+# Map analysis modes / scopes → preset
+SHOULD_COST_PRESET_MAP = {
+    "Direct Materials": "Direct Materials — Chemicals / Oils",
+    "IT — Software & SaaS licensing": "IT — Software & SaaS",
+    "IT — Hardware & Infrastructure (incl. CAPEX servers)": "IT — Hardware / CAPEX",
+    "Serviços de Outsourcing de Mão de Obra": "Outsourcing / Mão de Obra",
+    "Mão de Obra Temporária (CLT flex / PJ / agência)": "Outsourcing / Mão de Obra",
+    "Facilities / Limpeza, Manutenção & Workplace": "Facilities / Limpeza & Manutenção",
+    "Logistics / Transport Services": "Logistics / Freight",
+    "Marketing / Agências & Serviços Criativos": "Marketing / Agências",
+}
+
+
+def calc_should_cost_hybrid(
+    reference_price: float,
+    drivers: List[Dict],   # [{name, weight_pct, change_pct}]
+    supplier_margin_override: float | None = None,
+) -> Dict[str, float]:
+    """
+    Hybrid should-cost model:
+        should_cost = reference_price × Π(1 + driver_weight_i/100 × change_i/100)
+        for all i drivers.
+
+    Also returns a 'target negotiation price' = should_cost × (1 - negotiation_buffer).
+    """
+    if reference_price <= 0:
+        return {"should_cost": 0.0, "total_adjustment_pct": 0.0,
+                "driver_contributions": {}, "negotiation_target": 0.0,
+                "gap_vs_should_cost": 0.0, "gap_pct": 0.0}
+
+    total_adjustment_pct = 0.0
+    driver_contributions = {}
+    for d in drivers:
+        w   = float(d.get("weight", 0.0)) / 100.0
+        chg = float(d.get("change", 0.0)) / 100.0
+        contrib = w * chg * 100.0          # % contribution to total price change
+        total_adjustment_pct += contrib
+        driver_contributions[d.get("name", "?")] = contrib
+
+    should_cost = reference_price * (1.0 + total_adjustment_pct / 100.0)
+
+    # Negotiation target: should_cost minus a buffer that represents
+    # best-case achievable (default 5% stretch goal on top of should-cost)
+    negotiation_target = should_cost * 0.95
+
+    return {
+        "should_cost": should_cost,
+        "total_adjustment_pct": total_adjustment_pct,
+        "driver_contributions": driver_contributions,
+        "negotiation_target": negotiation_target,
+        "gap_vs_should_cost": 0.0,   # filled later when proposal price is known
+        "gap_pct": 0.0,
+    }
+
+
+def render_should_cost_panel(
+    *,
+    key_prefix: str,
+    analysis_mode: str,
+    scope: str,
+    reference_price: float,
+    proposal_price: float,
+    currency: str,
+    price_label: str = "unit price",
+) -> Dict:
+    """
+    Should-Cost Engine panel — rendered inside the proposal supplier builder.
+    Returns the calculated should_cost and all metadata for use in frontier + decision stack.
+    """
+    cfg = SERVICE_SCOPE_CONFIG.get(scope, {})
+    icon = cfg.get("icon", "🔬") if cfg else "🔬"
+    color = cfg.get("color", "#3b82f6") if cfg else "#3b82f6"
+
+    # Pick best-fit preset
+    preset_key = SHOULD_COST_PRESET_MAP.get(scope) or SHOULD_COST_PRESET_MAP.get(analysis_mode, "Custom (manual)")
+    preset_drivers = SHOULD_COST_DRIVER_PRESETS.get(preset_key, SHOULD_COST_DRIVER_PRESETS["Custom (manual)"])
+
+    with st.expander(f"🔬 Should-Cost Engine — tendências de mercado ({scope or analysis_mode})", expanded=False):
+        st.caption(
+            "Informe o preço de referência do período anterior e as variações de mercado de cada driver. "
+            "A ferramenta calcula o preço justo hoje e o posiciona no frontier junto com Optimized e Lower Risk."
+        )
+
+        # ── Reference price ───────────────────────────────────────────────
+        rc = st.columns([1.2, 0.9, 0.9])
+        with rc[0]:
+            ref_price = st.number_input(
+                f"Preço / custo de referência ({currency})",
+                min_value=0.0,
+                value=float(reference_price) if reference_price > 0 else float(proposal_price) * 0.95,
+                step=max(float(reference_price) * 0.01, 1.0),
+                format="%.4f",
+                key=f"{key_prefix}__sc_ref_price",
+                help="Último contrato, benchmark externo ou cotação anterior. Base para calcular o preço justo ajustado pelos drivers de mercado.",
+            )
+        with rc[1]:
+            ref_period = st.text_input(
+                "Período de referência",
+                value="12 meses atrás",
+                key=f"{key_prefix}__sc_ref_period",
+                help="Quando era válido o preço de referência? (ex: 'Jan/2024', '12 meses atrás', 'último contrato 2023')",
+            )
+        with rc[2]:
+            neg_buffer_pct = st.number_input(
+                "Stretch goal de negociação %",
+                min_value=0.0, max_value=20.0, value=5.0, step=0.5,
+                key=f"{key_prefix}__sc_neg_buffer",
+                help="% abaixo do should-cost para definir o target de negociação (posição de abertura agressiva).",
+            )
+
+        # ── Preset selector ───────────────────────────────────────────────
+        dc = st.columns([1.5, 0.5])
+        with dc[0]:
+            chosen_preset = st.selectbox(
+                "Template de drivers de mercado",
+                options=list(SHOULD_COST_DRIVER_PRESETS.keys()),
+                index=list(SHOULD_COST_DRIVER_PRESETS.keys()).index(preset_key)
+                      if preset_key in SHOULD_COST_DRIVER_PRESETS else 0,
+                key=f"{key_prefix}__sc_preset",
+                help="Escolha o template mais adequado ao seu escopo. Você pode ajustar os pesos e variações abaixo.",
+            )
+        with dc[1]:
+            n_drivers = st.number_input(
+                "Nº de drivers (max 8)",
+                min_value=1, max_value=8,
+                value=min(len(SHOULD_COST_DRIVER_PRESETS[chosen_preset]), 6),
+                step=1, key=f"{key_prefix}__sc_n_drivers",
+            )
+
+        drivers_preset = SHOULD_COST_DRIVER_PRESETS[chosen_preset][:int(n_drivers)]
+
+        # ── Driver table ──────────────────────────────────────────────────
+        st.markdown(
+            "<div style='display:grid;grid-template-columns:2fr 1fr 1.2fr;gap:6px;"
+            "padding:6px 8px;background:rgba(15,23,42,.4);border-radius:8px;"
+            "font-size:.70rem;font-weight:600;color:#64748b;text-transform:uppercase;"
+            "letter-spacing:.06em;margin-bottom:4px'>"
+            "<span>Driver de custo</span><span>Peso % no custo total</span>"
+            "<span>Variação de mercado (%)</span></div>",
+            unsafe_allow_html=True,
+        )
+        drivers = []
+        total_weight = 0.0
+        for idx, d in enumerate(drivers_preset):
+            dc2 = st.columns([2, 1, 1.2])
+            with dc2[0]:
+                dname = st.text_input(
+                    "Driver", value=d["name"], label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dname_{idx}",
+                )
+            with dc2[1]:
+                dweight = st.number_input(
+                    "Peso %", min_value=0.0, max_value=100.0,
+                    value=float(d["weight"]), step=1.0, format="%.1f",
+                    label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dweight_{idx}",
+                )
+            with dc2[2]:
+                dchange = st.number_input(
+                    "Variação %", min_value=-50.0, max_value=100.0,
+                    value=float(d.get("change", 0.0)), step=0.5, format="%.2f",
+                    label_visibility="collapsed",
+                    key=f"{key_prefix}__sc_dchange_{idx}",
+                    help=f"Ex: +8 = commodity subiu 8% desde o período de referência. Negativo = caiu.",
+                )
+            drivers.append({"name": dname, "weight": dweight, "change": dchange})
+            total_weight += dweight
+
+        # Weight validation
+        wc_ = "#34d399" if abs(total_weight - 100.0) < 0.5 else "#f87171"
+        st.markdown(
+            f"<div style='font-size:.75rem;margin-top:2px;margin-bottom:8px'>"
+            f"<span style='color:{wc_}'>Pesos somam: <b>{total_weight:.1f}%</b> "
+            f"{'✓' if abs(total_weight-100)<0.5 else '— ajuste para 100% para resultado preciso'}</span></div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Calculation ───────────────────────────────────────────────────
+        sc_result = calc_should_cost_hybrid(float(ref_price), drivers)
+        should_cost   = sc_result["should_cost"]
+        total_adj_pct = sc_result["total_adjustment_pct"]
+        neg_target    = should_cost * (1.0 - float(neg_buffer_pct) / 100.0)
+
+        gap_vs_should     = float(proposal_price) - should_cost
+        gap_pct           = safe_divide(gap_vs_should, should_cost) * 100.0
+        gap_vs_target     = float(proposal_price) - neg_target
+        gap_target_pct    = safe_divide(gap_vs_target, neg_target) * 100.0
+
+        # Gap colors
+        gap_color   = "#34d399" if gap_vs_should < 0 else "#f87171" if gap_vs_should > 0 else "#60a5fa"
+        tgt_color   = "#34d399" if gap_vs_target < 0 else "#fbbf24" if abs(gap_target_pct) < 5 else "#f87171"
+        adj_color   = "#f87171" if total_adj_pct > 0 else "#34d399" if total_adj_pct < 0 else "#64748b"
+
+        # ── Driver contribution visual ────────────────────────────────────
+        contribs = sc_result["driver_contributions"]
+        def _sc_color(v): return "#f87171" if v > 0 else "#34d399" if v < 0 else "#64748b"
+        _max_abs_contrib = max((abs(c) for c in contribs.values() if c != 0), default=1.0)
+        contrib_html = "".join(
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"padding:4px 0;border-bottom:1px solid rgba(148,163,184,.07)'>"
+            f"<span style='font-size:.76rem;color:#94a3b8'>{name[:38]}</span>"
+            f"<div style='display:flex;align-items:center;gap:8px'>"
+            f"<div style='width:60px;height:5px;border-radius:3px;background:rgba(148,163,184,.1);overflow:hidden'>"
+            f"<div style='height:100%;width:{min(abs(contrib) / _max_abs_contrib * 100, 100):.0f}%;"
+            f"background:{_sc_color(contrib)};border-radius:3px'></div></div>"
+            f"<span style='font-family:IBM Plex Mono,monospace;font-size:.76rem;"
+            f"color:{_sc_color(contrib)}'>"
+            f"{contrib:+.2f}%</span></div></div>"
+            for name, contrib in contribs.items() if abs(contrib) > 0.001
+        ) if contribs else ""
+
+        # ── Result card ───────────────────────────────────────────────────
+        st.markdown(
+            f"""<div style="background:rgba(15,23,42,.6);border:1px solid rgba(148,163,184,.16);
+            border-left:4px solid {color};border-radius:14px;padding:16px 18px;margin-top:8px">
+            <div style="font-size:.80rem;font-weight:600;color:#94a3b8;
+            text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px">
+            🔬 Should-Cost Result — {ref_period}</div>
+
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Preço referência</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#e2e8f0">
+                  {currency} {float(ref_price):,.4f}</div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Should-cost hoje</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#60a5fa">
+                  {currency} {should_cost:,.4f}
+                  <span style="font-size:.70rem;color:{adj_color};margin-left:4px">({total_adj_pct:+.2f}%)</span>
+                </div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Target de negociação</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:#a78bfa">
+                  {currency} {neg_target:,.4f}
+                  <span style="font-size:.70rem;color:#64748b;margin-left:4px">(-{neg_buffer_pct:.1f}% stretch)</span>
+                </div>
+              </div>
+              <div style="background:rgba(15,23,42,.5);padding:10px 12px;border-radius:10px">
+                <div style="font-size:.68rem;color:#64748b;margin-bottom:4px">Gap proposta vs should-cost</div>
+                <div style="font-family:IBM Plex Mono;font-size:1.05rem;font-weight:600;color:{gap_color}">
+                  {currency} {gap_vs_should:+,.4f}
+                  <span style="font-size:.70rem;margin-left:4px">({gap_pct:+.1f}%)</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-bottom:10px">
+              <div style="font-size:.73rem;font-weight:600;color:#64748b;
+              text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">
+              Contribuição de cada driver</div>
+              {contrib_html}
+            </div>
+
+            <div style="font-size:.78rem;color:#94a3b8;padding-top:8px;
+            border-top:1px solid rgba(148,163,184,.12)">
+              <b style="color:{'#34d399' if gap_vs_should<=0 else '#f87171'}">
+              {'✅ Proposta está dentro ou abaixo do should-cost — preço está justificado pelo mercado.' if gap_vs_should<=0
+               else f'⚠ Proposta está {gap_pct:.1f}% acima do should-cost. Usar como alavanca de negociação.'}
+              </b>
+              &nbsp;·&nbsp; Gap vs target: <span style="color:{tgt_color}">{gap_vs_target:+,.2f} ({gap_target_pct:+.1f}%)</span>
+            </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Store result in session state for frontier chart to consume
+    sc_key = f"should_cost_result__{key_prefix}"
+    sc_store = {
+        "ref_price": float(ref_price),
+        "should_cost": float(should_cost),
+        "neg_target": float(neg_target),
+        "total_adj_pct": float(total_adj_pct),
+        "gap_vs_should": float(gap_vs_should),
+        "gap_pct": float(gap_pct),
+        "gap_vs_target": float(gap_vs_target),
+        "drivers": drivers,
+        "preset": chosen_preset,
+        "ref_period": ref_period,
+        "neg_buffer_pct": float(neg_buffer_pct),
+    }
+    st.session_state[sc_key] = sc_store
+    st.session_state["last_should_cost"] = sc_store   # global latest for frontier
+    return sc_store
