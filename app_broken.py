@@ -1187,6 +1187,11 @@ html, body, [data-testid="stApp"] {
     color: #60a5fa !important;
     width: 32px !important;
 }
+/* Sidebar toggle via session_state */
+[data-sidebar-hidden="true"] [data-testid="stSidebar"] {
+    transform: translateX(-100%) !important;
+    width: 0 !important;
+}
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0a1628 0%, #0d1f3c 100%) !important;
     border-right: 1px solid rgba(59,130,246,.18) !important;
@@ -5867,69 +5872,148 @@ def render_should_cost_panel(
 # ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    # ── Sidebar collapse toggle ─────────────────────────────────────────
+    # ── Sidebar collapse toggle ───────────────────────────────────────────
     if "sidebar_collapsed" not in st.session_state:
         st.session_state["sidebar_collapsed"] = False
-    tog_icon = "◀ Hide" if not st.session_state["sidebar_collapsed"] else "▶ Show"
-    if st.button(tog_icon, key="sidebar_toggle", use_container_width=True, help="Hide/show sidebar"):
+
+    tog_label = "◀ Hide" if not st.session_state["sidebar_collapsed"] else "▶ Show"
+    if st.button(tog_label, key="sidebar_toggle", use_container_width=True,
+                 help="Hide / show sidebar panels"):
         st.session_state["sidebar_collapsed"] = not st.session_state["sidebar_collapsed"]
         st.rerun()
-    if st.session_state.get("sidebar_collapsed"):
-        st.markdown("<div style='height:0;overflow:hidden'></div>", unsafe_allow_html=True)
-    else:
-        st.markdown("## ⚡ Intelligence Platform")
-        currency_symbol_input = st.text_input("Reporting currency", value=st.session_state.get("_cur_sym","BRL"), key="_cur_sym")
+
+    if not st.session_state.get("sidebar_collapsed"):
+        st.markdown("**⚡ Intelligence Platform**")
+        st.markdown("---")
+    if not st.session_state.get("sidebar_collapsed"):
+            currency_symbol = st.text_input("Reporting currency", value="BRL")
         project_title = st.text_input("Project title", value=st.session_state.get("project_head_title", "Procurement Intelligence Platform"), key="project_head_title")
         project_subtitle = st.text_input("Project subtitle", value=st.session_state.get("project_subtitle", ""), key="project_subtitle")
 
         st.markdown("### Analysis mode")
-        analysis_mode_sel = st.radio("Tool mode", options=["Direct Materials", "Indirect / Services"],
-                                     index=st.session_state.get("_analysis_mode_idx", 0),
-                                     horizontal=False, key="_analysis_mode_sel")
-        st.session_state["_analysis_mode_idx"] = ["Direct Materials","Indirect / Services"].index(analysis_mode_sel)
+        analysis_mode = st.radio("Tool mode", options=["Direct Materials", "Indirect / Services"], index=0, horizontal=False)
 
-        if analysis_mode_sel == "Direct Materials":
-            st.markdown('<div class="v46-mode-card"><div class="v46-mode-card-title">🧪 Direct Materials</div><div class="v46-mode-card-sub">Landed cost → price build-up → TCO, working capital, inventory & risk.</div></div>', unsafe_allow_html=True)
-            analysed_item_name_sel = st.text_input("Analysed item", value=DEFAULT_ITEM_NAME, key="direct_item_name")
-            negotiated_unit_sel = st.text_input("Negotiated unit", value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
-            service_scope_sel = None
+        if analysis_mode == "Direct Materials":
+            st.markdown(
+                '<div class="v46-mode-card">'
+                '<div class="v46-mode-card-title">🧪 Direct Materials</div>'
+                '<div class="v46-mode-card-sub">Landed cost → price build-up → spend → TCO, working capital, inventory &amp; risk optimization.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            analysed_item_name = st.text_input("Analysed item", value=DEFAULT_ITEM_NAME, key="direct_item_name")
+            negotiated_unit    = st.text_input("Negotiated unit", value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
+            service_scope = None
+
         else:
-            # ── Grouped scope selector ────────────────────────────────────
-            SCOPE_GROUPS_SB = [
-                ("🖥️ Tecnologia",          ["IT — Software & SaaS licensing", "IT — Hardware & Infrastructure (incl. CAPEX servers)"]),
-                ("👥 Mão de Obra",          ["Serviços de Outsourcing de Mão de Obra", "Mão de Obra Temporária (CLT flex / PJ / agência)"]),
-                ("🏢 Facilities",           ["Facilities / Limpeza, Manutenção & Workplace", "EPI / Segurança do Trabalho & Materiais", "Jardinagem & Serviços de Áreas Externas"]),
-                ("🎯 Marketing & RH",       ["Marketing / Agências & Serviços Criativos", "RH — Recrutamento, T&D & Benefícios"]),
-                ("🚚 Logística",            ["Logistics / Transport Services"]),
-                ("🔧 Outros Indiretos",     ["Industrial MRO / VMI / Fastenal-style outsourcing", "Professional Services / Consulting", "BPO / Call Center", "Generic Indirect Service"]),
-            ]
-            FLAT_SCOPES_SB = [s for _, scopes in SCOPE_GROUPS_SB for s in scopes]
-            safe_def = DEFAULT_SERVICE_SCOPE if DEFAULT_SERVICE_SCOPE in FLAT_SCOPES_SB else FLAT_SCOPES_SB[0]
-            prev = st.session_state.get("service_scope", safe_def)
-            prev_idx = FLAT_SCOPES_SB.index(prev) if prev in FLAT_SCOPES_SB else 0
+            # ── Grouped scope selector ────────────────────────────────────────
+            SCOPE_GROUPS = {
+                "🖥️  Tecnologia": [
+                    "IT — Software & SaaS licensing",
+                    "IT — Hardware & Infrastructure (incl. CAPEX servers)",
+                ],
+                "👥  Mão de Obra": [
+                    "Serviços de Outsourcing de Mão de Obra",
+                    "Mão de Obra Temporária (CLT flex / PJ / agência)",
+                ],
+                "🏢  Facilities & Workplace": [
+                    "Facilities / Limpeza, Manutenção & Workplace",
+                    "EPI / Segurança do Trabalho & Materiais",
+                    "Jardinagem & Serviços de Áreas Externas",
+                ],
+                "🎯  Marketing & RH": [
+                    "Marketing / Agências & Serviços Criativos",
+                    "RH — Recrutamento, T&D & Benefícios",
+                ],
+                "🚚  Logística & Transporte": [
+                    "Logistics / Transport Services",
+                ],
+                "🔧  Outros Indiretos": [
+                    "Industrial MRO / VMI / Fastenal-style outsourcing",
+                    "Professional Services / Consulting",
+                    "BPO / Call Center",
+                    "Generic Indirect Service",
+                ],
+            }
 
-            service_scope_sel = st.selectbox(
-                "Buying scope",
-                options=FLAT_SCOPES_SB,
+            # Flat ordered list preserving group order
+            SCOPES_FLAT = [s for scopes in SCOPE_GROUPS.values() for s in scopes]
+            # Build display labels with group prefix for visual grouping
+            SCOPE_DISPLAY = {}
+            for group, scopes in SCOPE_GROUPS.items():
+                for s in scopes:
+                    SCOPE_DISPLAY[s] = s  # clean label in selectbox
+
+            safe_default = DEFAULT_SERVICE_SCOPE if DEFAULT_SERVICE_SCOPE in SCOPES_FLAT else SCOPES_FLAT[0]
+
+            # Group header labels as disabled separators not supported natively —
+            # use flat list with section markers as non-selectable visual cues
+            SCOPE_OPTIONS_DISPLAY = []
+            SCOPE_OPTIONS_VALUES  = []
+            for group, scopes in SCOPE_GROUPS.items():
+                SCOPE_OPTIONS_DISPLAY.append(f"── {group} ──")
+                SCOPE_OPTIONS_VALUES.append(None)   # separator
+                for s in scopes:
+                    cfg_s = SERVICE_SCOPE_CONFIG.get(s, {})
+                    ico   = cfg_s.get("icon", "")
+                    SCOPE_OPTIONS_DISPLAY.append(f"  {ico} {s}")
+                    SCOPE_OPTIONS_VALUES.append(s)
+
+            # Build parallel clean list (only real scopes) for the actual selectbox
+            real_scopes = [s for s in SCOPE_OPTIONS_VALUES if s is not None]
+
+            prev_scope = st.session_state.get("service_scope", safe_default)
+            prev_idx   = real_scopes.index(prev_scope) if prev_scope in real_scopes else 0
+
+            service_scope = st.selectbox(
+                "Buying scope / categoria",
+                options=real_scopes,
                 index=prev_idx,
                 key="service_scope",
                 format_func=lambda s: f"{SERVICE_SCOPE_CONFIG.get(s,{}).get('icon','🧾')}  {s}",
-                help="O mecanismo de análise muda automaticamente. Logística: Route TCO + mapa OSRM. IT HW: CAPEX vs Cloud. MO: open-cost de encargos.",
+                help="Selecione o escopo de compra. O mecanismo de análise, KPIs e campos mudam automaticamente.",
             )
-            cfg_sel = service_scope_config(service_scope_sel)
-            color_sel = cfg_sel.get("color","#64748b"); icon_sel = cfg_sel.get("icon","🧾")
-            is_logistics_sel = service_scope_sel == "Logistics / Transport Services"
-            mode_sub = ("🚚 Route TCO, OSRM map, custo por km, escolta, dwell time." if is_logistics_sel
-                        else "Service TCO → FTE → leakage → SLA risk → productivity ROI → scorecard.")
-            st.markdown(f'<div class="v46-mode-card" style="border-left:4px solid {color_sel}"><div class="v46-mode-card-title">{icon_sel} {service_scope_sel.split("(")[0][:32]}</div><div class="v46-mode-card-sub">{mode_sub}</div></div>', unsafe_allow_html=True)
-            if is_logistics_sel:
-                st.caption("📌 MOQ, inventário e incoterms não se aplicam neste modo.")
-            analysed_item_name_sel = st.text_input("Escopo / contrato", value=service_scope_sel, key="service_item_name")
-            negotiated_unit_sel = st.text_input("Driver de demanda", value=str(cfg_sel.get("driver_label","service unit"))[:60], key="service_negotiated_unit")
+            cfg_sb = service_scope_config(service_scope)
+            color_sb = cfg_sb.get("color", "#64748b")
+            icon_sb  = cfg_sb.get("icon", "🧾")
+
+            # ── Scope info card ───────────────────────────────────────────────
+            is_logistics = service_scope == "Logistics / Transport Services"
+            is_it_hw     = "Hardware" in service_scope
+            is_it_sw     = "Software" in service_scope
+            is_mo        = "Mão de Obra" in service_scope or "Outsourcing" in service_scope
+
+            mode_details = {
+                True:  "🚚 Modo Logística: Route TCO, OSRM map, custo por km, escolta, dwell time, tender acceptance.",
+            }.get(is_logistics,
+                "💡 Modo Indiretos: Service TCO → FTE decomposition → leakage waterfall → SLA risk → productivity ROI → scorecard."
+            )
+            st.markdown(
+                f'<div class="v46-mode-card" style="border-left:4px solid {color_sb}">'
+                f'<div class="v46-mode-card-title">{icon_sb} {service_scope.split("(")[0].strip()}</div>'
+                f'<div class="v46-mode-card-sub">{mode_details}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Mode-specific contextual info ─────────────────────────────────
+            if is_logistics:
+                st.caption("📌 MOQ, inventário e incoterms não se aplicam. Use a aba 🗺️ Route Optimizer para tracing de rota.")
+            elif is_it_hw:
+                st.caption("📌 CAPEX vs Cloud TCO disponível na proposta. MOQ/inventário irrelevantes para este escopo.")
+            elif is_it_sw:
+                st.caption("📌 License metrics e true-up model disponíveis. Preço = spend anual de licenças.")
+            elif is_mo:
+                st.caption("📌 FTE decomposition e open-cost model de encargos disponíveis na proposta.")
+
+            analysed_item_name = st.text_input("Escopo / nome do contrato", value=service_scope, key="service_item_name")
+            negotiated_unit    = st.text_input("Driver de demanda", value=str(cfg_sb.get("driver_label", "service unit"))[:60], key="service_negotiated_unit")
+
 
         st.markdown("### Geography")
         view_scope = st.radio("Analysis scope", options=["Global View", "Local View"], index=0, horizontal=True, key="market_view_scope")
         VIEW_SCOPE = view_scope
+
         if view_scope == "Global View":
             default_sel = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
             default_sel = [c for c in default_sel if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
@@ -5938,8 +6022,11 @@ with st.sidebar:
             prim_def = st.session_state.get("primary_country_scope", selected_countries[0])
             prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
             primary_country_choice = st.selectbox("Primary / anchor country", options=selected_countries, index=prim_idx, key="primary_country_scope")
-            COUNTRIES = list(selected_countries); PRIMARY_COUNTRY = primary_country_choice
-            ANCHOR_COUNTRY = primary_country_choice; SECONDARY_GROUP = "Other selected markets"; scope_label = "country/countries"
+            COUNTRIES = list(selected_countries)
+            PRIMARY_COUNTRY = primary_country_choice
+            ANCHOR_COUNTRY = primary_country_choice
+            SECONDARY_GROUP = "Other selected markets"
+            scope_label = "country/countries"
         else:
             anchor_choice = st.selectbox("Anchor country", options=COUNTRY_OPTIONS, index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country","Brazil")) if st.session_state.get("local_anchor_country","Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"), key="local_anchor_country")
             ANCHOR_COUNTRY = anchor_choice
@@ -5955,14 +6042,20 @@ with st.sidebar:
             prim_def = st.session_state.get("primary_locality_scope", selected_countries[0])
             prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
             primary_country_choice = st.selectbox("Primary locality", options=selected_countries, index=prim_idx, key="primary_locality_scope")
-            COUNTRIES = list(selected_countries); PRIMARY_COUNTRY = primary_country_choice
-            SECONDARY_GROUP = "Other selected localities"; scope_label = "locality/localities"
+            COUNTRIES = list(selected_countries)
+            PRIMARY_COUNTRY = primary_country_choice
+            SECONDARY_GROUP = "Other selected localities"
+            scope_label = "locality/localities"
 
         LATAM_COUNTRIES = [c for c in COUNTRIES if c != PRIMARY_COUNTRY]
         CUSTOM_FACTOR_COUNTRIES = ["All countries"] + COUNTRIES
         for _sc in COUNTRIES: ensure_analysis_unit_defaults(_sc, ANCHOR_COUNTRY)
+
         chips = "".join([f"<span class='v46-chip'>{escape(c)}</span>" for c in COUNTRIES])
-        st.markdown(f"""<div class="v46-market-card"><div class="v46-market-title">{'🌎 Global' if view_scope=='Global View' else '📍 Local'} market scope</div><div class="v46-market-meta"><b>{len(COUNTRIES)}</b> {scope_label} · anchor: <b>{escape(ANCHOR_COUNTRY)}</b></div><div>{chips}</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="v46-market-card">
+            <div class="v46-market-title">{'🌎 Global' if view_scope == 'Global View' else '📍 Local'} market scope</div>
+            <div class="v46-market-meta"><b>{len(COUNTRIES)}</b> {scope_label} · anchor: <b>{escape(ANCHOR_COUNTRY)}</b> · focus: <b>{escape(PRIMARY_COUNTRY)}</b></div>
+            <div>{chips}</div></div>""", unsafe_allow_html=True)
 
         rate_method = st.radio("Rate conversion", options=["Compound", "Linear"], index=0)
         opt_step = st.select_slider("Grid optimization step", options=[1, 2, 5, 10], value=5)
@@ -5986,32 +6079,6 @@ with st.sidebar:
                 st.text_input(f"Supplier {idx} full name", key=supplier_name_key(sup))
                 st.text_input(f"Supplier {idx} short label", key=supplier_short_name_key(sup))
 
-# ── Resolve sidebar state after the with block ───────────────────────────────
-# When sidebar is collapsed, fall back to last known values from session state
-if st.session_state.get("sidebar_collapsed"):
-    currency_symbol = st.session_state.get("_cur_sym", "BRL")
-    analysis_mode   = ["Direct Materials","Indirect / Services"][st.session_state.get("_analysis_mode_idx",0)]
-    service_scope   = st.session_state.get("service_scope", DEFAULT_SERVICE_SCOPE)
-    analysed_item_name = st.session_state.get("direct_item_name" if analysis_mode=="Direct Materials" else "service_item_name", DEFAULT_ITEM_NAME)
-    negotiated_unit = st.session_state.get("direct_negotiated_unit" if analysis_mode=="Direct Materials" else "service_negotiated_unit", DEFAULT_NEGOTIATED_UNIT)
-    # Geography fallbacks
-    if "COUNTRIES" not in dir(): COUNTRIES = DEFAULT_ACTIVE_COUNTRIES.copy()
-    if "PRIMARY_COUNTRY" not in dir(): PRIMARY_COUNTRY = COUNTRIES[0]
-    if "ANCHOR_COUNTRY" not in dir(): ANCHOR_COUNTRY = COUNTRIES[0]
-    if "SECONDARY_GROUP" not in dir(): SECONDARY_GROUP = "Other selected markets"
-    if "rate_method" not in dir(): rate_method = "Compound"
-    if "opt_step" not in dir(): opt_step = 5
-    if "risk_threshold" not in dir(): risk_threshold = 3.25
-    if "SUPPLIERS" not in dir(): SUPPLIERS = SUPPLIER_POOL[:4]
-    if "focused_supplier_count" not in dir(): focused_supplier_count = 4
-    if "show_adv_econ" not in dir(): show_adv_econ = True
-else:
-    currency_symbol = st.session_state.get("_cur_sym", "BRL")
-    analysis_mode   = analysis_mode_sel
-    service_scope   = service_scope_sel if analysis_mode == "Indirect / Services" else None
-    analysed_item_name = analysed_item_name_sel
-    negotiated_unit = negotiated_unit_sel
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HERO HEADER
@@ -6019,24 +6086,8 @@ else:
 
 mode_chip = "Direct Materials Cockpit" if analysis_mode == "Direct Materials" else "Indirect / Services Command Center"
 hero_copy = ("Landed cost · FX · Incoterm · MOQ · Payment terms · Treasury return · Inventory · Risk optimization" if analysis_mode == "Direct Materials" else "Service TCO · FTE decomposition · Contract leakage · SLA risk · Productivity ROI · Should-cost · Scorecard")
-project_title    = st.session_state.get("project_head_title", "Procurement Intelligence Platform")
-project_subtitle = st.session_state.get("project_subtitle", "")
 hero_title = project_title.strip() or "Procurement Intelligence Platform"
 hero_sub = project_subtitle.strip() or hero_copy
-# Sidebar-dependent variable safety net (in case sidebar is collapsed on first run)
-if "VIEW_SCOPE" not in dir():  VIEW_SCOPE = "Global View"
-if "COUNTRIES" not in dir() or not COUNTRIES: COUNTRIES = DEFAULT_ACTIVE_COUNTRIES.copy()
-if "PRIMARY_COUNTRY" not in dir(): PRIMARY_COUNTRY = COUNTRIES[0]
-if "ANCHOR_COUNTRY" not in dir(): ANCHOR_COUNTRY = COUNTRIES[0]
-if "SECONDARY_GROUP" not in dir(): SECONDARY_GROUP = "Other selected markets"
-if "LATAM_COUNTRIES" not in dir(): LATAM_COUNTRIES = [c for c in COUNTRIES if c != PRIMARY_COUNTRY]
-if "CUSTOM_FACTOR_COUNTRIES" not in dir(): CUSTOM_FACTOR_COUNTRIES = ["All countries"] + COUNTRIES
-if "rate_method" not in dir(): rate_method = "Compound"
-if "opt_step" not in dir(): opt_step = 5
-if "risk_threshold" not in dir(): risk_threshold = 3.25
-if "SUPPLIERS" not in dir(): SUPPLIERS = SUPPLIER_POOL[:4]
-if "focused_supplier_count" not in dir(): focused_supplier_count = 4
-if "show_adv_econ" not in dir(): show_adv_econ = True
 
 st.markdown(
     f"""<div class="v46-hero">
