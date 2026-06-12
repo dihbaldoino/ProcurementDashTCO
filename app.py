@@ -54,6 +54,560 @@ NEW MODULES (all behind collapsible expanders — zero clutter by default):
 
 from __future__ import annotations
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSLATION SYSTEM — Full PT-BR / EN-US coverage
+# Usage: t("key") returns the string in the active language.
+# Language is stored in st.session_state["lang"] ("pt" | "en").
+# ─────────────────────────────────────────────────────────────────────────────
+
+import streamlit as _st_early  # noqa: used only to access session_state before st is re-imported below
+
+def _get_lang() -> str:
+    try:
+        import streamlit as _st
+        return _st.session_state.get("lang", "pt")
+    except Exception:
+        return "pt"
+
+# ── Complete bilingual dictionary ─────────────────────────────────────────────
+_TRANSLATIONS: dict[str, dict[str, str]] = {
+
+    # ── App shell ──────────────────────────────────────────────────────────
+    "app.title":              {"pt": "Procurement Intelligence Platform", "en": "Procurement Intelligence Platform"},
+    "app.icon":               {"pt": "⚡", "en": "⚡"},
+
+    # ── Sidebar ────────────────────────────────────────────────────────────
+    "sb.hide":                {"pt": "◀ Ocultar", "en": "◀ Hide"},
+    "sb.show":                {"pt": "▶ Mostrar", "en": "▶ Show"},
+    "sb.currency":            {"pt": "Moeda de reporte", "en": "Reporting currency"},
+    "sb.project_title":       {"pt": "Título do projeto", "en": "Project title"},
+    "sb.project_subtitle":    {"pt": "Subtítulo", "en": "Subtitle"},
+    "sb.analysis_mode":       {"pt": "Modo de análise", "en": "Analysis mode"},
+    "sb.tool_mode":           {"pt": "Modo da ferramenta", "en": "Tool mode"},
+    "sb.direct_materials":    {"pt": "Materiais Diretos", "en": "Direct Materials"},
+    "sb.indirect_services":   {"pt": "Indiretos / Serviços", "en": "Indirect / Services"},
+    "sb.direct_sub":          {"pt": "Custo de desembarque → build-up → TCO, capital de giro, estoque & otimização de risco.", "en": "Landed cost → price build-up → TCO, working capital, inventory & risk optimization."},
+    "sb.indirect_sub":        {"pt": "TCO de serviços → decomposição de FTE → leakage → risco SLA → ROI de produtividade → scorecard.", "en": "Service TCO → FTE decomposition → leakage waterfall → SLA risk → productivity ROI → scorecard."},
+    "sb.analysed_item":       {"pt": "Item analisado", "en": "Analysed item"},
+    "sb.negotiated_unit":     {"pt": "Unidade negociada", "en": "Negotiated unit"},
+    "sb.buying_scope":        {"pt": "Escopo de compra / categoria", "en": "Buying scope / category"},
+    "sb.scope_name":          {"pt": "Escopo / nome do contrato", "en": "Scope / contract name"},
+    "sb.demand_driver":       {"pt": "Driver de demanda", "en": "Demand driver"},
+    "sb.scope_help":          {"pt": "O mecanismo de análise, KPIs e campos mudam automaticamente.", "en": "Analysis engine, KPIs and fields change automatically."},
+    "sb.geography":           {"pt": "Geografia", "en": "Geography"},
+    "sb.analysis_scope":      {"pt": "Escopo de análise", "en": "Analysis scope"},
+    "sb.global_view":         {"pt": "Visão Global", "en": "Global View"},
+    "sb.local_view":          {"pt": "Visão Local", "en": "Local View"},
+    "sb.countries":           {"pt": "Países", "en": "Countries"},
+    "sb.primary_country":     {"pt": "País primário / âncora", "en": "Primary / anchor country"},
+    "sb.anchor_country":      {"pt": "País âncora", "en": "Anchor country"},
+    "sb.localities":          {"pt": "Localidades", "en": "Localities"},
+    "sb.custom_localities":   {"pt": "Localidades personalizadas", "en": "Custom localities"},
+    "sb.primary_locality":    {"pt": "Localidade principal", "en": "Primary locality"},
+    "sb.rate_conversion":     {"pt": "Conversão de taxa", "en": "Rate conversion"},
+    "sb.compound":            {"pt": "Composta", "en": "Compound"},
+    "sb.linear":              {"pt": "Linear", "en": "Linear"},
+    "sb.grid_step":           {"pt": "Passo do otimizador (grid)", "en": "Grid optimization step"},
+    "sb.optimizer_lp":        {"pt": "Otimizador: LP exato ✓", "en": "Optimizer: exact LP ✓"},
+    "sb.optimizer_grid":      {"pt": "Otimizador: somente grid", "en": "Optimizer: grid fallback only"},
+    "sb.risk_ceiling":        {"pt": "Teto de risco", "en": "Risk ceiling"},
+    "sb.concentration_alert": {"pt": "Alerta de concentração %", "en": "Concentration alert threshold %"},
+    "sb.concentration_help":  {"pt": "Alerta quando um fornecedor ultrapassa este percentual de share", "en": "Alert when a single supplier exceeds this share"},
+    "sb.supplier_universe":   {"pt": "Universo de fornecedores", "en": "Supplier universe"},
+    "sb.n_suppliers":         {"pt": "Número de fornecedores", "en": "Number of suppliers"},
+    "sb.top_suppliers":       {"pt": "Top fornecedores (foco executivo)", "en": "Top suppliers (executive focus)"},
+    "sb.show_wc_view":        {"pt": "Mostrar visão de capital de giro", "en": "Show working capital view"},
+    "sb.supplier_names":      {"pt": "Nomes dos fornecedores", "en": "Supplier names"},
+    "sb.sup_full_name":       {"pt": "Nome completo", "en": "Full name"},
+    "sb.sup_short_label":     {"pt": "Rótulo curto", "en": "Short label"},
+    "sb.logistics_caption":   {"pt": "📌 MOQ, inventário e incoterms não se aplicam neste modo.", "en": "📌 MOQ, inventory and incoterms do not apply in this mode."},
+    "sb.it_hw_caption":       {"pt": "📌 TCO CAPEX vs Cloud disponível na proposta. MOQ/inventário irrelevantes.", "en": "📌 CAPEX vs Cloud TCO available in proposal. MOQ/inventory not relevant."},
+    "sb.it_sw_caption":       {"pt": "📌 License metrics e true-up model disponíveis na proposta.", "en": "📌 License metrics and true-up model available in proposal."},
+    "sb.mo_caption":          {"pt": "📌 FTE decomposition e open-cost model de encargos disponíveis.", "en": "📌 FTE decomposition and payroll open-cost model available."},
+    "sb.logistics_mode_sub":  {"pt": "🚚 Route TCO, mapa OSRM, custo por km, escolta, dwell time.", "en": "🚚 Route TCO, OSRM map, cost per km, escort, dwell time."},
+
+    # ── Tabs ──────────────────────────────────────────────────────────────
+    "tab.baseline":           {"pt": "1 · Baseline Atual", "en": "1 · Current Baseline"},
+    "tab.proposals":          {"pt": "2 · Propostas", "en": "2 · Supplier Proposals"},
+    "tab.should_cost":        {"pt": "3 · 🔬 Should-Cost", "en": "3 · 🔬 Should-Cost"},
+    "tab.supplier_mgmt":      {"pt": "4 · Gestão de Fornecedores", "en": "4 · Supplier Management"},
+    "tab.custom_points":      {"pt": "5 · Pontos Customizados", "en": "5 · Custom Points"},
+    "tab.risk_matrix":        {"pt": "6 · Matriz de Risco", "en": "6 · Risk Matrix"},
+    "tab.share_opt":          {"pt": "7 · Share & Otimização", "en": "7 · Share & Optimization"},
+    "tab.exec_dash":          {"pt": "8 · Painel Executivo", "en": "8 · Executive Dash"},
+    "tab.route_optimizer":    {"pt": "🗺️ Otimizador de Rotas", "en": "🗺️ Route Optimizer"},
+
+    # ── Hero ──────────────────────────────────────────────────────────────
+    "hero.mode_direct":       {"pt": "Cockpit de Materiais Diretos", "en": "Direct Materials Cockpit"},
+    "hero.mode_indirect":     {"pt": "Central de Indiretos / Serviços", "en": "Indirect / Services Command Center"},
+    "hero.copy_direct":       {"pt": "Custo desembarcado · FX · Incoterm · MOQ · Prazo · Retorno de tesouraria · Estoque · Otimização de risco", "en": "Landed cost · FX · Incoterm · MOQ · Payment terms · Treasury return · Inventory · Risk optimization"},
+    "hero.copy_indirect":     {"pt": "TCO de Serviços · Decomposição FTE · Leakage · Risco SLA · ROI de Produtividade · Should-cost · Scorecard", "en": "Service TCO · FTE decomposition · Contract leakage · SLA risk · Productivity ROI · Should-cost · Scorecard"},
+    "hero.markets":           {"pt": "Mercados", "en": "Markets"},
+    "hero.suppliers":         {"pt": "Fornecedores", "en": "Suppliers"},
+    "hero.mode":              {"pt": "Modo", "en": "Mode"},
+    "hero.optimizer":         {"pt": "Otimizador", "en": "Optimizer"},
+    "hero.view":              {"pt": "Visão", "en": "View"},
+    "hero.direct_short":      {"pt": "Diretos", "en": "Direct"},
+    "hero.services_short":    {"pt": "Serviços", "en": "Services"},
+    "hero.lp_exact":          {"pt": "LP exato", "en": "LP exact"},
+
+    # ── Section titles ─────────────────────────────────────────────────────
+    "sec.baseline_direct":    {"pt": "Baseline de Materiais Diretos", "en": "Current Direct Material Baseline"},
+    "sec.baseline_direct_sub":{"pt": "Preço desembarcado × volume → spend atual → financeiro, tesouraria & estoque.", "en": "Landed unit price × volume → current spend → financial, treasury & inventory economics."},
+    "sec.baseline_indirect":  {"pt": "Baseline de Indiretos / Serviços", "en": "Current Indirect / Services Baseline"},
+    "sec.baseline_indirect_sub":{"pt": "TCO do serviço → decomposição FTE → waterfall de leakage → custo do ciclo de vida.", "en": "Service TCO → FTE decomposition → contract leakage waterfall → lifecycle cost."},
+    "sec.proposals_direct":   {"pt": "Propostas de Materiais Diretos", "en": "Supplier Direct Material Proposals"},
+    "sec.proposals_direct_sub":{"pt": "Build-up de preço → preço desembarcado → spend equivalente a 100% → motor TCO.", "en": "Price build-up → landed unit price → 100% equivalent spend → TCO engine."},
+    "sec.proposals_indirect": {"pt": "Propostas de Serviços", "en": "Supplier Service Proposals"},
+    "sec.proposals_indirect_sub":{"pt": "Valor do contrato → decomp. FTE → risco SLA → should-cost → ROI → TCO.", "en": "Contract value → FTE decomposition → SLA risk → should-cost → productivity ROI → service TCO."},
+    "sec.should_cost":        {"pt": "🔬 Motor de Should-Cost", "en": "🔬 Should-Cost Engine"},
+    "sec.should_cost_sub":    {"pt": "Defina o preço justo de mercado uma vez — a ferramenta compara automaticamente contra todas as propostas.", "en": "Define the fair market price once — the tool compares automatically against all supplier proposals."},
+    "sec.supplier_mgmt":      {"pt": "Gestão, Performance & Due Diligence de Fornecedores", "en": "Supplier Management, Performance & Due Diligence"},
+    "sec.supplier_mgmt_sub":  {"pt": "Scorecards de governança → defaults de risco → feed de otimização.", "en": "Governance scorecards → risk defaults → optimization feed."},
+    "sec.custom_points":      {"pt": "Pontos de Análise Customizados", "en": "Custom Analysis Points"},
+    "sec.custom_points_sub":  {"pt": "Tooling, créditos, produtividade, benefícios fiscais ou qualquer alavanca específica do comprador.", "en": "Tooling, credits, productivity commitments, tax benefits, exclusivity premiums or any buyer-specific lever."},
+    "sec.risk_matrix":        {"pt": "Matriz de Risco & Restrições Estratégicas", "en": "Supplier Risk Matrix & Strategic Constraints"},
+    "sec.risk_matrix_sub":    {"pt": "Pontuação de risco em 7 eixos · Gráficos spider · Blend de governança · Feed para otimização LP.", "en": "7-axis risk scoring · Spider charts · Governance blend · LP optimization feed."},
+    "sec.share_opt":          {"pt": "Projeção de Share & Otimização de Custo", "en": "Share Projection & Cost Optimization"},
+    "sec.share_opt_sub":      {"pt": "Cenários por slider + otimização LP automática respeitando restrições Kraljic.", "en": "Slider scenarios + automatic LP optimization respecting Kraljic constraints."},
+    "sec.exec_dash":          {"pt": "Painel Executivo", "en": "Executive Dash View"},
+    "sec.exec_dash_sub":      {"pt": "Cockpit visual — filtre, mapeie, ranqueie e compare entre mercados e fornecedores.", "en": "Visual cockpit — filter, map, rank and compare across markets and suppliers."},
+
+    # ── KPI labels ────────────────────────────────────────────────────────
+    "kpi.current_spend":      {"pt": "Spend Atual", "en": "Current Spend"},
+    "kpi.new_spend":          {"pt": "Novo Spend", "en": "New Spend"},
+    "kpi.econ_all_in":        {"pt": "Econômico All-In", "en": "Economic All-In"},
+    "kpi.working_capital":    {"pt": "Capital de Giro", "en": "Working Capital"},
+    "kpi.weighted_risk":      {"pt": "Risco Ponderado", "en": "Weighted Risk"},
+    "kpi.gross_saving":       {"pt": "Saving / Impacto Bruto Total", "en": "Gross Total Saving / Impact"},
+    "kpi.wc_gain":            {"pt": "Ganho de Capital de Giro", "en": "Working Capital Gain"},
+    "kpi.moq_wc":             {"pt": "Benefício WC de MOQ", "en": "MOQ WC Benefit"},
+    "kpi.total_saving_wc":    {"pt": "Saving Total + CG", "en": "Total Saving + WC"},
+    "kpi.final_econ":         {"pt": "Econômico All-In Final", "en": "Final Economic All-In"},
+    "kpi.spend_delta":        {"pt": "Delta de Spend", "en": "Spend Delta"},
+    "kpi.financial_delta":    {"pt": "Delta Financeiro Bruto", "en": "Gross Financial Delta"},
+    "kpi.treasury_offset":    {"pt": "Offset de Tesouraria", "en": "Treasury Offset"},
+    "kpi.net_fin_delta":      {"pt": "Delta Financeiro Líquido", "en": "Net Financial Delta"},
+    "kpi.moq_drag_delta":     {"pt": "Delta de MOQ WC Drag", "en": "MOQ WC Drag Delta"},
+    "kpi.cur_capital_gain":   {"pt": "Retorno de Capital Atual", "en": "Current Capital Gain"},
+    "kpi.new_capital_gain":   {"pt": "Novo Retorno de Capital", "en": "New Capital Gain"},
+    "kpi.inv_delta":          {"pt": "Delta de Estoque", "en": "Inventory Delta"},
+    "kpi.cur_econ_total":     {"pt": "Total Econômico Atual", "en": "Current Econ. Total"},
+    "kpi.new_econ_total":     {"pt": "Novo Total Econômico", "en": "New Econ. Total"},
+    "kpi.should_cost":        {"pt": "Should-Cost", "en": "Should-Cost"},
+    "kpi.neg_target":         {"pt": "Target de Negociação", "en": "Negotiation Target"},
+    "kpi.gap_should":         {"pt": "Gap Proposta vs Should-Cost", "en": "Gap Proposal vs Should-Cost"},
+    "kpi.gap_target":         {"pt": "Gap Proposta vs Target", "en": "Gap Proposal vs Target"},
+    "kpi.active_drivers":     {"pt": "Drivers Ativos", "en": "Active Drivers"},
+    "kpi.lower_better":       {"pt": "Quanto menor, melhor", "en": "Lower is better"},
+    "kpi.baseline":           {"pt": "Baseline", "en": "Baseline"},
+    "kpi.proposals_shares":   {"pt": "Propostas × shares", "en": "Proposals × shares"},
+    "kpi.finance_wc_inv":     {"pt": "Financeiro + CG + estoque", "en": "Finance + WC + inventory"},
+    "kpi.treasury_delta":     {"pt": "Delta de retorno de tesouraria", "en": "Treasury return delta"},
+
+    # ── Decision stacks ───────────────────────────────────────────────────
+    "stack.top_supplier":     {"pt": "Foco nos Top Fornecedores", "en": "Top Supplier Focus"},
+    "stack.top_supplier_sub": {"pt": "Top {n} de {total} fornecedores por lente executiva.", "en": "Top {n} of {total} suppliers by executive lens."},
+    "stack.total_saving":     {"pt": "Saving Total do Projeto", "en": "Total Project Saving"},
+    "stack.total_saving_sub": {"pt": "Saving bruto, ganho de capital de giro e econômico all-in.", "en": "Gross saving, working capital gain and economic all-in."},
+    "stack.ai_copilot":       {"pt": "AI Executive Copilot", "en": "AI Executive Copilot"},
+    "stack.ai_copilot_sub":   {"pt": "Brief conciso e orientado a decisões do cenário atual.", "en": "Concise decision-oriented brief from the current scenario."},
+    "stack.cost_stack":       {"pt": "Stack de Custo Total", "en": "Total Cost Stack"},
+    "stack.cost_stack_sub":   {"pt": "Spend comercial e comparação de custo bruto de prazo de pagamento.", "en": "Commercial spend and gross payment-term cost comparison."},
+    "stack.wc_carry":         {"pt": "Carrego de Capital de Giro", "en": "Working Capital Carry"},
+    "stack.wc_carry_sub":     {"pt": "Retorno de tesouraria e efeito financeiro líquido das diferenças de prazo.", "en": "Treasury return and net financial effect from payment-term differences."},
+    "stack.decomp":           {"pt": "Decomposição Total", "en": "Total Decomposition"},
+    "stack.decomp_sub":       {"pt": "Breakdown pronto para decisão: spend, financeiro, estoque e risco.", "en": "Decision-ready breakdown of spend, finance, inventory and risk."},
+    "stack.anchor_result":    {"pt": "Resultado {country}", "en": "{country} Result"},
+    "stack.anchor_sub":       {"pt": "P&L detalhado para o mercado âncora {country}.", "en": "Detailed P&L for anchor market {country}."},
+    "stack.secondary_result": {"pt": "Resultado {group}", "en": "{group} Result"},
+    "stack.secondary_sub":    {"pt": "Visão consolidada para {n} outros mercados selecionados.", "en": "Consolidated view for {n} other selected markets."},
+    "stack.decision_rec":     {"pt": "Recomendação de Decisão", "en": "Decision Recommendation"},
+    "stack.decision_rec_sub": {"pt": "Go / no-go baseado no cenário modelado.", "en": "Go / no-go based on the modeled scenario."},
+    "stack.charts":           {"pt": "Gráficos", "en": "Charts"},
+    "stack.charts_sub":       {"pt": "Stack de custo, waterfall econômico e mapa de decisão.", "en": "Cost stack, economic waterfall and decision map."},
+    "stack.should_cost":      {"pt": "Análise de Should-Cost", "en": "Should-Cost Analysis"},
+    "stack.should_cost_sub":  {"pt": "Preço justo de mercado vs proposta — gap e target de negociação.", "en": "Fair market price vs proposal — gap and negotiation target."},
+    "stack.sensitivity":      {"pt": "Análise de Sensibilidade", "en": "Sensitivity Analysis"},
+    "stack.sensitivity_sub":  {"pt": "What-if: como preço, volume, FX e taxas afetam o resultado econômico.", "en": "What-if: how price, volume, FX and rates shift the economic outcome."},
+    "stack.award_scenario":   {"pt": "Comparação de Cenários de Adjudicação", "en": "Award Scenario Comparison"},
+    "stack.award_sub":        {"pt": "Salve e compare até 3 cenários de sourcing lado a lado.", "en": "Save and compare up to 3 sourcing scenarios side-by-side."},
+    "stack.kraljic":          {"pt": "Matriz Kraljic — Posicionamento do Portfólio", "en": "Kraljic Portfolio Matrix"},
+    "stack.kraljic_sub":      {"pt": "Posiciona fornecedores por impacto de spend × risco de suprimento.", "en": "Position suppliers by spend impact × supply risk."},
+    "stack.batna":            {"pt": "BATNA / ZOPA — Calculadora de Negociação", "en": "BATNA / ZOPA Negotiation Calculator"},
+    "stack.batna_sub":        {"pt": "Preço de saída, zona de acordo e quantificação de alavancas.", "en": "Walk-away price, ZOPA zone and lever quantification."},
+    "stack.concentration":    {"pt": "Risco de Concentração & Stress Test", "en": "Concentration Risk & Stress Test"},
+    "stack.concentration_sub":{"pt": "Índice HHI, alertas de dependência e simulação de falha.", "en": "HHI index, single-supplier dependency alerts and failure simulation."},
+    "stack.wc_econ":          {"pt": "Visão Econômica de Capital de Giro", "en": "Working Capital Economic View"},
+    "stack.wc_econ_sub":      {"pt": "Retorno de tesouraria, ganho de capital e estoque separados.", "en": "Treasury return, capital gain and inventory separated."},
+    "stack.detailed_data":    {"pt": "Dados Detalhados", "en": "Detailed Data"},
+    "stack.detailed_sub":     {"pt": "Trilha completa de auditoria para Finanças, Compras e estratégia de categoria.", "en": "Full audit trail for Finance, Procurement and category strategy."},
+    "stack.export":           {"pt": "Exportar", "en": "Export"},
+    "stack.export_sub":       {"pt": "Baixar resumo por país em CSV.", "en": "Download country summary CSV."},
+
+    # ── Optimization ──────────────────────────────────────────────────────
+    "opt.run":                {"pt": "⚡ Executar Otimização", "en": "⚡ Run Optimization"},
+    "opt.title":              {"pt": "Otimização de Custo", "en": "Cost Optimization"},
+    "opt.sub":                {"pt": "Execute o otimizador a qualquer momento — respeita todas as restrições e atualiza os sliders automaticamente.", "en": "Run optimizer at any time — respects all constraints and updates share sliders automatically."},
+    "opt.logic":              {"pt": "Minimiza o delta econômico all-in (spend + custo financeiro − retorno tesouraria + carrego estoque + drag MOQ).", "en": "Minimizes economic all-in delta (spend + payment-term finance cost − treasury return + inventory carry + MOQ drag)."},
+    "opt.fix_first":          {"pt": "Corrija as restrições primeiro.", "en": "Fix constraints first."},
+    "opt.failed":             {"pt": "Otimização falhou: ", "en": "Optimization failed: "},
+    "opt.applied":            {"pt": "Otimização aplicada.", "en": "Optimization applied."},
+
+    # ── Decision recommendation ───────────────────────────────────────────
+    "rec.approve":            {"pt": "Cenário é economicamente atraente — recomenda-se aprovação", "en": "Scenario is economically attractive — recommend approval"},
+    "rec.reject":             {"pt": "Cenário gera impacto de custo econômico — renegociar antes de aprovar", "en": "Scenario creates economic cost impact — renegotiate before approval"},
+    "rec.econ_delta":         {"pt": "Delta econômico all-in", "en": "Economic all-in delta"},
+    "rec.spend_delta":        {"pt": "Delta de spend comercial", "en": "Commercial spend delta"},
+    "rec.risk":               {"pt": "Risco ponderado", "en": "Weighted risk"},
+    "rec.sc_within":          {"pt": "Verificação de should-cost: proposta dentro da faixa de mercado ✓", "en": "Should-cost check: proposal is within market range ✓"},
+    "rec.sc_above":           {"pt": "Gap de should-cost: {pct}% acima do preço justo de mercado — negocie até {target} antes de aprovar.", "en": "Should-cost gap: {pct}% above fair market price — negotiate down to {target} before approval."},
+    "rec.use_opt":            {"pt": "Use a Otimização de Custo ou ajuste o mix de fornecedores, prazos ou spend para melhorar o caso.", "en": "Use Cost Optimization or adjust supplier mix, payment terms or proposal spend to improve the case."},
+    "rec.proceed":            {"pt": "Prossiga com a rodada final de negociação comercial usando a lista de foco dos top fornecedores.", "en": "Proceed with final commercial negotiation using the top supplier focus list as the anchor."},
+
+    # ── AI Copilot ────────────────────────────────────────────────────────
+    "ai.generate":            {"pt": "Gerar Brief", "en": "Generate Brief"},
+    "ai.title":               {"pt": "⚡ AI Executive Copilot — Recomendação Concisa", "en": "⚡ AI Executive Copilot — Concise Recommendation"},
+    "ai.caption":             {"pt": "Brief local determinístico. Conecte a chave de API Anthropic para análise com IA ao vivo.", "en": "Local deterministic brief. Connect Anthropic API key for live AI analysis."},
+    "ai.how":                 {"pt": "Lê o cenário completo — fornecedores, economia, risco, SLA, produtividade — e produz uma recomendação concisa com alavancas de negociação.", "en": "Reads the full scenario — suppliers, economics, risk, SLA, productivity — and produces a concise recommendation with negotiation levers and next actions."},
+    "ai.copy_prompt":         {"pt": "Copiar prompt para IA externa", "en": "Copy prompt for external AI"},
+
+    # ── Should-Cost Engine ────────────────────────────────────────────────
+    "sc.how_to":              {"pt": "Preencha o modelo abaixo <b>uma única vez</b> com o preço de referência e as tendências de mercado atuais. A ferramenta calculará o <b>should-cost</b> e o <b>target de negociação</b>, depois comparará automaticamente contra cada proposta de fornecedor.", "en": "Fill in the model below <b>once</b> with the reference price and current market trends. The tool will calculate the <b>should-cost</b> and the <b>negotiation target</b>, then automatically compare against each supplier proposal."},
+    "sc.ref_price":           {"pt": "Preço / custo de referência (na moeda de reporte)", "en": "Reference price / cost (in reporting currency)"},
+    "sc.ref_period":          {"pt": "Período de referência", "en": "Reference period"},
+    "sc.ref_period_default":  {"pt": "Último contrato", "en": "Last contract"},
+    "sc.neg_buffer":          {"pt": "Stretch goal de negociação %", "en": "Negotiation stretch goal %"},
+    "sc.price_label":         {"pt": "Unidade / rótulo do preço", "en": "Price unit / label"},
+    "sc.price_label_default": {"pt": "preço unitário / kg", "en": "unit price / kg"},
+    "sc.template":            {"pt": "Template de drivers de mercado", "en": "Market driver template"},
+    "sc.n_drivers":           {"pt": "Nº de drivers (max 8)", "en": "No. of drivers (max 8)"},
+    "sc.driver_name":         {"pt": "Driver de custo", "en": "Cost driver"},
+    "sc.driver_weight":       {"pt": "Peso % no custo total", "en": "Weight % of total cost"},
+    "sc.driver_change":       {"pt": "Variação de mercado (%)", "en": "Market change (%)"},
+    "sc.driver_change_help":  {"pt": "Positivo = driver subiu (aumenta o custo). Negativo = caiu.", "en": "Positive = driver rose (increases cost). Negative = fell."},
+    "sc.weights_ok":          {"pt": "Pesos somam: {total}% ✓", "en": "Weights sum: {total}% ✓"},
+    "sc.weights_warn":        {"pt": "Pesos somam: {total}% — ajuste para 100%", "en": "Weights sum: {total}% — adjust to 100%"},
+    "sc.calculated":          {"pt": "🔬 Should-Cost Calculado", "en": "🔬 Calculated Should-Cost"},
+    "sc.ref_label":           {"pt": "Preço referência ({period})", "en": "Reference price ({period})"},
+    "sc.should_cost_today":   {"pt": "Should-cost hoje", "en": "Should-cost today"},
+    "sc.neg_target_label":    {"pt": "Target de negociação (-{pct}% stretch)", "en": "Negotiation target (-{pct}% stretch)"},
+    "sc.driver_contrib":      {"pt": "Contribuição de cada driver", "en": "Contribution per driver"},
+    "sc.no_change":           {"pt": "Nenhuma variação informada ainda — ajuste os drivers acima.", "en": "No changes entered yet — adjust the drivers above."},
+    "sc.comparison_title":    {"pt": "📊 Comparativo should-cost vs todas as propostas", "en": "📊 Should-cost vs all proposals comparison"},
+    "sc.comparison_caption":  {"pt": "A tabela abaixo é atualizada automaticamente conforme você preenche as propostas na aba 2.", "en": "Table updates automatically as you fill proposals in tab 2."},
+    "sc.chart_title":         {"pt": "Proposta vs should-cost vs target de negociação", "en": "Proposal vs should-cost vs negotiation target"},
+    "sc.fill_proposals":      {"pt": "Preencha as propostas dos fornecedores na aba '2 · Propostas' para ver a comparação aqui.", "en": "Fill supplier proposals in tab '2 · Supplier Proposals' to see the comparison here."},
+    "sc.fill_ref":            {"pt": "Informe o preço de referência acima para calcular o should-cost e comparar com as propostas.", "en": "Enter the reference price above to calculate the should-cost and compare with proposals."},
+    "sc.verdict_ok":          {"pt": "✅ Proposta está dentro ou abaixo do should-cost — preço está justificado pelo mercado.", "en": "✅ Proposal is at or below should-cost — price is justified by market drivers."},
+    "sc.verdict_warn":        {"pt": "⚠ Proposta está {pct}% acima do should-cost. Use como alavanca: 'Nosso modelo indica should-cost de {sc} — qual a abertura do fornecedor?' Target: {target}.", "en": "⚠ Proposal is {pct}% above should-cost. Use as leverage: 'Our model indicates should-cost of {sc} — what is the supplier's room?' Target: {target}."},
+    "sc.col_country":         {"pt": "País", "en": "Country"},
+    "sc.col_supplier":        {"pt": "Fornecedor", "en": "Supplier"},
+    "sc.col_proposal":        {"pt": "Proposta", "en": "Proposal"},
+    "sc.col_should_cost":     {"pt": "Should-cost", "en": "Should-cost"},
+    "sc.col_target":          {"pt": "Target negoc.", "en": "Neg. target"},
+    "sc.col_gap_sc":          {"pt": "Gap vs should-cost", "en": "Gap vs should-cost"},
+    "sc.col_gap_target":      {"pt": "Gap vs target", "en": "Gap vs target"},
+    "sc.col_share":           {"pt": "Share %", "en": "Share %"},
+    "sc.col_verdict":         {"pt": "Veredicto", "en": "Verdict"},
+    "sc.verdict_ok_short":    {"pt": "✅ OK", "en": "✅ OK"},
+    "sc.verdict_neg":         {"pt": "⚠ Negociar", "en": "⚠ Negotiate"},
+    "sc.verdict_above":       {"pt": "🔴 Acima", "en": "🔴 Above"},
+
+    # ── Sensitivity ───────────────────────────────────────────────────────
+    "sens.title":             {"pt": "🎚 Análise de Sensibilidade — cenários what-if", "en": "🎚 Sensitivity Analysis — what-if scenarios"},
+    "sens.caption":           {"pt": "Mova os sliders para testar o impacto de cada driver independentemente. Tornado mostra as variáveis que mais importam.", "en": "Move sliders to test the impact of each driver independently. Tornado shows which variables matter most."},
+    "sens.price":             {"pt": "Preço ±%", "en": "Price ±%"},
+    "sens.volume":            {"pt": "Volume ±%", "en": "Volume ±%"},
+    "sens.fx":                {"pt": "FX ±%", "en": "FX ±%"},
+    "sens.fin_rate":          {"pt": "Taxa financeira ±pp", "en": "Fin. rate ±pp"},
+    "sens.inv_rate":          {"pt": "Taxa estoque ±pp", "en": "Inv. rate ±pp"},
+    "sens.stress_btn":        {"pt": "⚡ Aplicar estresse do pior caso", "en": "Apply worst-case stress scenario"},
+    "sens.base_delta":        {"pt": "Delta econômico base", "en": "Base economic delta"},
+    "sens.sens_impact":       {"pt": "Impacto de sensibilidade", "en": "Sensitivity impact"},
+    "sens.adj_delta":         {"pt": "Delta ajustado", "en": "Adjusted delta"},
+    "sens.tornado_title":     {"pt": "Tornado — impacto de sensibilidade por driver", "en": "Tornado — sensitivity impact by driver"},
+    "sens.no_change":         {"pt": "Mova qualquer slider para calcular o impacto de sensibilidade no delta econômico all-in.", "en": "Move any slider to compute the sensitivity impact on economic all-in delta."},
+
+    # ── Award scenarios ───────────────────────────────────────────────────
+    "award.name_input":       {"pt": "Nome do cenário", "en": "Scenario name"},
+    "award.save_btn":         {"pt": "💾 Salvar cenário atual", "en": "💾 Save current scenario"},
+    "award.clear_btn":        {"pt": "🗑 Limpar todos", "en": "🗑 Clear all"},
+    "award.no_scenarios":     {"pt": "Salve o cenário atual acima, depois mude os inputs e salve outro para comparar lado a lado.", "en": "Save the current scenario above, then change inputs and save another to compare side-by-side."},
+    "award.max_warning":      {"pt": "Máximo 3 cenários. Exclua um antes de salvar um novo.", "en": "Maximum 3 scenarios. Delete one before saving a new one."},
+    "award.delta_vs":         {"pt": "Delta econômico vs {name}", "en": "Economic delta vs {name}"},
+
+    # ── Kraljic ───────────────────────────────────────────────────────────
+    "kj.caption":             {"pt": "Fornecedores são posicionados por share de spend (x) × score de risco (y). O quadrante define a estratégia de sourcing recomendada.", "en": "Suppliers are positioned by spend share (x) × risk score (y). Quadrant determines recommended sourcing strategy."},
+    "kj.strategic":           {"pt": "Estratégico", "en": "Strategic"},
+    "kj.leverage":            {"pt": "Alavancagem", "en": "Leverage"},
+    "kj.bottleneck":          {"pt": "Gargalo", "en": "Bottleneck"},
+    "kj.non_critical":        {"pt": "Não crítico", "en": "Non-critical"},
+    "kj.strategy_label":      {"pt": "Estratégia Recomendada", "en": "Recommended Strategy"},
+    "kj.s_strategic":         {"pt": "Parceria — contratos de longo prazo, desenvolvimento conjunto, relacionamento executivo", "en": "Partnership approach — long-term contracts, joint development, executive relationship"},
+    "kj.s_leverage":          {"pt": "Licitação competitiva — múltiplos fornecedores, alavancagem de volume, benchmarking de preços", "en": "Competitive bidding — multiple suppliers, volume leverage, price benchmarking"},
+    "kj.s_bottleneck":        {"pt": "Garantia de suprimento — estoque de segurança, desenvolvimento de segunda fonte, plano de contingência", "en": "Supply assurance — safety stock, dual-source development, supplier development"},
+    "kj.s_non_critical":      {"pt": "Eficiência — compra por catálogo, e-procurement, agregação de demanda", "en": "Efficiency — catalog buying, e-procurement, demand aggregation"},
+
+    # ── BATNA / ZOPA ──────────────────────────────────────────────────────
+    "batna.caption":          {"pt": "Quantifique seu preço de saída e a zona de possível acordo antes de entrar nas negociações.", "en": "Quantify your walk-away price and the zone of possible agreement before entering negotiations."},
+    "batna.max_increase":     {"pt": "Aumento máximo aceitável vs atual (%)", "en": "Max acceptable cost increase vs current (%)"},
+    "batna.sup_margin":       {"pt": "Margem mínima estimada do fornecedor %", "en": "Supplier estimated min. margin %"},
+    "batna.should_cost_est":  {"pt": "Estimativa de should-cost", "en": "Should-cost estimate"},
+    "batna.buyer_batna":      {"pt": "BATNA do Comprador (saída)", "en": "Buyer BATNA (walk-away)"},
+    "batna.sup_batna":        {"pt": "BATNA estimado do Fornecedor", "en": "Supplier BATNA estimate"},
+    "batna.midpoint":         {"pt": "Ponto médio / acordo justo", "en": "Midpoint / fair deal"},
+    "batna.zopa_exists":      {"pt": "✅ ZOPA existe — acordo é teoricamente possível", "en": "✅ ZOPA exists — deal is theoretically possible"},
+    "batna.no_zopa":          {"pt": "⚠ Sem ZOPA — re-escopo ou re-especificação necessária", "en": "⚠ No ZOPA — re-scope or re-spec needed"},
+    "batna.levers_title":     {"pt": "💡 Quantificação de alavancas de negociação", "en": "💡 Negotiation lever quantification"},
+    "batna.levers_caption":   {"pt": "Cada alavanca quantificada em valor anual R$ com base nos inputs do cenário atual.", "en": "Each lever quantified in annual $ value based on the current scenario inputs."},
+    "batna.lever_col":        {"pt": "Alavanca", "en": "Lever"},
+    "batna.lever_value":      {"pt": "Valor anual", "en": "Annual value"},
+    "batna.lever_direction":  {"pt": "Direção", "en": "Direction"},
+    "batna.buyer_benefit":    {"pt": "Benefício do comprador", "en": "Buyer benefit"},
+
+    # ── Concentration / Stress ────────────────────────────────────────────
+    "conc.hhi_label":         {"pt": "HHI", "en": "HHI"},
+    "conc.concentration":     {"pt": "Concentração", "en": "Concentration"},
+    "conc.top_supplier":      {"pt": "Top fornecedor", "en": "Top supplier"},
+    "conc.top_share":         {"pt": "Share top %", "en": "Top share %"},
+    "conc.low":               {"pt": "Baixa", "en": "Low"},
+    "conc.moderate":          {"pt": "Moderada", "en": "Moderate"},
+    "conc.high":              {"pt": "Alta concentração", "en": "High concentration"},
+    "conc.stress_title":      {"pt": "🔴 Stress test de falha de fonte única", "en": "🔴 Single-source failure stress test"},
+    "conc.stress_caption":    {"pt": "Simula o impacto econômico se o fornecedor selecionado for removido e o volume for realocado proporcionalmente.", "en": "Simulates economic impact if selected supplier is removed and volume reallocated proportionally."},
+    "conc.sup_to_remove":     {"pt": "Fornecedor a remover", "en": "Supplier to remove"},
+    "conc.cur_econ":          {"pt": "Total econômico atual", "en": "Current economic total"},
+    "conc.after_failure":     {"pt": "Após falha de {sup}", "en": "After {sup} failure"},
+    "conc.impact":            {"pt": "Impacto", "en": "Impact"},
+    "conc.critical":          {"pt": "🔴 Crítico", "en": "🔴 Critical"},
+    "conc.moderate_risk":     {"pt": "🟡 Moderado", "en": "🟡 Moderate"},
+    "conc.manageable":        {"pt": "🟢 Gerenciável", "en": "🟢 Manageable"},
+
+    # ── Risk matrix ───────────────────────────────────────────────────────
+    "risk.weights_title":     {"pt": "⚙ Pesos das dimensões de risco", "en": "⚙ Risk dimension weights"},
+    "risk.weights_caption":   {"pt": "Pesos definem a importância relativa de cada eixo. Padrão McKinsey SCM. Total deve = 100.", "en": "Weights define relative importance of each axis. McKinsey SCM standard defaults. Total should = 100."},
+    "risk.weights_ok":        {"pt": "Total de pesos: {total}% ✓", "en": "Weights total: {total}% ✓"},
+    "risk.weights_warn":      {"pt": "Total de pesos: {total}% — ajuste para 100%", "en": "Weights total: {total}% — adjust to reach 100%"},
+    "risk.approved":          {"pt": "Aprovado", "en": "Approved"},
+    "risk.kraljic_min":       {"pt": "Mínimo Kraljic", "en": "Kraljic min"},
+    "risk.min_share":         {"pt": "Share mínimo %", "en": "Min share %"},
+    "risk.max_share":         {"pt": "Share máximo %", "en": "Max share %"},
+    "risk.low_high":          {"pt": "1=baixo risco, 5=alto risco", "en": "1=low risk, 5=high risk"},
+    "risk.breakdown":         {"pt": "Decomposição de Risco", "en": "Risk Breakdown"},
+    "risk.weighted_score":    {"pt": "Score de risco ponderado", "en": "Weighted risk score"},
+
+    # ── Share & optimization ──────────────────────────────────────────────
+    "share.mode":             {"pt": "Controle de share", "en": "Share control"},
+    "share.automatic":        {"pt": "Automático", "en": "Automatic"},
+    "share.manual":           {"pt": "Manual", "en": "Manual"},
+    "share.auto_caption":     {"pt": "Auto-rebalanceamento: mudar um fornecedor rebalanceia os outros proporcionalmente.", "en": "Auto-rebalance: changing one supplier rebalances others proportionally."},
+    "share.manual_caption":   {"pt": "Manual: sliders normalizados se total ≠ 100%.", "en": "Manual: sliders normalized if total ≠ 100%."},
+    "share.supplier_col":     {"pt": "Fornecedor", "en": "Supplier"},
+    "share.eff_share":        {"pt": "Share Efetivo %", "en": "Effective Share %"},
+    "share.constraint_err":   {"pt": "Configuração de restrições é inviável.", "en": "Constraint setup is infeasible."},
+    "share.fix_first":        {"pt": "Corrija as restrições primeiro.", "en": "Fix constraints first."},
+    "share.floor":            {"pt": "Piso Kraljic: {pct}%", "en": "Kraljic floor: {pct}%"},
+    "share.locked":           {"pt": "Travado em {pct}%", "en": "Locked at {pct}%"},
+    "share.proj_title":       {"pt": "projeção de share", "en": "share projection"},
+
+    # ── Exec Dash ─────────────────────────────────────────────────────────
+    "dash.supplier_filter":   {"pt": "Fornecedor", "en": "Supplier"},
+    "dash.map_metric":        {"pt": "Métrica do mapa", "en": "Map metric"},
+    "dash.spend":             {"pt": "Spend", "en": "Spend"},
+    "dash.saving":            {"pt": "Saving", "en": "Saving"},
+    "dash.risk":              {"pt": "Risco", "en": "Risk"},
+    "dash.suppliers":         {"pt": "Fornecedores", "en": "Suppliers"},
+    "dash.cost_by_market":    {"pt": "Custo por mercado", "en": "Cost by market"},
+    "dash.cur_vs_new":        {"pt": "Spend Atual vs Novo por Mercado", "en": "Current vs New Spend by Market"},
+    "dash.current":           {"pt": "Atual", "en": "Current"},
+    "dash.new":               {"pt": "Novo", "en": "New"},
+    "dash.geo_heatmap":       {"pt": "Mapa de calor geográfico", "en": "Geographic heat map"},
+    "dash.spend_heatmap":     {"pt": "Mapa de calor de spend", "en": "Spend heat map"},
+    "dash.spend_by_sup":      {"pt": "Spend por fornecedor", "en": "Spend by supplier"},
+    "dash.alloc_spend":       {"pt": "Spend alocado por fornecedor", "en": "Allocated spend by supplier"},
+    "dash.frontier":          {"pt": "Fronteira Custo × Risco", "en": "Cost × Risk frontier"},
+    "dash.decision_map":      {"pt": "Mapa de Decisão Custo × Risco", "en": "Cost × Risk Decision Map"},
+    "dash.risk_score_x":      {"pt": "Score de risco ponderado", "en": "Weighted risk score"},
+    "dash.econ_delta_y":      {"pt": "Delta econômico", "en": "Economic delta"},
+
+    # ── Charts ────────────────────────────────────────────────────────────
+    "chart.cost_stack":       {"pt": "Stack de Custo Total", "en": "Total Cost Stack"},
+    "chart.cur_vs_new":       {"pt": "Spend Atual vs Novo", "en": "Current vs New Spend"},
+    "chart.econ_waterfall":   {"pt": "Waterfall de Delta Econômico", "en": "Economic Delta Waterfall"},
+    "chart.cur_spend":        {"pt": "Spend Atual", "en": "Current Spend"},
+    "chart.new_spend":        {"pt": "Novo Spend", "en": "New Spend"},
+    "chart.cur_fin":          {"pt": "Custo Fin. Atual", "en": "Current Fin. Cost"},
+    "chart.new_fin":          {"pt": "Novo Custo Fin.", "en": "New Fin. Cost"},
+    "chart.cur_total":        {"pt": "Total Atual", "en": "Current Total"},
+    "chart.new_total":        {"pt": "Novo Total", "en": "New Total"},
+    "chart.wf_spend":         {"pt": "Spend", "en": "Spend"},
+    "chart.wf_net_fin":       {"pt": "Fin. líquido", "en": "Net fin."},
+    "chart.wf_wc":            {"pt": "CG", "en": "WC"},
+    "chart.wf_inventory":     {"pt": "Estoque", "en": "Inventory"},
+    "chart.wf_allin":         {"pt": "All-in", "en": "All-in"},
+    "chart.breakeven":        {"pt": "Break-even", "en": "Break-even"},
+    "chart.optimized":        {"pt": "Otimizado", "en": "Optimized"},
+    "chart.lower_risk":       {"pt": "Menor Risco", "en": "Lower Risk"},
+    "chart.current":          {"pt": "Atual", "en": "Current"},
+
+    # ── Landed cost builder ───────────────────────────────────────────────
+    "lc.base_price":          {"pt": "Preço base / cotado", "en": "Base / quoted unit price"},
+    "lc.currency":            {"pt": "Moeda de cotação", "en": "Quote currency"},
+    "lc.fx_to":               {"pt": "FX → {cur}", "en": "FX → {cur}"},
+    "lc.volume":              {"pt": "Volume 100% ({unit})", "en": "100% volume ({unit})"},
+    "lc.moq":                 {"pt": "MOQ ({unit})", "en": "MOQ ({unit})"},
+    "lc.incoterm":            {"pt": "Incoterm", "en": "Incoterm"},
+    "lc.conversion":          {"pt": "Custo de conversão / {unit}", "en": "Conversion cost / {unit}"},
+    "lc.fixed_margin":        {"pt": "Margem fixa / {unit}", "en": "Fixed margin / {unit}"},
+    "lc.intl_freight":        {"pt": "Frete internacional / {unit}", "en": "Intl freight / {unit}"},
+    "lc.insurance":           {"pt": "Seguro / {unit}", "en": "Insurance / {unit}"},
+    "lc.customs":             {"pt": "Alfândega / corretagem / {unit}", "en": "Customs / brokerage / {unit}"},
+    "lc.import_duties":       {"pt": "Impostos de importação / {unit}", "en": "Import duties / taxes / {unit}"},
+    "lc.dom_freight":         {"pt": "Frete doméstico / {unit}", "en": "Domestic freight / {unit}"},
+    "lc.local_taxes":         {"pt": "Impostos locais / {unit}", "en": "Local taxes / {unit}"},
+    "lc.waterfall_title":     {"pt": "📐 Build-up de preço — todos os componentes incluídos", "en": "📐 Price build-up — all components included"},
+    "lc.final_price":         {"pt": "Preço unitário desembarcado final", "en": "Final landed unit price"},
+    "lc.equiv_spend":         {"pt": "Spend 100%", "en": "100% spend"},
+    "lc.moq_ok":              {"pt": "OK", "en": "OK"},
+    "lc.moq_below":           {"pt": "Volume abaixo do MOQ ⚠", "en": "Volume below MOQ ⚠"},
+    "lc.moq_cash":            {"pt": "Caixa travado em MOQ", "en": "MOQ cash tied"},
+    "lc.fx_used":             {"pt": "FX usado", "en": "FX used"},
+    "lc.base_comp":           {"pt": "Preço base / commodity", "en": "Base / commodity price"},
+    "lc.esg_addon":           {"pt": "Custos ESG / certificações", "en": "ESG / certification costs"},
+
+    # ── Financial params ──────────────────────────────────────────────────
+    "fin.params_title":       {"pt": "Parâmetros financeiros, tesouraria & estoque", "en": "Financial, treasury & inventory parameters"},
+    "fin.cur_pmt":            {"pt": "{c} prazo de pagamento atual (dias)", "en": "{c} current payment days"},
+    "fin.cur_inv":            {"pt": "{c} dias de estoque atuais", "en": "{c} current inventory days"},
+    "fin.fin_rate":           {"pt": "{c} taxa financeira %", "en": "{c} financial rate %"},
+    "fin.fin_ref":            {"pt": "{c} dias de referência da taxa financeira", "en": "{c} fin. rate reference days"},
+    "fin.treas":              {"pt": "{c} retorno líquido de tesouraria %", "en": "{c} net treasury return %"},
+    "fin.treas_ref":          {"pt": "{c} dias de referência de tesouraria", "en": "{c} treasury ref. days"},
+    "fin.inv_rate":           {"pt": "{c} taxa de carrego de estoque % a.a.", "en": "{c} inventory carry rate % p.a."},
+    "fin.note":               {"pt": "Financeiro/tesouraria usam prazo atual para baseline. Propostas usam o prazo de cada fornecedor.", "en": "Financial/treasury use current payment term for baseline. Proposals use each supplier's term."},
+
+    # ── Download ──────────────────────────────────────────────────────────
+    "dl.btn":                 {"pt": "⬇️ Baixar resumo por país em CSV", "en": "⬇️ Download country summary CSV"},
+    "dl.filename":            {"pt": "procurement_tco_resumo_pais.csv", "en": "procurement_tco_country_summary.csv"},
+
+    # ── Governance ────────────────────────────────────────────────────────
+    "gov.score":              {"pt": "Score de governança", "en": "Governance score"},
+    "gov.tier":               {"pt": "Tier", "en": "Tier"},
+    "gov.dd_status":          {"pt": "Due diligence", "en": "Due diligence"},
+    "gov.cadence":            {"pt": "Cadência de governança", "en": "Governance cadence"},
+    "gov.open_actions":       {"pt": "Ações corretivas abertas", "en": "Open corrective actions"},
+    "gov.dependency":         {"pt": "Dependência de negócio", "en": "Business dependency"},
+    "gov.summary":            {"pt": "Resumo de governança", "en": "Governance summary"},
+
+    # ── Custom factors ────────────────────────────────────────────────────
+    "cf.n_points":            {"pt": "Número de pontos customizados", "en": "Number of custom points"},
+    "cf.name":                {"pt": "Nome", "en": "Name"},
+    "cf.type":                {"pt": "Tipo", "en": "Type"},
+    "cf.country":             {"pt": "Escopo de país", "en": "Country scope"},
+    "cf.weight":              {"pt": "Peso", "en": "Weight"},
+    "cf.all_countries":       {"pt": "Todos os países", "en": "All countries"},
+    "cf.audit":               {"pt": "Auditoria de análise customizada", "en": "Custom analysis audit"},
+    "cf.no_points":           {"pt": "Nenhum ponto customizado. Lógica padrão de proposta, risco e TCO será usada.", "en": "No custom points. Standard proposal, risk and TCO logic will be used."},
+    "cf.point_label":         {"pt": "Ponto de análise", "en": "Analysis point"},
+
+    # ── Data tabs ─────────────────────────────────────────────────────────
+    "data.country_summary":   {"pt": "Resumo por país", "en": "Country summary"},
+    "data.region_summary":    {"pt": "Resumo por região", "en": "Region summary"},
+    "data.supplier_alloc":    {"pt": "Alocação de fornecedores", "en": "Supplier allocation"},
+    "data.risk_scores":       {"pt": "Scores de risco", "en": "Risk scores"},
+    "data.governance":        {"pt": "Governança", "en": "Governance"},
+    "data.custom_analysis":   {"pt": "Análise customizada", "en": "Custom analysis"},
+    "data.service_scorecards":{"pt": "Scorecards de serviços", "en": "Service scorecards"},
+
+    # ── Route optimizer ───────────────────────────────────────────────────
+    "route.title":            {"pt": "Otimizador de Rotas — Padrão Amazon Logistics", "en": "Route Optimizer — Amazon Logistics Standard"},
+    "route.subtitle":         {"pt": "Middle Mile · Last Mile · Inbound · Milk Run · Comparação multi-parada. Rota mais curta ≠ mais barata.", "en": "Middle Mile · Last Mile · Inbound · Milk Run · Multi-stop cost comparison. Shortest route ≠ cheapest."},
+    "route.how":              {"pt": "Configure perfil de carga, veículo, waypoints e zona de risco. A ferramenta calcula para cada combinação de rota: distância real, custo aberto, tempo de trânsito (velocidade urbana/rodovia + paradas + HoS), risco e CO₂e.", "en": "Configure cargo profile, vehicle, waypoints and risk zone. The tool calculates for each route combination: real road distance, open-cost model, transit time (urban/highway speed + stops + HoS), risk and CO₂e."},
+    "route.calc_btn":         {"pt": "🚀 Calcular & ranquear todas as rotas", "en": "🚀 Calculate & rank all routes"},
+    "route.results_title":    {"pt": "Ranking de rotas (top 10)", "en": "Route ranking (top 10)"},
+    "route.best":             {"pt": "Melhor rota", "en": "Best route"},
+    "route.score":            {"pt": "Score composto", "en": "Composite score"},
+    "route.dist_km":          {"pt": "Dist. km", "en": "Dist. km"},
+    "route.annual_tco":       {"pt": "Annual TCO", "en": "Annual TCO"},
+    "route.cost_trip":        {"pt": "Custo/viagem", "en": "Cost/trip"},
+    "route.cost_order":       {"pt": "Custo/order", "en": "Cost/order"},
+    "route.transit_d":        {"pt": "Trânsito (d)", "en": "Transit (d)"},
+    "route.hos_breaks":       {"pt": "Pausas HoS", "en": "HoS breaks"},
+    "route.escort":           {"pt": "Escolta", "en": "Escort"},
+    "route.helper":           {"pt": "Ajudante", "en": "Helper"},
+    "route.load_pct":         {"pt": "Ocupação %", "en": "Load %"},
+    "route.co2e":             {"pt": "CO₂e (kg)", "en": "CO₂e (kg)"},
+    "route.no_results":       {"pt": "Configure os parâmetros acima e clique em 'Calcular & ranquear todas as rotas'.", "en": "Configure the parameters above and click 'Calculate & rank all routes'."},
+    "route.map_title":        {"pt": "Mapa de rotas — top 3 opções", "en": "Route map — top 3 options"},
+    "route.map_best":         {"pt": "Rotas avaliadas (destaque: melhor opção)", "en": "Routes evaluated (highlight: best option)"},
+
+    # ── Aliases for backward-compat old sidebar.* keys ─────────────────────
+    "sidebar.hide":             {"pt": "◀ Ocultar", "en": "◀ Hide"},
+    "sidebar.show":             {"pt": "▶ Mostrar", "en": "▶ Show"},
+    "sidebar.title":            {"pt": "⚡ Intelligence Platform", "en": "⚡ Intelligence Platform"},
+    "sidebar.currency":         {"pt": "Moeda de reporte", "en": "Reporting currency"},
+    "sidebar.project_title":    {"pt": "Título do projeto", "en": "Project title"},
+    "sidebar.project_sub":      {"pt": "Subtítulo", "en": "Subtitle"},
+    "sidebar.analysis_mode":    {"pt": "### Modo de análise", "en": "### Analysis mode"},
+    "sidebar.tool_mode":        {"pt": "Modo da ferramenta", "en": "Tool mode"},
+    "sidebar.mode_direct":      {"pt": "Materiais Diretos", "en": "Direct Materials"},
+    "sidebar.mode_indirect":    {"pt": "Indiretos / Serviços", "en": "Indirect / Services"},
+    "sidebar.analysed_item":    {"pt": "Item analisado", "en": "Analysed item"},
+    "sidebar.negotiated_unit":  {"pt": "Unidade negociada", "en": "Negotiated unit"},
+    "sidebar.buying_scope":     {"pt": "Escopo de compra / categoria", "en": "Buying scope / category"},
+    "sidebar.scope_name":       {"pt": "Escopo / nome do contrato", "en": "Scope / contract name"},
+    "sidebar.demand_driver":    {"pt": "Driver de demanda", "en": "Demand driver"},
+    "sidebar.geography":        {"pt": "### Geografia", "en": "### Geography"},
+    "sidebar.analysis_scope":   {"pt": "Escopo de análise", "en": "Analysis scope"},
+    "sidebar.global_view":      {"pt": "Visão Global", "en": "Global View"},
+    "sidebar.local_view":       {"pt": "Visão Local", "en": "Local View"},
+    "sidebar.countries":        {"pt": "Países", "en": "Countries"},
+    "sidebar.primary_country":  {"pt": "País primário / âncora", "en": "Primary / anchor country"},
+    "sidebar.anchor_country":   {"pt": "País âncora", "en": "Anchor country"},
+    "sidebar.rate_conversion":  {"pt": "Conversão de taxa", "en": "Rate conversion"},
+    "sidebar.compound":         {"pt": "Composta", "en": "Compound"},
+    "sidebar.linear":           {"pt": "Linear", "en": "Linear"},
+    "sidebar.supplier_universe":{"pt": "### Universo de fornecedores", "en": "### Supplier universe"},
+    "sidebar.n_suppliers":      {"pt": "Número de fornecedores", "en": "Number of suppliers"},
+    "sidebar.top_suppliers":    {"pt": "Top fornecedores (foco executivo)", "en": "Top suppliers (executive focus)"},
+    "sidebar.show_wc":          {"pt": "Mostrar visão de capital de giro", "en": "Show working capital view"},
+    "sidebar.supplier_names":   {"pt": "Nomes dos fornecedores", "en": "Supplier names"},
+    "sidebar.risk_ceiling":     {"pt": "Teto de risco", "en": "Risk ceiling"},
+    "sidebar.concentration":    {"pt": "Alerta de concentração %", "en": "Concentration alert threshold %"},
+    "sidebar.grid_step":        {"pt": "Passo do otimizador (grid)", "en": "Grid optimization step"},
+
+    # ── Footnote ──────────────────────────────────────────────────────────
+    "footer.note":            {"pt": "O custo financeiro bruto é separado do offset de retorno de tesouraria. O Delta Financeiro Líquido é a visão financeira correta após considerar o carrego de capital de giro. Finanças / Tesouraria devem validar todos os pressupostos de taxa e prazo antes do reconhecimento oficial de saving.", "en": "Gross financial cost is separated from treasury return offset. Net Financial Delta is the correct finance view after working-capital carry is considered. Finance / Treasury must validate all rate and term assumptions before official saving recognition."},
+}
+
+def t(key: str, **kwargs) -> str:
+    """Return the translated string for the active language, with optional .format() kwargs."""
+    lang = _get_lang()
+    entry = _TRANSLATIONS.get(key)
+    if entry is None:
+        return key  # graceful fallback: return the key itself
+    text = entry.get(lang) or entry.get("pt") or key
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, ValueError):
+            pass
+    return text
+
+def get_lang() -> str:
+    """Public alias for _get_lang."""
+    return _get_lang()
+
+def set_lang(lang: str) -> None:
+    """Set the active language in session state."""
+    try:
+        import streamlit as _st
+        _st.session_state["lang"] = lang
+    except Exception:
+        pass
+
+
 import math
 import json
 from contextlib import contextmanager
@@ -64,6 +618,7 @@ from typing import Dict, Iterable, List, Tuple
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as _stc
+from i18n import t, get_lang, set_lang
 
 try:
     from scipy.optimize import linprog
@@ -1128,10 +1683,10 @@ PURPLE = "#8b5cf6"
 CYAN = "#06b6d4"
 
 RESULT_STACK_OPTIONS = [
-    "Top supplier focus lens", "Total project saving", "AI Executive Copilot",
+    "Top supplier focus lens", "Total project saving", t("stack.ai_copilot"),
     "Total cost stack", "Reference supplier condition stack", "Working capital carry view",
     "Total decomposition", "Brazil result", "LATAM result", "Decision recommendation",
-    "Charts", "Working capital economic view", "Detailed data", "Download export",
+    t("stack.charts"), "Working capital economic view", "Detailed data", "Download export",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3350,7 +3905,7 @@ def build_ai_payload(*, analysis_mode, total, group_df, supplier_focus_df, focus
     if not focus.empty:
         for _, row in focus.iterrows():
             extra = ""
-            if analysis_mode == "Indirect / Services" and pd.notna(row.get("Performance Score", None)):
+            if analysis_mode == t("sidebar.mode_indirect") and pd.notna(row.get("Performance Score", None)):
                 extra = f" | Score {row.get('Performance Score',0):.1f}/100 | ROI {row.get('Productivity ROI %', 0):.0f}% | OT {row.get('Overtime Hours / Month', 0):.0f}h/mo | SLA gap {row.get('SLA Gap', 0):.1f}pp"
             focus_lines.append(f"#{int(row.get('Rank',0))} {row.get('Supplier','')} | Econ total: {currency} {row.get('Economic Total',0):,.0f} | Risk: {row.get('Risk Score',0):.2f}/5{extra}")
     return "\n".join([
@@ -3381,7 +3936,7 @@ def generate_local_brief(*, analysis_mode, total, group_df, supplier_focus_df, f
     if not focus.empty:
         top = focus.iloc[0]
         best_sup = str(top.get("Supplier", ""))
-        if analysis_mode == "Indirect / Services":
+        if analysis_mode == t("sidebar.mode_indirect"):
             roi = top.get("Productivity ROI %", None); sla_g = top.get("SLA Gap", None)
             best_rat = f"best perf-adj cost — Score {top.get('Performance Score',0):.0f}/100 | ROI {roi:.0f}% | SLA gap {sla_g:.1f}pp | risk {top.get('Risk Score',0):.2f}/5." if pd.notna(roi) else f"best economic + risk {top.get('Risk Score',0):.2f}/5."
         else:
@@ -3389,7 +3944,7 @@ def generate_local_brief(*, analysis_mode, total, group_df, supplier_focus_df, f
     decision = "Approve / advance to negotiation" if fd <= 0 and risk <= 3.5 else ("Do not approve — renegotiate price and terms" if fd > 0 else "Negotiate before approval")
     wc_msg = "favorable — longer terms create treasury value" if wc < 0 else "unfavorable — treasury return reduces"
     svc_extra = ""
-    if analysis_mode == "Indirect / Services":
+    if analysis_mode == t("sidebar.mode_indirect"):
         svc_extra = "<li><b>Services action:</b> challenge FTE right-sizing, overtime cost, SLA attainment, rate-card compliance and supplier productivity commitments with hard-dollar targets before contracting.</li>"
     else:
         svc_extra = "<li><b>Direct materials action:</b> challenge landed unit price, FX exposure, incoterm cost ownership, MOQ economics and lead time before contracting.</li>"
@@ -3633,13 +4188,13 @@ def render_sensitivity_panel(
 ):
     """Sensitivity analysis panel with tornado chart."""
     with st.expander("🎚 Sensitivity analysis — what-if scenarios", expanded=False):
-        st.caption("Move sliders to test impact of each driver independently. Tornado shows which variables matter most.")
+        st.caption(t("sens.caption"))
         sc = st.columns(5)
-        with sc[0]: price_pct = st.slider("Price ±%", -30.0, 30.0, 0.0, 1.0, key="sens_price")
-        with sc[1]: vol_pct   = st.slider("Volume ±%", -30.0, 30.0, 0.0, 1.0, key="sens_vol")
-        with sc[2]: fx_pct    = st.slider("FX ±%", -30.0, 30.0, 0.0, 1.0, key="sens_fx")
-        with sc[3]: fin_pp    = st.slider("Fin. rate ±pp", -3.0, 3.0, 0.0, 0.25, key="sens_fin")
-        with sc[4]: inv_pp    = st.slider("Inv. rate ±pp", -10.0, 10.0, 0.0, 0.5, key="sens_inv")
+        with sc[0]: price_pct = st.slider(t("sens.price"), -30.0, 30.0, 0.0, 1.0, key="sens_price")
+        with sc[1]: vol_pct   = st.slider(t("sens.volume"), -30.0, 30.0, 0.0, 1.0, key="sens_vol")
+        with sc[2]: fx_pct    = st.slider(t("sens.fx"), -30.0, 30.0, 0.0, 1.0, key="sens_fx")
+        with sc[3]: fin_pp    = st.slider(t("sens.fin_rate"), -3.0, 3.0, 0.0, 0.25, key="sens_fin")
+        with sc[4]: inv_pp    = st.slider(t("sens.inv_rate"), -10.0, 10.0, 0.0, 0.5, key="sens_inv")
 
         any_active = any(abs(v) > 1e-9 for v in [price_pct, vol_pct, fx_pct, fin_pp, inv_pp])
         stress_col, _ = st.columns([.3, .7])
@@ -3687,7 +4242,7 @@ def render_sensitivity_panel(
             except Exception as ex:
                 st.warning(f"Sensitivity calculation failed: {ex}")
         else:
-            st.info("Move any slider to compute the sensitivity impact on economic all-in delta.")
+            st.info(t("sens.no_change"))
 
 
 # ── Award Scenario Comparison ─────────────────────────────────────────────────
@@ -3718,7 +4273,7 @@ def render_award_scenarios(total: Dict, supplier_focus_df: pd.DataFrame, shares:
             scen_name = st.text_input("Scenario name", value=f"Scenario {chr(65+len(scenarios))}", key="scen_name_input", placeholder="e.g. Dual source 60/40")
         with sc_cols[1]:
             st.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
-            if st.button("💾 Save current scenario", type="primary", key="save_scen"):
+            if st.button(t("award.save_btn"), type="primary", key="save_scen"):
                 save_scenario(scen_name.strip() or f"Scenario {chr(65+len(scenarios))}", total, None if supplier_focus_df.empty else supplier_focus_df, supplier_focus_df, shares)
                 st.rerun()
         with sc_cols[2]:
@@ -3831,7 +4386,7 @@ def render_kraljic_matrix(supplier_focus_df: pd.DataFrame, risk_inputs: Dict, ri
         fig_kj.add_vline(x=20, line_dash="dash", line_color="rgba(148,163,184,.35)", line_width=1)
         fig_kj.add_hline(y=3.0, line_dash="dash", line_color="rgba(148,163,184,.35)", line_width=1)
         fig_kj.update_layout(
-            title="Kraljic Portfolio Matrix", xaxis_title="Spend share % (business impact)",
+            title=t("stack.kraljic"), xaxis_title="Spend share % (business impact)",
             yaxis_title="Weighted risk score (1-5)", yaxis_range=[1, 5], xaxis_range=[0, max(100, df_kj["Spend %"].max()*1.15)],
             height=420, showlegend=True,
         )
@@ -4865,7 +5420,7 @@ def render_route_optimizer(reporting_currency: str):
     # ════════════════════════════════════════════════════════════════════
     # COMPUTE ENGINE
     # ════════════════════════════════════════════════════════════════════
-    if st.button("🚀 Calcular & ranquear todas as rotas", type="primary", key="opt__run", use_container_width=False):
+    if st.button(t("route.calc_btn"), type="primary", key="opt__run", use_container_width=False):
         from itertools import permutations as iperms
 
         emission_factor_v = float(EMISSION_FACTORS_KG_CO2E_KM.get(vehicle_opt, veh.get("em_factor", 0.75)))
@@ -5870,28 +6425,45 @@ with st.sidebar:
     # ── Sidebar collapse toggle ─────────────────────────────────────────
     if "sidebar_collapsed" not in st.session_state:
         st.session_state["sidebar_collapsed"] = False
-    tog_icon = "◀ Hide" if not st.session_state["sidebar_collapsed"] else "▶ Show"
+    # ── Language switcher ─────────────────────────────────────────────────
+    _lang = get_lang()
+    _lc1, _lc2, _lc3 = st.columns([0.12, 0.44, 0.44])
+    with _lc1:
+        st.markdown("<div style='font-size:.75rem;color:#64748b;padding-top:6px'>Lang</div>", unsafe_allow_html=True)
+    with _lc2:
+        if st.button("🇧🇷 PT", key="lang_pt", use_container_width=True,
+                     help="Mudar para Português",
+                     type="primary" if _lang=="pt" else "secondary"):
+            set_lang("pt"); st.rerun()
+    with _lc3:
+        if st.button("🇺🇸 EN", key="lang_en", use_container_width=True,
+                     help="Switch to English",
+                     type="primary" if _lang=="en" else "secondary"):
+            set_lang("en"); st.rerun()
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+    tog_icon = t("sidebar.hide") if not st.session_state["sidebar_collapsed"] else t("sidebar.show")
     if st.button(tog_icon, key="sidebar_toggle", use_container_width=True, help="Hide/show sidebar"):
         st.session_state["sidebar_collapsed"] = not st.session_state["sidebar_collapsed"]
         st.rerun()
     if st.session_state.get("sidebar_collapsed"):
         st.markdown("<div style='height:0;overflow:hidden'></div>", unsafe_allow_html=True)
     else:
-        st.markdown("## ⚡ Intelligence Platform")
-        currency_symbol_input = st.text_input("Reporting currency", value=st.session_state.get("_cur_sym","BRL"), key="_cur_sym")
-        project_title = st.text_input("Project title", value=st.session_state.get("project_head_title", "Procurement Intelligence Platform"), key="project_head_title")
-        project_subtitle = st.text_input("Project subtitle", value=st.session_state.get("project_subtitle", ""), key="project_subtitle")
+        st.markdown(f"## {t('sidebar.title')}")
+        currency_symbol_input = st.text_input(t("sidebar.currency"), value=st.session_state.get("_cur_sym","BRL"), key="_cur_sym")
+        project_title = st.text_input(t("sidebar.project_title"), value=st.session_state.get("project_head_title", "Procurement Intelligence Platform"), key="project_head_title")
+        project_subtitle = st.text_input(t("sidebar.project_sub"), value=st.session_state.get("project_subtitle", ""), key="project_subtitle")
 
-        st.markdown("### Analysis mode")
-        analysis_mode_sel = st.radio("Tool mode", options=["Direct Materials", "Indirect / Services"],
+        st.markdown(t("sidebar.analysis_mode"))
+        analysis_mode_sel = st.radio(t("sidebar.tool_mode"), options=[t("sidebar.mode_direct"), t("sidebar.mode_indirect")],
                                      index=st.session_state.get("_analysis_mode_idx", 0),
                                      horizontal=False, key="_analysis_mode_sel")
         st.session_state["_analysis_mode_idx"] = ["Direct Materials","Indirect / Services"].index(analysis_mode_sel)
 
         if analysis_mode_sel == "Direct Materials":
             st.markdown('<div class="v46-mode-card"><div class="v46-mode-card-title">🧪 Direct Materials</div><div class="v46-mode-card-sub">Landed cost → price build-up → TCO, working capital, inventory & risk.</div></div>', unsafe_allow_html=True)
-            analysed_item_name_sel = st.text_input("Analysed item", value=DEFAULT_ITEM_NAME, key="direct_item_name")
-            negotiated_unit_sel = st.text_input("Negotiated unit", value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
+            analysed_item_name_sel = st.text_input(t("sidebar.analysed_item"), value=DEFAULT_ITEM_NAME, key="direct_item_name")
+            negotiated_unit_sel = st.text_input(t("sidebar.unit"), value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
             service_scope_sel = None
         else:
             # ── Grouped scope selector ────────────────────────────────────
@@ -5924,37 +6496,37 @@ with st.sidebar:
             st.markdown(f'<div class="v46-mode-card" style="border-left:4px solid {color_sel}"><div class="v46-mode-card-title">{icon_sel} {service_scope_sel.split("(")[0][:32]}</div><div class="v46-mode-card-sub">{mode_sub}</div></div>', unsafe_allow_html=True)
             if is_logistics_sel:
                 st.caption("📌 MOQ, inventário e incoterms não se aplicam neste modo.")
-            analysed_item_name_sel = st.text_input("Escopo / contrato", value=service_scope_sel, key="service_item_name")
-            negotiated_unit_sel = st.text_input("Driver de demanda", value=str(cfg_sel.get("driver_label","service unit"))[:60], key="service_negotiated_unit")
+            analysed_item_name_sel = st.text_input(t("sidebar.contract_name"), value=service_scope_sel, key="service_item_name")
+            negotiated_unit_sel = st.text_input(t("sidebar.demand_driver"), value=str(cfg_sel.get("driver_label","service unit"))[:60], key="service_negotiated_unit")
 
-        st.markdown("### Geography")
-        view_scope = st.radio("Analysis scope", options=["Global View", "Local View"], index=0, horizontal=True, key="market_view_scope")
+        st.markdown(t("sidebar.geography"))
+        view_scope = st.radio(t("sidebar.view_scope"), options=[t("sidebar.global_view"), t("sidebar.local_view")], index=0, horizontal=True, key="market_view_scope")
         VIEW_SCOPE = view_scope
         if view_scope == "Global View":
             default_sel = st.session_state.get("selected_country_scope", DEFAULT_ACTIVE_COUNTRIES)
             default_sel = [c for c in default_sel if c in COUNTRY_OPTIONS] or DEFAULT_ACTIVE_COUNTRIES
-            selected_countries = st.multiselect("Countries", options=COUNTRY_OPTIONS, default=default_sel, key="selected_country_scope")
+            selected_countries = st.multiselect(t("sidebar.countries"), options=COUNTRY_OPTIONS, default=default_sel, key="selected_country_scope")
             if not selected_countries: selected_countries = ["Brazil"]
             prim_def = st.session_state.get("primary_country_scope", selected_countries[0])
             prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
-            primary_country_choice = st.selectbox("Primary / anchor country", options=selected_countries, index=prim_idx, key="primary_country_scope")
+            primary_country_choice = st.selectbox(t("sidebar.primary_country"), options=selected_countries, index=prim_idx, key="primary_country_scope")
             COUNTRIES = list(selected_countries); PRIMARY_COUNTRY = primary_country_choice
             ANCHOR_COUNTRY = primary_country_choice; SECONDARY_GROUP = "Other selected markets"; scope_label = "country/countries"
         else:
-            anchor_choice = st.selectbox("Anchor country", options=COUNTRY_OPTIONS, index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country","Brazil")) if st.session_state.get("local_anchor_country","Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"), key="local_anchor_country")
+            anchor_choice = st.selectbox(t("sidebar.anchor_country"), options=COUNTRY_OPTIONS, index=COUNTRY_OPTIONS.index(st.session_state.get("local_anchor_country","Brazil")) if st.session_state.get("local_anchor_country","Brazil") in COUNTRY_OPTIONS else COUNTRY_OPTIONS.index("Brazil"), key="local_anchor_country")
             ANCHOR_COUNTRY = anchor_choice
             loc_data = build_locality_options(anchor_choice)
             loc_opts = [x["name"] for x in loc_data]
             for x in loc_data: LOCALITY_COORDS[x["name"]] = {"lat": float(x["lat"]), "lon": float(x["lon"])}
             def_loc = st.session_state.get("selected_locality_scope", loc_opts[:min(4, len(loc_opts))])
             def_loc = [l for l in def_loc if l in loc_opts] or loc_opts[:min(3, len(loc_opts))]
-            selected_locs = st.multiselect("Localities", options=loc_opts, default=def_loc, key="selected_locality_scope")
-            custom_loc_text = st.text_area("Custom localities", value=st.session_state.get("custom_locality_text",""), key="custom_locality_text", placeholder="One per line", height=80)
+            selected_locs = st.multiselect(t("sidebar.localities"), options=loc_opts, default=def_loc, key="selected_locality_scope")
+            custom_loc_text = st.text_area(t("sidebar.custom_loc"), value=st.session_state.get("custom_locality_text",""), key="custom_locality_text", placeholder=t("sidebar.custom_loc_ph"), height=80)
             custom_locs = [l.strip() for l in custom_loc_text.splitlines() if l.strip()]
             selected_countries = list(dict.fromkeys(selected_locs + custom_locs)) or [loc_opts[0]]
             prim_def = st.session_state.get("primary_locality_scope", selected_countries[0])
             prim_idx = selected_countries.index(prim_def) if prim_def in selected_countries else 0
-            primary_country_choice = st.selectbox("Primary locality", options=selected_countries, index=prim_idx, key="primary_locality_scope")
+            primary_country_choice = st.selectbox(t("sidebar.primary_locality"), options=selected_countries, index=prim_idx, key="primary_locality_scope")
             COUNTRIES = list(selected_countries); PRIMARY_COUNTRY = primary_country_choice
             SECONDARY_GROUP = "Other selected localities"; scope_label = "locality/localities"
 
@@ -5964,24 +6536,24 @@ with st.sidebar:
         chips = "".join([f"<span class='v46-chip'>{escape(c)}</span>" for c in COUNTRIES])
         st.markdown(f"""<div class="v46-market-card"><div class="v46-market-title">{'🌎 Global' if view_scope=='Global View' else '📍 Local'} market scope</div><div class="v46-market-meta"><b>{len(COUNTRIES)}</b> {scope_label} · anchor: <b>{escape(ANCHOR_COUNTRY)}</b></div><div>{chips}</div></div>""", unsafe_allow_html=True)
 
-        rate_method = st.radio("Rate conversion", options=["Compound", "Linear"], index=0)
-        opt_step = st.select_slider("Grid optimization step", options=[1, 2, 5, 10], value=5)
-        st.caption("Optimizer: exact LP ✓" if SCIPY_AVAILABLE else "Optimizer: grid fallback only")
-        risk_threshold = st.slider("Risk ceiling", min_value=1.0, max_value=5.0, value=3.25, step=0.05)
-        concentration_threshold = st.slider("Concentration alert threshold %", min_value=30.0, max_value=90.0, value=60.0, step=5.0, key="concentration_threshold", help="Alert when a single supplier exceeds this share")
+        rate_method = st.radio(t("sidebar.rate_conv"), options=[t("sidebar.compound"), t("sidebar.linear")], index=0)
+        opt_step = st.select_slider(t("sidebar.grid_step"), options=[1, 2, 5, 10], value=5)
+        st.caption(t("sidebar.optimizer_lp") if SCIPY_AVAILABLE else t("sidebar.optimizer_grid"))
+        risk_threshold = st.slider(t("sidebar.risk_ceiling"), min_value=1.0, max_value=5.0, value=3.25, step=0.05)
+        concentration_threshold = st.slider(t("sidebar.conc_threshold"), min_value=30.0, max_value=90.0, value=60.0, step=5.0, key="concentration_threshold", help=t("sidebar.conc_help"))
 
-        st.markdown("### Supplier universe")
+        st.markdown(t("sidebar.supplier_universe"))
         sup_count_def = int(st.session_state.get("supplier_count_control", min(4, len(SUPPLIER_POOL))))
         sup_count_def = max(1, min(len(SUPPLIER_POOL), sup_count_def))
-        supplier_count = st.slider("Number of suppliers", min_value=1, max_value=len(SUPPLIER_POOL), value=sup_count_def, step=1, key="supplier_count_control")
+        supplier_count = st.slider(t("sidebar.n_suppliers"), min_value=1, max_value=len(SUPPLIER_POOL), value=sup_count_def, step=1, key="supplier_count_control")
         focused_def = int(st.session_state.get("focused_supplier_count_control", min(4, int(supplier_count))))
         focused_def = max(1, min(int(supplier_count), focused_def))
-        focused_supplier_count = st.slider("Top suppliers (executive focus)", min_value=1, max_value=int(supplier_count), value=focused_def, step=1, key="focused_supplier_count_control")
+        focused_supplier_count = st.slider(t("sidebar.top_suppliers"), min_value=1, max_value=int(supplier_count), value=focused_def, step=1, key="focused_supplier_count_control")
         SUPPLIERS = SUPPLIER_POOL[:int(supplier_count)]
         st.session_state["focused_supplier_count"] = int(focused_supplier_count)
-        show_adv_econ = st.checkbox("Show working capital view", value=True)
+        show_adv_econ = st.checkbox(t("sidebar.show_wc"), value=True)
 
-        with st.expander("Supplier names", expanded=False):
+        with st.expander(t("sidebar.supplier_names"), expanded=False):
             for idx, sup in enumerate(SUPPLIERS, start=1):
                 st.text_input(f"Supplier {idx} full name", key=supplier_name_key(sup))
                 st.text_input(f"Supplier {idx} short label", key=supplier_short_name_key(sup))
@@ -5992,8 +6564,8 @@ if st.session_state.get("sidebar_collapsed"):
     currency_symbol = st.session_state.get("_cur_sym", "BRL")
     analysis_mode   = ["Direct Materials","Indirect / Services"][st.session_state.get("_analysis_mode_idx",0)]
     service_scope   = st.session_state.get("service_scope", DEFAULT_SERVICE_SCOPE)
-    analysed_item_name = st.session_state.get("direct_item_name" if analysis_mode=="Direct Materials" else "service_item_name", DEFAULT_ITEM_NAME)
-    negotiated_unit = st.session_state.get("direct_negotiated_unit" if analysis_mode=="Direct Materials" else "service_negotiated_unit", DEFAULT_NEGOTIATED_UNIT)
+    analysed_item_name = st.session_state.get("direct_item_name" if analysis_mode == t("sidebar.mode_direct") else "service_item_name", DEFAULT_ITEM_NAME)
+    negotiated_unit = st.session_state.get("direct_negotiated_unit" if analysis_mode == t("sidebar.mode_direct") else "service_negotiated_unit", DEFAULT_NEGOTIATED_UNIT)
     # Geography fallbacks
     if "COUNTRIES" not in dir(): COUNTRIES = DEFAULT_ACTIVE_COUNTRIES.copy()
     if "PRIMARY_COUNTRY" not in dir(): PRIMARY_COUNTRY = COUNTRIES[0]
@@ -6008,7 +6580,7 @@ if st.session_state.get("sidebar_collapsed"):
 else:
     currency_symbol = st.session_state.get("_cur_sym", "BRL")
     analysis_mode   = analysis_mode_sel
-    service_scope   = service_scope_sel if analysis_mode == "Indirect / Services" else None
+    service_scope   = service_scope_sel if analysis_mode == t("sidebar.mode_indirect") else None
     analysed_item_name = analysed_item_name_sel
     negotiated_unit = negotiated_unit_sel
 
@@ -6017,8 +6589,13 @@ else:
 # HERO HEADER
 # ─────────────────────────────────────────────────────────────────────────────
 
-mode_chip = "Direct Materials Cockpit" if analysis_mode == "Direct Materials" else "Indirect / Services Command Center"
-hero_copy = ("Landed cost · FX · Incoterm · MOQ · Payment terms · Treasury return · Inventory · Risk optimization" if analysis_mode == "Direct Materials" else "Service TCO · FTE decomposition · Contract leakage · SLA risk · Productivity ROI · Should-cost · Scorecard")
+def _is_direct(mode: str) -> bool:
+    """True if mode string means Direct Materials in any language."""
+    return mode in ("Direct Materials", t("sb.direct_materials"), t("sidebar.mode_direct"), "Materiais Diretos")
+
+
+mode_chip = t("hero.mode_direct") if analysis_mode == t("sidebar.mode_direct") else t("hero.mode_indirect")
+hero_copy = (t("hero.copy_direct") if analysis_mode == t("sidebar.mode_direct") else t("hero.copy_indirect"))
 project_title    = st.session_state.get("project_head_title", "Procurement Intelligence Platform")
 project_subtitle = st.session_state.get("project_subtitle", "")
 hero_title = project_title.strip() or "Procurement Intelligence Platform"
@@ -6059,27 +6636,27 @@ st.markdown(
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_tabs = st.tabs([
-    "1 · Current Baseline", "2 · Supplier Proposals",
-    "3 · 🔬 Should-Cost", "4 · Supplier Management",
-    "5 · Custom Points", "6 · Risk Matrix",
-    "7 · Share & Optimization", "8 · Executive Dash",
-    "🗺️ Route Optimizer",
+    t("tab.baseline"), t("tab.proposals"),
+    t("tab.shouldcost"), t("tab.supplier_mgmt"),
+    t("tab.custom"), t("tab.risk"),
+    t("tab.share"), t("tab.dash"),
+    t("tab.route"),
 ])
 
 # ── TAB 1: Current Baseline ──────────────────────────────────────────────────
 with input_tabs[0]:
-    if analysis_mode == "Direct Materials":
-        render_section("Current Direct Material Baseline", "Landed unit price × volume → current spend → financial, treasury & inventory economics.", "#3b82f6")
-        st.info("Current spend = landed unit price × 100% equivalent volume per country.")
+    if analysis_mode == t("sidebar.mode_direct"):
+        render_section(t("t1.section_direct"), t("t1.section_direct_sub"), "#3b82f6")
+        st.info(t("t1.info_direct"))
     else:
-        render_section("Current Indirect / Services Baseline", "Service TCO → FTE decomposition → contract leakage waterfall → lifecycle cost.", "#8b5cf6")
-        st.info("Current spend = Service TCO (contracted value + leakage − credits). Amazon standard: model all leakage vectors before benchmarking suppliers.")
+        render_section(t("t1.section_indirect"), t("t1.section_indirect_sub"), "#8b5cf6")
+        st.info(t("t1.info_indirect"))
 
     country_inputs: Dict = {}
     for country in COUNTRIES:
         with st.expander(f"{'🌎' if VIEW_SCOPE=='Global View' else '📍'} {country}", expanded=(country == PRIMARY_COUNTRY)):
             dp_: Dict = {}; sp_: Dict = {}
-            if analysis_mode == "Direct Materials":
+            if analysis_mode == t("sidebar.mode_direct"):
                 dp_ = render_landed_cost_builder(key_prefix=f"cur_dir__{country}", default_spend=DEFAULT_CURRENT_SPEND[country], default_volume=DEFAULT_DIRECT_VOLUME[country], unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} current")
                 current_spend = float(dp_["spend"])
             else:
@@ -6092,7 +6669,7 @@ with input_tabs[0]:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 cur_pmt = st.number_input(f"{country} current payment days", min_value=1, value=DEFAULT_CURRENT_TERM[country], step=1, key=f"v46_cur_pmt__{country}")
-                cur_inv = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode=="Direct Materials" else 0, step=1, key=f"v46_cur_inv__{country}", disabled=(analysis_mode!="Direct Materials"))
+                cur_inv = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"v46_cur_inv__{country}", disabled=(analysis_mode != t("sidebar.mode_direct")))
             with c2:
                 fin_rate = st.number_input(f"{country} financial rate %", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v46_fin_rate__{country}")
                 fin_ref_days = st.number_input(f"{country} fin. rate reference days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v46_fin_ref__{country}")
@@ -6100,28 +6677,28 @@ with input_tabs[0]:
                 treas_rate = st.number_input(f"{country} net treasury return %", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v46_treas__{country}")
                 treas_ref = st.number_input(f"{country} treasury ref. days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"v46_treas_ref__{country}")
             with c4:
-                inv_rate = st.number_input(f"{country} inventory carry rate % p.a.", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode=="Direct Materials" else 0.0, step=0.05, format="%.4f", key=f"v46_inv_rate__{country}", disabled=(analysis_mode!="Direct Materials"))
+                inv_rate = st.number_input(f"{country} inventory carry rate % p.a.", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode == t("sidebar.mode_direct") else 0.0, step=0.05, format="%.4f", key=f"v46_inv_rate__{country}", disabled=(analysis_mode != t("sidebar.mode_direct")))
                 st.markdown("<div class='v46-note'>Financial/treasury use current payment term for baseline. Proposals use each supplier's term.</div>", unsafe_allow_html=True)
             country_inputs[country] = {"current_spend": float(current_spend), "current_payment_days": int(cur_pmt), "financial_rate_pct": float(fin_rate), "financial_reference_days": int(fin_ref_days), "treasury_return_pct": float(treas_rate), "treasury_reference_days": int(treas_ref), "inventory_carry_rate_pct": float(inv_rate), "current_inventory_days": int(cur_inv), "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_, "service_profile": sp_, "service_scope": service_scope}
 
 # ── TAB 2: Supplier Proposals ────────────────────────────────────────────────
 with input_tabs[1]:
-    if analysis_mode == "Direct Materials":
-        render_section("Supplier Direct Material Proposals", "Price build-up → landed unit price → 100% equivalent spend → TCO engine.", "#3b82f6")
+    if analysis_mode == t("sidebar.mode_direct"):
+        render_section(t("t2.section_direct"), t("t2.section_direct_sub"), "#3b82f6")
     else:
-        render_section("Supplier Service Proposals", "Contract value → FTE decomposition → SLA risk → should-cost → productivity ROI → service TCO.", "#8b5cf6")
+        render_section(t("t2.section_indirect"), t("t2.section_indirect_sub"), "#8b5cf6")
 
     proposal_inputs: Dict = {c: {} for c in COUNTRIES}
     for country in COUNTRIES:
         with st.expander(f"{'🌎' if VIEW_SCOPE=='Global View' else '📍'} {country}", expanded=(country == PRIMARY_COUNTRY)):
-            cvd = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode=="Direct Materials" else DEFAULT_DIRECT_VOLUME[country]
+            cvd = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode == t("sidebar.mode_direct") else DEFAULT_DIRECT_VOLUME[country]
             for sup in SUPPLIERS:
                 disp = supplier_display_name(sup)
                 label = f"{'📦' if analysis_mode=='Direct Materials' else '🧾'} {supplier_short_name(sup)} — {disp}"
                 with st.expander(label, expanded=(country==PRIMARY_COUNTRY and sup==SUPPLIERS[0])):
                     st.markdown(f"<div class='v46-supplier-box'><span class='v46-pill'>{supplier_short_html(sup)}</span>", unsafe_allow_html=True)
                     dp_s: Dict = {}; sp_s: Dict = {}
-                    if analysis_mode == "Direct Materials":
+                    if analysis_mode == t("sidebar.mode_direct"):
                         dp_s = render_landed_cost_builder(key_prefix=f"prop_dir__{country}__{sup}", default_spend=DEFAULT_PROPOSAL_SPEND[country][sup], default_volume=cvd, unit=negotiated_unit, reporting_currency=currency_symbol, currency_default=DEFAULT_DIRECT_CURRENCY[country], supplier_label=f"{country} | {disp}")
                         spend_ = float(dp_s["spend"])
                     else:
@@ -6134,21 +6711,17 @@ with input_tabs[1]:
                     with c2_:
                         pmt_days = st.number_input(f"{country} | {disp} | Payment days", min_value=0, value=DEFAULT_PAYMENT_TERM[country][sup], step=1, key=f"prop_term__{country}__{sup}")
                     with c3_:
-                        lead_time = st.number_input(f"{country} | {disp} | Lead time days", min_value=0, value=(DEFAULT_LEAD_TIME_DAYS[country][sup] if analysis_mode=="Direct Materials" else int(sp_s.get("transition_days", 30))), step=1, key=f"lead__{country}__{sup}")
+                        lead_time = st.number_input(f"{country} | {disp} | Lead time days", min_value=0, value=(DEFAULT_LEAD_TIME_DAYS[country][sup] if analysis_mode == t("sidebar.mode_direct") else int(sp_s.get("transition_days", 30))), step=1, key=f"lead__{country}__{sup}")
                     with c4_:
-                        safety_st = st.number_input(f"{country} | {disp} | Safety stock days", min_value=0, value=DEFAULT_SAFETY_STOCK_DAYS[country][sup] if analysis_mode=="Direct Materials" else 0, step=1, key=f"sstock__{country}__{sup}", disabled=(analysis_mode!="Direct Materials"))
+                        safety_st = st.number_input(f"{country} | {disp} | Safety stock days", min_value=0, value=DEFAULT_SAFETY_STOCK_DAYS[country][sup] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"sstock__{country}__{sup}", disabled=(analysis_mode != t("sidebar.mode_direct")))
                     with c5_:
-                        inv_own = st.selectbox(f"{country} | {disp} | Inventory ownership", options=INVENTORY_OWNERSHIP_OPTIONS, index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][sup] if analysis_mode=="Direct Materials" else "Supplier/trader owns until delivery"), key=f"invown__{country}__{sup}", disabled=(analysis_mode!="Direct Materials"))
+                        inv_own = st.selectbox(f"{country} | {disp} | Inventory ownership", options=INVENTORY_OWNERSHIP_OPTIONS, index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][sup] if analysis_mode == t("sidebar.mode_direct") else "Supplier/trader owns until delivery"), key=f"invown__{country}__{sup}", disabled=(analysis_mode != t("sidebar.mode_direct")))
                     st.markdown("</div>", unsafe_allow_html=True)
                     proposal_inputs[country][sup] = {"spend": float(spend_), "payment_days": int(pmt_days), "lead_time_days": int(lead_time), "safety_stock_days": int(safety_st), "inventory_ownership": inv_own, "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_s, "service_profile": sp_s, "service_scope": service_scope}
 
 # ── TAB 2 (NEW): Should-Cost Engine ─────────────────────────────────────────
 with input_tabs[2]:
-    render_section(
-        "🔬 Should-Cost Engine",
-        "Defina o preço justo de mercado uma vez — a ferramenta compara automaticamente contra todas as propostas.",
-        "#a78bfa",
-    )
+    render_section(t("t3.section"), t("t3.section_sub"), "#a78bfa")
     st.markdown("""<div class='v46-insight'>
     <b>Como usar:</b> Preencha o modelo abaixo <b>uma única vez</b> com o preço de referência e as tendências de mercado atuais.
     A ferramenta calculará o <b>should-cost</b> e o <b>target de negociação</b>, depois comparará automaticamente contra
@@ -6328,7 +6901,7 @@ with input_tabs[2]:
                 # Get proposal price: direct = unit_price_reporting, indirect = proposed contract value / 12 / headcount
                 dp_ = proposal_inputs.get(country, {}).get(sup, {}).get("direct_profile", {}) or {}
                 sp_ = proposal_inputs.get(country, {}).get(sup, {}).get("service_profile", {}) or {}
-                if analysis_mode == "Direct Materials":
+                if analysis_mode == t("sidebar.mode_direct"):
                     prop_price = float(dp_.get("unit_price_reporting", 0.0) or 0.0)
                 else:
                     prop_price = float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or 0.0)
@@ -6372,7 +6945,7 @@ with input_tabs[2]:
                             if supplier_display_name(sup) == r["Fornecedor"] and country == r["País"]:
                                 dp_ = proposal_inputs.get(country,{}).get(sup,{}).get("direct_profile",{}) or {}
                                 sp_ = proposal_inputs.get(country,{}).get(sup,{}).get("service_profile",{}) or {}
-                                if analysis_mode == "Direct Materials":
+                                if analysis_mode == t("sidebar.mode_direct"):
                                     prop_vals.append(float(dp_.get("unit_price_reporting", 0.0) or 0.0))
                                 else:
                                     prop_vals.append(float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or proposal_inputs.get(country,{}).get(sup,{}).get("spend", 0.0) or 0.0))
@@ -6408,7 +6981,7 @@ with input_tabs[2]:
 
 # ── TAB 3: Supplier Management ────────────────────────────────────────────────
 with input_tabs[3]:
-    render_section("Supplier Management, Performance & Due Diligence", "Governance scorecards → risk defaults → optimization feed.", "#06b6d4")
+    render_section(t("t4.section"), t("t4.section_sub"), "#06b6d4")
     supplier_management_inputs: Dict = {}; gov_rows = []
     for sup in SUPPLIERS:
         with st.expander(f"🛡️ {supplier_display_name(sup)}", expanded=(sup==SUPPLIERS[0])):
@@ -6474,14 +7047,10 @@ with input_tabs[4]:
 
 # ── TAB 5: Risk & Constraints ─────────────────────────────────────────────────
 with input_tabs[5]:
-    render_section(
-        "Supplier Risk Matrix & Strategic Constraints",
-        "7-axis risk scoring (Supply · Quality · Financial · Compliance · ESG · Logistics · Geopolitical) · Spider charts · Governance blend · LP optimization feed",
-        "#ef4444",
-    )
+    render_section(t("t6.section"), t("t6.section_sub"), "#ef4444")
 
-    with st.expander("⚙ Risk dimension weights", expanded=False):
-        st.caption("Weights define relative importance of each axis. McKinsey SCM standard defaults. Total should = 100.")
+    with st.expander(t("t6.weights_expander"), expanded=False):
+        st.caption(t("t6.weights_caption"))
         rw_cols = st.columns(len(DEFAULT_RISK_WEIGHTS))
         risk_weights: Dict[str, float] = {}
         for idx_, dim_ in enumerate(DEFAULT_RISK_WEIGHTS):
@@ -6555,8 +7124,8 @@ with input_tabs[5]:
 # ── TAB 6: Share & Optimization ───────────────────────────────────────────────
 with input_tabs[6]:
     render_section("Share Projection & Cost Optimization", "Slider scenarios + automatic LP optimization respecting Kraljic constraints.", "#10b981")
-    st.info("Current baseline uses each country's current payment term only. Proposals use each supplier's proposed term.")
-    share_mode = st.radio("Share control", options=["Automatic", "Manual"], horizontal=True, key="share_mode")
+    st.info(t("t7.info"))
+    share_mode = st.radio(t("t7.share_mode"), options=[t("t7.auto"), t("t7.manual")], horizontal=True, key="share_mode")
     mins_now = get_min_shares(); maxs_now = get_max_shares(); issues_now = constraint_issues(mins_now, maxs_now)
     invalid_c = bool(issues_now)
     if invalid_c:
@@ -6567,7 +7136,7 @@ with input_tabs[6]:
     st.markdown("#### ⚡ Cost Optimization")
     oc1_, oc2_ = st.columns([.28, .72])
     with oc1_:
-        if st.button("Run Optimization", type="primary", use_container_width=True, key="opt_top"):
+        if st.button(t("t7.run_opt"), type="primary", use_container_width=True, key="opt_top"):
             if invalid_c:
                 st.error("Fix constraints first.")
             else:
@@ -6671,7 +7240,7 @@ def coord_unit(unit):
     return {"lat": base["lat"]+dl, "lon": base["lon"]+dn}
 
 with input_tabs[7]:
-    render_section("Executive Dash View", "Visual cockpit — filter, map, rank and compare across markets and suppliers.", "#6366f1")
+    render_section(t("t8.section"), t("t8.section_sub"), "#6366f1")
 
     unit_lbl = "Country" if VIEW_SCOPE == "Global View" else f"{ANCHOR_COUNTRY} locality"
     dsdf = supplier_df.copy() if not supplier_df.empty else pd.DataFrame(columns=["Country","Supplier","Allocated Spend"])
@@ -6802,7 +7371,7 @@ with input_tabs[7]:
     for iss in opt_iss: st.error(f"Optimization blocked: {iss}")
     ocm1, ocm2 = st.columns([.24, .76])
     with ocm1:
-        run_opt = st.button("⚡ Run Optimization", type="primary", use_container_width=True, key="opt_main", disabled=opt_blocked)
+        run_opt = st.button(t("t8.run_opt_main"), type="primary", use_container_width=True, key="opt_main", disabled=opt_blocked)
     with ocm2:
         st.markdown('<div class="v46-insight"><b>Logic:</b> Minimizes economic all-in delta (spend + payment-term finance cost − treasury return + inventory carry + MOQ drag). In Services mode, proposal spend includes service TCO, productivity gains, SLA risk cost and leakage.</div>', unsafe_allow_html=True)
 
@@ -6823,7 +7392,7 @@ with input_tabs[7]:
     # DECISION STACKS
     # ─────────────────────────────────────────────────────────────────────────────
 
-    render_section("Decision Stacks", "Expand the stacks needed for the meeting. Everything is collapsed by default for a clean screen.", "#6366f1")
+    render_section(t("stack.section"), t("stack.section_sub"), "#6366f1")
 
     @contextmanager
     def stack(title, subtitle, icon, color, tag, expanded=False):
@@ -6833,10 +7402,10 @@ with input_tabs[7]:
 
     # ── Top supplier focus ────────────────────────────────────────────────────────
     if not supplier_focus_df.empty:
-        with stack("Top Supplier Focus", f"Top {focused_supplier_count} of {len(SUPPLIERS)} suppliers by executive lens.", "🎛️", "#3b82f6", "Supplier focus"):
+        with stack(t("stack.top_focus"), f"Top {focused_supplier_count} of {len(SUPPLIERS)} suppliers by executive lens.", "🎛️", "#3b82f6", "Supplier focus"):
             fd = supplier_focus_df.head(focused_supplier_count).copy()
             show_cols = ["Rank","Supplier","Executive Focus Metric","Economic Total","Risk Score"]
-            if analysis_mode=="Indirect / Services":
+            if analysis_mode == t("sidebar.mode_indirect"):
                 for ec in ["Performance Score","Performance-Adjusted Cost","Productivity Gain","Should-Cost Gap","Productivity ROI %","SLA Gap"]:
                     if ec in fd.columns: show_cols.append(ec)
             show_cols = [c for c in show_cols if c in fd.columns]
@@ -6850,7 +7419,7 @@ with input_tabs[7]:
             st.dataframe(fd, use_container_width=True, hide_index=True)
 
     # ── Total project saving ────────────────────────────────────────────────────
-    with stack("Total Project Saving", "Gross saving, working capital gain and economic all-in.", "🏁", "#10b981" if final_econ<=0 else "#ef4444", "Final result", expanded=True):
+    with stack(t("stack.total_saving"), "Gross saving, working capital gain and economic all-in.", "🏁", "#10b981" if final_econ<=0 else "#ef4444", "Final result", expanded=True):
         c5 = st.columns(5)
         with c5[0]: render_kpi("Gross Total Saving / Impact", fmt_money(gross_delta, currency_symbol, compact=True, signed=True), "New total spend − current total spend", delta_tone(gross_delta))
         with c5[1]: render_kpi("Working Capital Gain", fmt_money(wc_delta, currency_symbol, compact=True, signed=True), "Current treasury return − new treasury return", delta_tone(wc_delta))
@@ -6862,10 +7431,10 @@ with input_tabs[7]:
         with cc[1]: render_kpi(f"{SECONDARY_GROUP} contribution", fmt_money(secondary_row["Economic All-In Delta"], currency_symbol, compact=True, signed=True), f"{len(LATAM_COUNTRIES)} other markets", delta_tone(secondary_row["Economic All-In Delta"]))
 
     # ── AI Copilot ────────────────────────────────────────────────────────────────
-    with stack("AI Executive Copilot", "Concise decision-oriented brief from the current scenario.", "🤖", "#6366f1", "AI brief"):
+    with stack(t("stack.ai_copilot"), "Concise decision-oriented brief from the current scenario.", "🤖", "#6366f1", "AI brief"):
         ai1, ai2 = st.columns([.30, .70])
         with ai1:
-            if st.button("Generate Brief", type="primary", use_container_width=True, key="gen_brief"):
+            if st.button(t("ai.generate"), type="primary", use_container_width=True, key="gen_brief"):
                 st.session_state["ai_payload"] = build_ai_payload(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
                 st.session_state["ai_brief"] = generate_local_brief(analysis_mode=analysis_mode, total=total, group_df=group_df, supplier_focus_df=supplier_focus_df, focused_supplier_count=focused_supplier_count, currency=currency_symbol)
             st.caption("Local deterministic brief. Connect Anthropic API key for live AI analysis.")
@@ -6873,11 +7442,11 @@ with input_tabs[7]:
             st.markdown('<div class="v46-insight"><b>How it works:</b> Reads the full scenario — suppliers, economics, risk, SLA, productivity — and produces an Amazon-caliber concise recommendation with negotiation levers and next actions.</div>', unsafe_allow_html=True)
         if st.session_state.get("ai_brief"):
             st.markdown(st.session_state["ai_brief"], unsafe_allow_html=True)
-            with st.expander("Copy prompt for external AI", expanded=False):
+            with st.expander(t("ai.copy_prompt"), expanded=False):
                 st.text_area("Prompt payload", value=st.session_state.get("ai_payload",""), height=200, key="ai_payload_ta")
 
     # ── Cost Stack ───────────────────────────────────────────────────────────────
-    with stack("Total Cost Stack", "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline"):
+    with stack(t("stack.cost_stack"), "Commercial spend and gross payment-term cost comparison.", "🧾", "#3b82f6", "Cost baseline"):
         c6 = st.columns(6)
         with c6[0]: render_kpi("Current Spend", fmt_money(total["Current Spend"], currency_symbol, compact=True), "Without financial cost", "neutral")
         with c6[1]: render_kpi("New Spend", fmt_money(total["New Spend"], currency_symbol, compact=True), "Proposals × shares", "neutral")
@@ -6887,7 +7456,7 @@ with input_tabs[7]:
         with c6[5]: render_kpi("New Total", fmt_money(total["New Total Spend"], currency_symbol, compact=True), "Spend + financial cost", "neutral")
 
     # ── Working capital carry view ────────────────────────────────────────────────
-    with stack("Working Capital Carry", "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing"):
+    with stack(t("stack.wc_carry"), "Treasury return and net financial effect from payment-term differences.", "🏦", "#10b981", "Cash timing"):
         wc6 = st.columns(6)
         with wc6[0]: render_kpi("Current Treasury Return", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Capital return over current terms", "good")
         with wc6[1]: render_kpi("New Treasury Return", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), "Capital return over proposed terms", "good")
@@ -6897,7 +7466,7 @@ with input_tabs[7]:
         with wc6[5]: render_kpi("MOQ WC Benefit", fmt_money(moq_benefit, currency_symbol, compact=True, signed=True), "Lower MOQ cash drag", benefit_tone(moq_benefit))
 
     # ── Total decomposition ───────────────────────────────────────────────────────
-    with stack("Total Decomposition", "Decision-ready breakdown of spend, finance, inventory and risk.", "🧩", "#8b5cf6", "Decision view"):
+    with stack(t("stack.decomposition"), "Decision-ready breakdown of spend, finance, inventory and risk.", "🧩", "#8b5cf6", "Decision view"):
         c7 = st.columns(7)
         with c7[0]: render_kpi("Spend Delta", fmt_money(total["Spend Delta"], currency_symbol, compact=True, signed=True), "New − current spend", delta_tone(total["Spend Delta"]))
         with c7[1]: render_kpi("Gross Financial Delta", fmt_money(total["Financial Delta"], currency_symbol, compact=True, signed=True), "New − current gross fin. cost", delta_tone(total["Financial Delta"]))
@@ -6931,7 +7500,7 @@ with input_tabs[7]:
 
     # ── Should-Cost stack ─────────────────────────────────────────────────────
     sc_sess = st.session_state.get("last_should_cost")
-    with stack("Should-Cost Analysis", "Preço justo pelo mercado vs proposta — gap e target de negociação.", "🔬", "#a78bfa", "Should-cost"):
+    with stack(t("stack.should_cost"), "Preço justo pelo mercado vs proposta — gap e target de negociação.", "🔬", "#a78bfa", "Should-cost"):
         if not sc_sess or float(sc_sess.get("should_cost", 0.0)) <= 0:
             st.markdown(
                 "<div class='v46-insight'>Preencha o <b>Should-Cost Engine</b> na aba <b>3 · 🔬 Should-Cost</b> para ver o resultado aqui.</div>",
@@ -6961,7 +7530,7 @@ with input_tabs[7]:
                         continue
                     dp_ = proposal_inputs.get(country, {}).get(sup, {}).get("direct_profile", {}) or {}
                     sp_ = proposal_inputs.get(country, {}).get(sup, {}).get("service_profile", {}) or {}
-                    if analysis_mode == "Direct Materials":
+                    if analysis_mode == t("sidebar.mode_direct"):
                         pp = float(dp_.get("unit_price_reporting", 0.0) or 0.0)
                     else:
                         pp = float(sp_.get("service_tco", 0.0) or sp_.get("proposed_contract_value", 0.0) or proposal_inputs.get(country, {}).get(sup, {}).get("spend", 0.0) or 0.0)
@@ -7030,9 +7599,9 @@ with input_tabs[7]:
             )
 
     # ── Decision recommendation ────────────────────────────────────────────────
-    with stack("Decision Recommendation", "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
+    with stack(t("stack.decision_rec"), "Go / no-go based on the modeled scenario.", "✅", "#22c55e", "Recommendation", expanded=True):
         cls_ = "good" if final_econ <= 0 else "bad"
-        title_ = "Scenario is economically attractive — recommend approval" if final_econ <= 0 else "Scenario creates economic cost impact — renegotiate before approval"
+        title_ = t("decision.approve") if final_econ <= 0 else t("decision.renegotiate")
         sc_line = ""
         sc_sess2 = st.session_state.get("last_should_cost")
         if sc_sess2 and float(sc_sess2.get("should_cost", 0.0)) > 0:
@@ -7056,7 +7625,7 @@ with input_tabs[7]:
         )
 
     # ── Charts ────────────────────────────────────────────────────────────────────
-    with stack("Charts", "Cost stack, economic waterfall and decision map.", "📈", "#2563eb", "Visual analytics"):
+    with stack(t("stack.charts"), "Cost stack, economic waterfall and decision map.", "📈", "#2563eb", "Visual analytics"):
         cc1, cc2 = st.columns([1.2, 1.0], gap="large")
         with cc1:
             st.markdown("<div class='v46-chart'><h4>Total Cost Stack</h4>", unsafe_allow_html=True)
@@ -7065,7 +7634,7 @@ with input_tabs[7]:
                 values_ = [total["Current Spend"],total["New Spend"],total["Current Financial Cost"],total["New Financial Cost"],total["Current Total Spend"],total["New Total Spend"]]
                 colors_ = ["#475569","#3b82f6","#f97316","#fb923c","#0f766e","#1d4ed8"]
                 fig_cs = go.Figure(go.Bar(x=labels_, y=values_, marker_color=colors_, text=[fmt_money(v,currency_symbol,compact=True) for v in values_], textposition="outside", hovertemplate="%{x}<br>" + currency_symbol + " %{y:,.2f}<extra></extra>"))
-                fig_cs.update_layout(title="Total Cost Stack", yaxis_title=f"({currency_symbol})")
+                fig_cs.update_layout(title=t("stack.cost_stack"), yaxis_title=f"({currency_symbol})")
                 st.plotly_chart(apply_chart_theme(fig_cs), use_container_width=True, config={"displayModeBar":False})
             st.markdown("</div>", unsafe_allow_html=True)
         with cc2:
@@ -7081,7 +7650,7 @@ with input_tabs[7]:
 
     # ── v47 New Modules ────────────────────────────────────────────────────────
 
-    with stack("Sensitivity Analysis", "What-if: how price, volume, FX and rates shift the economic outcome.", "🎚", "#f59e0b", "What-if"):
+    with stack(t("stack.sensitivity"), "What-if: how price, volume, FX and rates shift the economic outcome.", "🎚", "#f59e0b", "What-if"):
         render_sensitivity_panel(
             base_econ_delta=final_econ,
             base_spend=float(total.get("Current Spend", 0.0)),
@@ -7093,16 +7662,16 @@ with input_tabs[7]:
             currency=currency_symbol,
         )
 
-    with stack("Award Scenario Comparison", "Save and compare up to 3 sourcing scenarios side-by-side.", "🏆", "#06b6d4", "Scenarios"):
+    with stack(t("stack.award_compare"), "Save and compare up to 3 sourcing scenarios side-by-side.", "🏆", "#06b6d4", "Scenarios"):
         render_award_scenarios(total, supplier_focus_df, final_shares, currency_symbol)
 
-    with stack("Kraljic Portfolio Matrix", "Position suppliers by spend impact × supply risk — defines sourcing strategy per quadrant.", "🔷", "#8b5cf6", "Portfolio"):
+    with stack(t("stack.kraljic"), "Position suppliers by spend impact × supply risk — defines sourcing strategy per quadrant.", "🔷", "#8b5cf6", "Portfolio"):
         render_kraljic_matrix(supplier_focus_df, risk_inputs, risk_weights, total, currency_symbol)
 
-    with stack("BATNA / ZOPA Negotiation", "Walk-away price, ZOPA zone and lever quantification before entering negotiations.", "🤝", "#ec4899", "Negotiation"):
+    with stack(t("stack.batna"), t("stack.batna_sub"), "🤝", "#ec4899", "Negotiation"):
         render_batna_zopa(total, country_inputs, proposal_inputs, supplier_focus_df, currency_symbol)
 
-    with stack("Concentration Risk & Stress Test", "HHI index, single-supplier dependency alerts and failure simulation.", "⚠", "#ef4444", "Risk"):
+    with stack(t("stack.concentration"), "HHI index, single-supplier dependency alerts and failure simulation.", "⚠", "#ef4444", "Risk"):
         render_concentration_risk(
             supplier_df, total, country_inputs, proposal_inputs,
             supplier_risk, rate_method, currency_symbol,
@@ -7111,7 +7680,7 @@ with input_tabs[7]:
 
     # ── Working capital economic view ──────────────────────────────────────────
     if show_adv_econ:
-        with stack("Working Capital Economic View", "Treasury return, capital gain and inventory separated.", "💼", "#0f766e", "Economic view"):
+        with stack(t("stack.wc_economic"), "Treasury return, capital gain and inventory separated.", "💼", "#0f766e", "Economic view"):
             ec5 = st.columns(5)
             with ec5[0]: render_kpi("Current Capital Gain", fmt_money(total["Current Capital Gain"], currency_symbol, compact=True), "Current payment terms", "good")
             with ec5[1]: render_kpi("New Capital Gain", fmt_money(total["New Capital Gain"], currency_symbol, compact=True), f"Avg {total.get('New Avg Return Days',0):.0f}dd", "good")
@@ -7129,9 +7698,9 @@ with input_tabs[7]:
                 st.info("Run Cost Optimization to generate the rationale table.")
 
     # ── Detailed data ─────────────────────────────────────────────────────────────
-    with stack("Detailed Data", "Full audit trail for Finance, Procurement and category strategy.", "🧾", "#64748b", "Audit trail"):
+    with stack(t("stack.detailed_data"), "Full audit trail for Finance, Procurement and category strategy.", "🧾", "#64748b", "Audit trail"):
         dt_names = ["Country summary","Region summary","Supplier allocation","Risk scores","Governance","Custom analysis"]
-        if analysis_mode != "Direct Materials": dt_names.append("Service scorecards")
+        if analysis_mode != t("sidebar.mode_direct"): dt_names.append("Service scorecards")
         dt_tabs = st.tabs(dt_names)
         with dt_tabs[0]:
             dc_ = country_df.copy()
@@ -7165,11 +7734,11 @@ with input_tabs[7]:
             st.dataframe(pd.DataFrame([{"Supplier": supplier_display_name(s), "Weighted Risk": supplier_risk[s], **risk_inputs[s]} for s in SUPPLIERS]), use_container_width=True)
         with dt_tabs[4]:
             if gov_rows: st.dataframe(pd.DataFrame(gov_rows), use_container_width=True, hide_index=True)
-            else: st.info("No governance data.")
+            else: st.info(t("data.no_governance"))
         with dt_tabs[5]:
             if cf_rows: st.dataframe(pd.DataFrame(cf_rows), use_container_width=True, hide_index=True)
-            else: st.info("No custom points added.")
-        if analysis_mode != "Direct Materials" and len(dt_tabs) > 6:
+            else: st.info(t("data.no_custom"))
+        if analysis_mode != t("sidebar.mode_direct") and len(dt_tabs) > 6:
             with dt_tabs[6]:
                 svc_cols = ["Country","Supplier","Service Scope","Pricing Model","Proposed Contract Value","Service TCO Before Productivity","Productivity Gain","Expected Risk Cost","SLA Risk Cost","SLA Attainment","SLA Gap","Performance Score","Performance Tier","Performance-Adjusted Cost","Headcount / FTEs","Price per Person / Month","Hourly Rate","Overtime Hours / Month","Overtime Cost","Should-Cost Target","Should-Cost Gap","Open-Cost Total","Open-Cost Coverage %","Unexplained Quote Value","Productivity ROI %","Payback Months","Total Contract Value","Scope Creep %","Rate Card Gap %","Share %","Allocated Spend"]
                 ac_ = [c for c in svc_cols if c in supplier_df.columns]
@@ -7189,9 +7758,9 @@ with input_tabs[7]:
                 st.dataframe(svdf_, use_container_width=True)
 
     # ── Download ──────────────────────────────────────────────────────────────────
-    with stack("Export", "Download country summary CSV.", "⬇️", "#64748b", "Export"):
+    with stack(t("stack.export"), "Download country summary CSV.", "⬇️", "#64748b", t("stack.export")):
         st.download_button(
-            label="⬇️ Download country summary CSV",
+            label=t("stack.download_csv"),
             data=country_df.to_csv(index=False).encode("utf-8"),
             file_name="procurement_tco_v46_country_summary.csv",
             mime="text/csv",
