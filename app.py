@@ -578,6 +578,63 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "sidebar.grid_step":        {"pt": "Passo do otimizador (grid)", "en": "Grid optimization step"},
 
     # ── Footnote ──────────────────────────────────────────────────────────
+
+    # ── Missing keys (auto-added by audit) ───────────────────────────────────
+    "data.no_custom":           {"pt": "Nenhum ponto customizado.", "en": "No custom points."},
+    "data.no_governance":       {"pt": "Sem dados de governança.", "en": "No governance data."},
+    "decision.approve":         {"pt": "✅ Aprovar e avançar para negociação", "en": "✅ Approve and advance to negotiation"},
+    "decision.renegotiate":     {"pt": "⚠ Renegociar antes de aprovar", "en": "⚠ Renegotiate before approval"},
+    "sidebar.conc_help":        {"pt": "Alerta quando um fornecedor ultrapassa este share", "en": "Alert when a single supplier exceeds this share"},
+    "sidebar.conc_threshold":   {"pt": "Alerta de concentração %", "en": "Concentration alert threshold %"},
+    "sidebar.contract_name":    {"pt": "Escopo / nome do contrato", "en": "Scope / contract name"},
+    "sidebar.custom_loc":       {"pt": "Localidades personalizadas", "en": "Custom localities"},
+    "sidebar.custom_loc_ph":    {"pt": "Uma por linha", "en": "One per line"},
+    "sidebar.localities":       {"pt": "Localidades", "en": "Localities"},
+    "sidebar.optimizer_grid":   {"pt": "Otimizador: somente grid", "en": "Optimizer: grid fallback only"},
+    "sidebar.optimizer_lp":     {"pt": "Otimizador: LP exato ✓", "en": "Optimizer: exact LP ✓"},
+    "sidebar.primary_locality": {"pt": "Localidade principal", "en": "Primary locality"},
+    "sidebar.rate_conv":        {"pt": "Conversão de taxa", "en": "Rate conversion"},
+    "sidebar.unit":             {"pt": "Unidade negociada", "en": "Negotiated unit"},
+    "sidebar.view_scope":       {"pt": "Escopo de análise", "en": "Analysis scope"},
+    "stack.award_compare":      {"pt": "Comparação de Cenários", "en": "Award Scenario Comparison"},
+    "stack.decomposition":      {"pt": "Decomposição Total", "en": "Total Decomposition"},
+    "stack.download_csv":       {"pt": "Exportar CSV", "en": "Export CSV"},
+    "stack.section":            {"pt": "Stacks de Decisão", "en": "Decision Stacks"},
+    "stack.section_sub":        {"pt": "Expanda os stacks necessários para a reunião.", "en": "Expand the stacks needed for the meeting."},
+    "stack.top_focus":          {"pt": "Foco nos Top Fornecedores", "en": "Top Supplier Focus"},
+    "stack.wc_economic":        {"pt": "Visão Econômica de Capital de Giro", "en": "Working Capital Economic View"},
+    "t1.info_direct":           {"pt": "Spend atual = preço unitário desembarcado × volume equivalente a 100% por país.", "en": "Current spend = landed unit price × 100% equivalent volume per country."},
+    "t1.info_indirect":         {"pt": "Spend atual = Service TCO (valor contratado + leakage − créditos). Padrão Amazon: modele todos os vetores de leakage antes de fazer benchmark de fornecedores.", "en": "Current spend = Service TCO (contracted value + leakage − credits). Amazon standard: model all leakage vectors before benchmarking suppliers."},
+    "t1.section_direct":        {"pt": "Baseline de Materiais Diretos", "en": "Current Direct Material Baseline"},
+    "t1.section_direct_sub":    {"pt": "Preço desembarcado × volume → spend atual → financeiro, tesouraria & estoque.", "en": "Landed unit price × volume → current spend → financial, treasury & inventory economics."},
+    "t1.section_indirect":      {"pt": "Baseline de Indiretos / Serviços", "en": "Current Indirect / Services Baseline"},
+    "t1.section_indirect_sub":  {"pt": "TCO do serviço → decomposição FTE → waterfall de leakage → custo do ciclo de vida.", "en": "Service TCO → FTE decomposition → contract leakage waterfall → lifecycle cost."},
+    "t2.section_direct":        {"pt": "Propostas de Materiais Diretos", "en": "Supplier Direct Material Proposals"},
+    "t2.section_direct_sub":    {"pt": "Build-up de preço → preço desembarcado → spend equivalente a 100% → motor TCO.", "en": "Price build-up → landed unit price → 100% equivalent spend → TCO engine."},
+    "t2.section_indirect":      {"pt": "Propostas de Serviços", "en": "Supplier Service Proposals"},
+    "t2.section_indirect_sub":  {"pt": "Valor do contrato → decomp. FTE → risco SLA → should-cost → ROI → TCO.", "en": "Contract value → FTE decomposition → SLA risk → should-cost → productivity ROI → service TCO."},
+    "t3.section":               {"pt": "🔬 Motor de Should-Cost", "en": "🔬 Should-Cost Engine"},
+    "t3.section_sub":           {"pt": "Defina o preço justo de mercado uma vez — compara automaticamente contra todas as propostas.", "en": "Define the fair market price once — compares automatically against all proposals."},
+    "t4.section":               {"pt": "Gestão, Performance & Due Diligence de Fornecedores", "en": "Supplier Management, Performance & Due Diligence"},
+    "t4.section_sub":           {"pt": "Scorecards de governança → defaults de risco → feed de otimização.", "en": "Governance scorecards → risk defaults → optimization feed."},
+    "t6.section":               {"pt": "Matriz de Risco & Restrições Estratégicas", "en": "Supplier Risk Matrix & Strategic Constraints"},
+    "t6.section_sub":           {"pt": "Pontuação 7 eixos · Gráficos spider · Blend governança · Feed LP.", "en": "7-axis risk scoring · Spider charts · Governance blend · LP feed."},
+    "t6.weights_caption":       {"pt": "Pesos definem importância relativa de cada eixo. Padrão McKinsey. Total deve = 100.", "en": "Weights define relative importance of each axis. McKinsey SCM standard. Total should = 100."},
+    "t6.weights_expander":      {"pt": "⚙ Pesos das dimensões de risco", "en": "⚙ Risk dimension weights"},
+    "t7.auto":                  {"pt": "Automático", "en": "Automatic"},
+    "t7.info":                  {"pt": "Baseline atual usa prazo de pagamento de cada país apenas. Propostas usam o prazo de cada fornecedor.", "en": "Current baseline uses each country's current payment term only. Proposals use each supplier's proposed term."},
+    "t7.manual":                {"pt": "Manual", "en": "Manual"},
+    "t7.run_opt":               {"pt": "Executar Otimização", "en": "Run Optimization"},
+    "t7.share_mode":            {"pt": "Controle de share", "en": "Share control"},
+    "t8.run_opt_main":          {"pt": "⚡ Executar Otimização", "en": "⚡ Run Optimization"},
+    "t8.section":               {"pt": "Painel Executivo", "en": "Executive Dash View"},
+    "t8.section_sub":           {"pt": "Cockpit visual — filtre, mapeie, ranqueie e compare.", "en": "Visual cockpit — filter, map, rank and compare."},
+    "tab.custom":               {"pt": "5 · Pontos Customizados", "en": "5 · Custom Points"},
+    "tab.dash":                 {"pt": "8 · Painel Executivo", "en": "8 · Executive Dash"},
+    "tab.risk":                 {"pt": "6 · Matriz de Risco", "en": "6 · Risk Matrix"},
+    "tab.route":                {"pt": "🗺️ Otimizador de Rotas", "en": "🗺️ Route Optimizer"},
+    "tab.share":                {"pt": "7 · Share & Otimização", "en": "7 · Share & Optimization"},
+    "tab.shouldcost":           {"pt": "3 · 🔬 Should-Cost", "en": "3 · 🔬 Should-Cost"},
     "footer.note":            {"pt": "O custo financeiro bruto é separado do offset de retorno de tesouraria. O Delta Financeiro Líquido é a visão financeira correta após considerar o carrego de capital de giro. Finanças / Tesouraria devem validar todos os pressupostos de taxa e prazo antes do reconhecimento oficial de saving.", "en": "Gross financial cost is separated from treasury return offset. Net Financial Delta is the correct finance view after working-capital carry is considered. Finance / Treasury must validate all rate and term assumptions before official saving recognition."},
 }
 
@@ -6430,6 +6487,10 @@ def render_should_cost_panel(
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _is_direct(mode: str) -> bool:
+    """True if mode string means Direct Materials in any language."""
+    return mode in ("Direct Materials", t("sb.direct_materials"), t("sidebar.mode_direct"), "Materiais Diretos")
+
 with st.sidebar:
     # ── Sidebar collapse toggle ─────────────────────────────────────────
     if "sidebar_collapsed" not in st.session_state:
@@ -6598,9 +6659,6 @@ else:
 # HERO HEADER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _is_direct(mode: str) -> bool:
-    """True if mode string means Direct Materials in any language."""
-    return mode in ("Direct Materials", t("sb.direct_materials"), t("sidebar.mode_direct"), "Materiais Diretos")
 
 
 mode_chip = t("hero.mode_direct") if analysis_mode == t("sidebar.mode_direct") else t("hero.mode_indirect")
@@ -6632,7 +6690,7 @@ st.markdown(
         <div class="v46-hero-stats">
             <div class="v46-hero-stat"><div class="v46-hero-stat-label">Markets</div><div class="v46-hero-stat-value">{len(COUNTRIES)}</div></div>
             <div class="v46-hero-stat"><div class="v46-hero-stat-label">Suppliers</div><div class="v46-hero-stat-value">{len(SUPPLIERS)}</div></div>
-            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Mode</div><div class="v46-hero-stat-value">{'Direct' if analysis_mode == 'Direct Materials' else 'Services'}</div></div>
+            <div class="v46-hero-stat"><div class="v46-hero-stat-label">Mode</div><div class="v46-hero-stat-value">{t('hero.direct_short') if _is_direct(analysis_mode) else t('hero.services_short')}</div></div>
             <div class="v46-hero-stat"><div class="v46-hero-stat-label">Optimizer</div><div class="v46-hero-stat-value">{'LP exact' if SCIPY_AVAILABLE else 'Grid'}</div></div>
             <div class="v46-hero-stat"><div class="v46-hero-stat-label">View</div><div class="v46-hero-stat-value">{VIEW_SCOPE.split()[0]}</div></div>
         </div>
@@ -6678,7 +6736,7 @@ with input_tabs[0]:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 cur_pmt = st.number_input(f"{country} current payment days", min_value=1, value=DEFAULT_CURRENT_TERM[country], step=1, key=f"v46_cur_pmt__{country}")
-                cur_inv = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"v46_cur_inv__{country}", disabled=(analysis_mode != t("sidebar.mode_direct")))
+                cur_inv = st.number_input(f"{country} current inventory days", min_value=0, value=DEFAULT_CURRENT_INVENTORY_DAYS[country] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"v46_cur_inv__{country}", disabled=not _is_direct(analysis_mode))
             with c2:
                 fin_rate = st.number_input(f"{country} financial rate %", min_value=0.0, value=DEFAULT_FINANCIAL_RATE[country], step=0.05, format="%.4f", key=f"v46_fin_rate__{country}")
                 fin_ref_days = st.number_input(f"{country} fin. rate reference days", min_value=1, value=DEFAULT_REFERENCE_DAYS[country], step=1, key=f"v46_fin_ref__{country}")
@@ -6686,7 +6744,7 @@ with input_tabs[0]:
                 treas_rate = st.number_input(f"{country} net treasury return %", min_value=0.0, value=DEFAULT_TREASURY_RETURN[country], step=0.05, format="%.4f", key=f"v46_treas__{country}")
                 treas_ref = st.number_input(f"{country} treasury ref. days", min_value=1, value=DEFAULT_TREASURY_REF_DAYS[country], step=1, key=f"v46_treas_ref__{country}")
             with c4:
-                inv_rate = st.number_input(f"{country} inventory carry rate % p.a.", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode == t("sidebar.mode_direct") else 0.0, step=0.05, format="%.4f", key=f"v46_inv_rate__{country}", disabled=(analysis_mode != t("sidebar.mode_direct")))
+                inv_rate = st.number_input(f"{country} inventory carry rate % p.a.", min_value=0.0, value=DEFAULT_INVENTORY_CARRY_RATE[country] if analysis_mode == t("sidebar.mode_direct") else 0.0, step=0.05, format="%.4f", key=f"v46_inv_rate__{country}", disabled=not _is_direct(analysis_mode))
                 st.markdown("<div class='v46-note'>Financial/treasury use current payment term for baseline. Proposals use each supplier's term.</div>", unsafe_allow_html=True)
             country_inputs[country] = {"current_spend": float(current_spend), "current_payment_days": int(cur_pmt), "financial_rate_pct": float(fin_rate), "financial_reference_days": int(fin_ref_days), "treasury_return_pct": float(treas_rate), "treasury_reference_days": int(treas_ref), "inventory_carry_rate_pct": float(inv_rate), "current_inventory_days": int(cur_inv), "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_, "service_profile": sp_, "service_scope": service_scope}
 
@@ -6703,7 +6761,7 @@ with input_tabs[1]:
             cvd = float(country_inputs[country].get("direct_profile", {}).get("volume", DEFAULT_DIRECT_VOLUME[country])) if analysis_mode == t("sidebar.mode_direct") else DEFAULT_DIRECT_VOLUME[country]
             for sup in SUPPLIERS:
                 disp = supplier_display_name(sup)
-                label = f"{'📦' if analysis_mode=='Direct Materials' else '🧾'} {supplier_short_name(sup)} — {disp}"
+                label = f"{'📦' if _is_direct(analysis_mode) else '🧾'} {supplier_short_name(sup)} — {disp}"
                 with st.expander(label, expanded=(country==PRIMARY_COUNTRY and sup==SUPPLIERS[0])):
                     st.markdown(f"<div class='v46-supplier-box'><span class='v46-pill'>{supplier_short_html(sup)}</span>", unsafe_allow_html=True)
                     dp_s: Dict = {}; sp_s: Dict = {}
@@ -6722,9 +6780,9 @@ with input_tabs[1]:
                     with c3_:
                         lead_time = st.number_input(f"{country} | {disp} | Lead time days", min_value=0, value=(DEFAULT_LEAD_TIME_DAYS[country][sup] if analysis_mode == t("sidebar.mode_direct") else int(sp_s.get("transition_days", 30))), step=1, key=f"lead__{country}__{sup}")
                     with c4_:
-                        safety_st = st.number_input(f"{country} | {disp} | Safety stock days", min_value=0, value=DEFAULT_SAFETY_STOCK_DAYS[country][sup] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"sstock__{country}__{sup}", disabled=(analysis_mode != t("sidebar.mode_direct")))
+                        safety_st = st.number_input(f"{country} | {disp} | Safety stock days", min_value=0, value=DEFAULT_SAFETY_STOCK_DAYS[country][sup] if analysis_mode == t("sidebar.mode_direct") else 0, step=1, key=f"sstock__{country}__{sup}", disabled=not _is_direct(analysis_mode))
                     with c5_:
-                        inv_own = st.selectbox(f"{country} | {disp} | Inventory ownership", options=INVENTORY_OWNERSHIP_OPTIONS, index=INVENTORY_OWNERSHIP_OPTIONS.index(DEFAULT_INVENTORY_OWNERSHIP[country][sup] if analysis_mode == t("sidebar.mode_direct") else "Supplier/trader owns until delivery"), key=f"invown__{country}__{sup}", disabled=(analysis_mode != t("sidebar.mode_direct")))
+                        inv_own = st.selectbox(f"{country} | {disp} | Inventory ownership", options=INVENTORY_OWNERSHIP_OPTIONS, index=(_iown_def := DEFAULT_INVENTORY_OWNERSHIP[country][sup] if _is_direct(analysis_mode) else "Supplier/trader owns until delivery", INVENTORY_OWNERSHIP_OPTIONS.index(_iown_def) if _iown_def in INVENTORY_OWNERSHIP_OPTIONS else 0)[1], key=f"invown__{country}__{sup}", disabled=not _is_direct(analysis_mode))
                     st.markdown("</div>", unsafe_allow_html=True)
                     proposal_inputs[country][sup] = {"spend": float(spend_), "payment_days": int(pmt_days), "lead_time_days": int(lead_time), "safety_stock_days": int(safety_st), "inventory_ownership": inv_own, "analysis_mode": analysis_mode, "item_name": analysed_item_name, "negotiated_unit": negotiated_unit, "direct_profile": dp_s, "service_profile": sp_s, "service_scope": service_scope}
 
