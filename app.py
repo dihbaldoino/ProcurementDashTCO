@@ -6144,6 +6144,15 @@ SHOULD_COST_PRESET_MAP = {
 }
 
 
+def _get_should_cost_preset(mode: str, scope: str) -> str:
+    """Return the best-fit should-cost preset key regardless of UI language."""
+    # Try scope first, then mode
+    for key in [scope, mode, "Direct Materials", "Indirect / Services"]:
+        if key in SHOULD_COST_PRESET_MAP:
+            return SHOULD_COST_PRESET_MAP[key]
+    return "Custom (manual)"
+
+
 def calc_should_cost_hybrid(
     reference_price: float,
     drivers: List[Dict],   # [{name, weight_pct, change_pct}]
@@ -6458,9 +6467,9 @@ with st.sidebar:
         analysis_mode_sel = st.radio(t("sidebar.tool_mode"), options=[t("sidebar.mode_direct"), t("sidebar.mode_indirect")],
                                      index=st.session_state.get("_analysis_mode_idx", 0),
                                      horizontal=False, key="_analysis_mode_sel")
-        st.session_state["_analysis_mode_idx"] = ["Direct Materials","Indirect / Services"].index(analysis_mode_sel)
+        st.session_state["_analysis_mode_idx"] = 0 if _is_direct(analysis_mode_sel) else 1
 
-        if analysis_mode_sel == "Direct Materials":
+        if _is_direct(analysis_mode_sel):
             st.markdown('<div class="v46-mode-card"><div class="v46-mode-card-title">🧪 Direct Materials</div><div class="v46-mode-card-sub">Landed cost → price build-up → TCO, working capital, inventory & risk.</div></div>', unsafe_allow_html=True)
             analysed_item_name_sel = st.text_input(t("sidebar.analysed_item"), value=DEFAULT_ITEM_NAME, key="direct_item_name")
             negotiated_unit_sel = st.text_input(t("sidebar.unit"), value=DEFAULT_NEGOTIATED_UNIT, key="direct_negotiated_unit")
@@ -6764,10 +6773,7 @@ with input_tabs[2]:
 
     # ── Template selector ─────────────────────────────────────────────────
     st.markdown("<div class='v46-plain-title'>📋 Template de drivers de mercado</div>", unsafe_allow_html=True)
-    _auto_preset = SHOULD_COST_PRESET_MAP.get(
-        service_scope or analysis_mode,
-        SHOULD_COST_PRESET_MAP.get(analysis_mode, "Custom (manual)")
-    )
+    _auto_preset = _get_should_cost_preset(analysis_mode, service_scope or "")
     sc_tc = st.columns([1.5, 0.5])
     with sc_tc[0]:
         sc_chosen_preset = st.selectbox(
@@ -7207,7 +7213,7 @@ def build_supplier_focus_df(sdf: pd.DataFrame, mode: str) -> pd.DataFrame:
         if col in sdf.columns: agg[col] = "mean" if "Hours" in col else "sum"
     if "Performance Score" in sdf.columns: agg["Performance Score"] = "mean"
     focus = sdf.groupby(["Supplier ID", "Supplier"], as_index=False).agg(agg)
-    if mode == "Indirect / Services" and "Performance-Adjusted Cost" in focus.columns:
+    if not _is_direct(mode) and "Performance-Adjusted Cost" in focus.columns:
         focus["Executive Focus Metric"] = focus["Performance-Adjusted Cost"].fillna(focus["Economic Total"])
     else:
         focus["Executive Focus Metric"] = focus["Economic Total"]
